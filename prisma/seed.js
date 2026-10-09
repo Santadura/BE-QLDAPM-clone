@@ -176,8 +176,10 @@ async function main() {
     ["st-001-toeic-sw", "student-0001", "course-toeic", "SW_TOTAL", 320],
     ["st-002-toeic-lr", "student-0002", "course-toeic", "LR_TOTAL", 850],
     ["st-002-toeic-sw", "student-0002", "course-toeic", "SW_TOTAL", 300],
+    ["st-002-ielts", "student-0002", "course-ielts", "OVERALL_BAND", 7.5],
     ["st-003-toefl", "student-0003", "course-toefl", "OVERALL_1_6", 4.5],
-    ["st-005-ielts", "student-0005", "course-ielts", "OVERALL_BAND", 7.0],
+    ["st-005-ielts", "student-0005", "course-ielts", "OVERALL_BAND", 7.5],
+    ["st-007-ielts", "student-0007", "course-ielts", "OVERALL_BAND", 8.0],
   ];
 
   for (const [studentTargetId, studentId, courseId, targetType, targetValue] of studentTargetSeeds) {
