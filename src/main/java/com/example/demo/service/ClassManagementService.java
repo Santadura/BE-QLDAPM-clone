@@ -816,7 +816,9 @@ public class ClassManagementService {
         }
 
         schedule.setEmployeeId(newCs.getEmployeeId());
-        schedule.setAssignedById(requireEmployee(actor.username()).getEmployeeId());
+        // Admin accounts are not required to have an Employee row in this schema.
+        // Keep the existing employee-based assigned_by value and rely on AuditLog
+        // to record the authenticated admin who performed the override.
         schedule.setAssignmentSource("ADMIN_OVERRIDE");
         staffScheduleRepository.save(schedule);
 
