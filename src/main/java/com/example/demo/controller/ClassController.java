@@ -76,6 +76,14 @@ public class ClassController {
         return classManagementService.removeStudent(classId, studentId, authentication);
     }
 
+    @GetMapping("/{classId}/student-candidates")
+    public List<StudentCandidateResponse> studentCandidates(
+            @PathVariable String classId,
+            Authentication authentication
+    ) {
+        return classManagementService.listStudentCandidates(classId, authentication);
+    }
+
     @GetMapping("/{classId}/students/{studentId}/eligibility")
     public EligibilityResponse eligibility(
             @PathVariable String classId,

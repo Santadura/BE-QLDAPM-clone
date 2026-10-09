@@ -195,4 +195,10 @@ public final class ClassDtos {
             Map<String, BigDecimal> requiredTargets,
             Map<String, BigDecimal> studentTargets
     ) {}
+
+    public record StudentCandidateResponse(
+            StudentSummary student,
+            boolean alreadyActive,
+            EligibilityResponse eligibility
+    ) {}
 }

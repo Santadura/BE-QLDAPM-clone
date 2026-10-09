@@ -276,6 +276,15 @@ public class ClassManagementService {
                     "Course cannot be changed after the class has history");
         }
 
+        if (!classItem.getStartDate().equals(request.startDate())
+                || !classItem.getEndDate().equals(request.endDate())) {
+            ensureClassHistoryInsideDateRange(
+                    classId,
+                    request.startDate(),
+                    request.endDate()
+            );
+        }
+
         if (Set.of("RUNNING", "COMPLETED", "CLOSED").contains(classItem.getStatus())) {
             Map<String, BigDecimal> current = targetRequirementRepository
                     .findByClassIdOrderByTargetTypeAsc(classId)
@@ -449,6 +458,38 @@ public class ClassManagementService {
     }
 
     @Transactional(readOnly = true)
+    public List<StudentCandidateResponse> listStudentCandidates(
+            String classId,
+            Authentication authentication
+    ) {
+        AcademicClass classItem = requireClass(classId);
+        requireManageAccess(classItem, actor(authentication));
+
+        Set<String> activeStudentIds = classStudentRepository
+                .findByClassIdAndStatusIgnoreCase(classId, "ACTIVE")
+                .stream()
+                .map(ClassStudent::getStudentId)
+                .collect(Collectors.toSet());
+
+        return studentRepository.findAllByOrderByFullNameAsc().stream()
+                .map(student -> new StudentCandidateResponse(
+                        new StudentSummary(
+                                student.getStudentId(),
+                                student.getStudentCode(),
+                                student.getFullName(),
+                                student.getPhone(),
+                                student.getEmail(),
+                                student.getStatus(),
+                                activeStudentIds.contains(student.getStudentId()) ? "ACTIVE" : null,
+                                null
+                        ),
+                        activeStudentIds.contains(student.getStudentId()),
+                        eligibility(student, classItem)
+                ))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
     public EligibilityResponse getStudentEligibility(
             String classId,
             String studentId,
@@ -504,10 +545,6 @@ public class ClassManagementService {
         Assignment assignment = assignmentRepository.findById(assignmentId)
                 .filter(item -> item.getClassId().equals(classId))
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Assignment not found"));
-        if (!assignment.getTeacherId().equals(teacher.getEmployeeId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Teacher can only edit their own assignment");
-        }
         if (!"OPEN".equalsIgnoreCase(assignment.getStatus())) {
             throw new ApiException(HttpStatus.CONFLICT, "Only open assignments can be edited");
         }
@@ -541,10 +578,6 @@ public class ClassManagementService {
         Assignment assignment = assignmentRepository.findById(assignmentId)
                 .filter(item -> item.getClassId().equals(classId))
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Assignment not found"));
-        if (!assignment.getTeacherId().equals(teacher.getEmployeeId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Teacher can only manage their own assignment");
-        }
 
         String next = request.status().trim().toUpperCase();
         if (!"OPEN".equalsIgnoreCase(assignment.getStatus())
@@ -613,10 +646,6 @@ public class ClassManagementService {
         Exam exam = examRepository.findById(examId)
                 .filter(item -> item.getClassId().equals(classId))
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Exam not found"));
-        if (!exam.getTeacherId().equals(teacher.getEmployeeId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Teacher can only edit their own exam");
-        }
         if (!"SCHEDULED".equalsIgnoreCase(exam.getStatus())) {
             throw new ApiException(HttpStatus.CONFLICT,
                     "Only scheduled exams can be edited");
@@ -656,10 +685,6 @@ public class ClassManagementService {
         Exam exam = examRepository.findById(examId)
                 .filter(item -> item.getClassId().equals(classId))
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Exam not found"));
-        if (!exam.getTeacherId().equals(teacher.getEmployeeId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Teacher can only manage their own exam");
-        }
 
         String next = request.status().trim().toUpperCase();
         if (!"SCHEDULED".equalsIgnoreCase(exam.getStatus())
@@ -1109,6 +1134,52 @@ public class ClassManagementService {
                             "New class target would make " + student.getFullName() + " ineligible");
                 }
             }
+        }
+    }
+
+    private void ensureClassHistoryInsideDateRange(
+            String classId,
+            LocalDate startDate,
+            LocalDate endDate
+    ) {
+        boolean teachingOutsideRange = teachingScheduleRepository
+                .findByClassIdAndStatusIgnoreCaseOrderByDateAscStartTimeAsc(classId, "ASSIGNED")
+                .stream()
+                .anyMatch(item -> item.getDate().isBefore(startDate) || item.getDate().isAfter(endDate));
+        if (teachingOutsideRange) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Class date range cannot exclude an assigned teaching schedule");
+        }
+
+        boolean supportOutsideRange = staffScheduleRepository
+                .findByClassIdAndStatusIgnoreCaseOrderByDateAscStartTimeAsc(classId, "ASSIGNED")
+                .stream()
+                .anyMatch(item -> item.getDate().isBefore(startDate) || item.getDate().isAfter(endDate));
+        if (supportOutsideRange) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Class date range cannot exclude an assigned support schedule");
+        }
+
+        boolean assignmentOutsideRange = assignmentRepository
+                .findByClassIdOrderByCreatedAtDesc(classId)
+                .stream()
+                .filter(item -> !"CANCELLED".equalsIgnoreCase(item.getStatus()))
+                .map(item -> item.getDeadline().atZone(ZoneOffset.UTC).toLocalDate())
+                .anyMatch(date -> date.isBefore(startDate) || date.isAfter(endDate));
+        if (assignmentOutsideRange) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Class date range cannot exclude an active assignment deadline");
+        }
+
+        boolean examOutsideRange = examRepository
+                .findByClassIdOrderByExamDateDesc(classId)
+                .stream()
+                .filter(item -> !"CANCELLED".equalsIgnoreCase(item.getStatus()))
+                .map(item -> item.getExamDate().atZone(ZoneOffset.UTC).toLocalDate())
+                .anyMatch(date -> date.isBefore(startDate) || date.isAfter(endDate));
+        if (examOutsideRange) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Class date range cannot exclude an active exam date");
         }
     }
 
