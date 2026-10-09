@@ -9,4 +9,5 @@ public interface ExamRepository extends JpaRepository<Exam, String> {
     List<Exam> findByClassIdOrderByExamDateDesc(String classId);
     boolean existsByClassId(String classId);
     boolean existsByClassIdAndStatusIgnoreCase(String classId, String status);
+    boolean existsByExamIdAndClassId(String examId, String classId);
 }
