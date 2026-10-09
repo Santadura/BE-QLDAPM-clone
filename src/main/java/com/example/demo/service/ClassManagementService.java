@@ -449,6 +449,38 @@ public class ClassManagementService {
     }
 
     @Transactional(readOnly = true)
+    public List<StudentCandidateResponse> listStudentCandidates(
+            String classId,
+            Authentication authentication
+    ) {
+        AcademicClass classItem = requireClass(classId);
+        requireManageAccess(classItem, actor(authentication));
+
+        Set<String> activeStudentIds = classStudentRepository
+                .findByClassIdAndStatusIgnoreCase(classId, "ACTIVE")
+                .stream()
+                .map(ClassStudent::getStudentId)
+                .collect(Collectors.toSet());
+
+        return studentRepository.findAllByOrderByFullNameAsc().stream()
+                .map(student -> new StudentCandidateResponse(
+                        new StudentSummary(
+                                student.getStudentId(),
+                                student.getStudentCode(),
+                                student.getFullName(),
+                                student.getPhone(),
+                                student.getEmail(),
+                                student.getStatus(),
+                                activeStudentIds.contains(student.getStudentId()) ? "ACTIVE" : null,
+                                null
+                        ),
+                        activeStudentIds.contains(student.getStudentId()),
+                        eligibility(student, classItem)
+                ))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
     public EligibilityResponse getStudentEligibility(
             String classId,
             String studentId,
