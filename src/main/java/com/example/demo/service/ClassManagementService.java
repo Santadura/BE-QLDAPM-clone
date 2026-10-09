@@ -536,10 +536,6 @@ public class ClassManagementService {
         Assignment assignment = assignmentRepository.findById(assignmentId)
                 .filter(item -> item.getClassId().equals(classId))
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Assignment not found"));
-        if (!assignment.getTeacherId().equals(teacher.getEmployeeId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Teacher can only edit their own assignment");
-        }
         if (!"OPEN".equalsIgnoreCase(assignment.getStatus())) {
             throw new ApiException(HttpStatus.CONFLICT, "Only open assignments can be edited");
         }
@@ -573,10 +569,6 @@ public class ClassManagementService {
         Assignment assignment = assignmentRepository.findById(assignmentId)
                 .filter(item -> item.getClassId().equals(classId))
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Assignment not found"));
-        if (!assignment.getTeacherId().equals(teacher.getEmployeeId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Teacher can only manage their own assignment");
-        }
 
         String next = request.status().trim().toUpperCase();
         if (!"OPEN".equalsIgnoreCase(assignment.getStatus())
@@ -645,10 +637,6 @@ public class ClassManagementService {
         Exam exam = examRepository.findById(examId)
                 .filter(item -> item.getClassId().equals(classId))
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Exam not found"));
-        if (!exam.getTeacherId().equals(teacher.getEmployeeId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Teacher can only edit their own exam");
-        }
         if (!"SCHEDULED".equalsIgnoreCase(exam.getStatus())) {
             throw new ApiException(HttpStatus.CONFLICT,
                     "Only scheduled exams can be edited");
@@ -688,10 +676,6 @@ public class ClassManagementService {
         Exam exam = examRepository.findById(examId)
                 .filter(item -> item.getClassId().equals(classId))
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Exam not found"));
-        if (!exam.getTeacherId().equals(teacher.getEmployeeId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN,
-                    "Teacher can only manage their own exam");
-        }
 
         String next = request.status().trim().toUpperCase();
         if (!"SCHEDULED".equalsIgnoreCase(exam.getStatus())
