@@ -589,7 +589,17 @@ public class ClassManagementService {
     }
 
     private void replaceRequirements(String classId, List<TargetRequirementInput> requirements) {
-        targetRequirementRepository.deleteByClassId(classId);
+        // Flush removals before inserting the replacement rows.
+        // class_target_requirements has a unique constraint on (class_id, target_type),
+        // so queuing delete + insert in the same persistence context can otherwise
+        // attempt the insert first and trigger a duplicate-key error.
+        List<ClassTargetRequirement> existing =
+                targetRequirementRepository.findByClassIdOrderByTargetTypeAsc(classId);
+        if (!existing.isEmpty()) {
+            targetRequirementRepository.deleteAll(existing);
+            targetRequirementRepository.flush();
+        }
+
         List<ClassTargetRequirement> entities = requirements.stream()
                 .map(item -> ClassTargetRequirement.builder()
                         .classTargetRequirementId(newId("class-target"))
