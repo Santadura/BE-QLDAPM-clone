@@ -33,6 +33,37 @@ public final class ClassDtos {
 
     public record AddStudentsRequest(@NotNull List<String> studentIds) {}
 
+    public record AssignmentUpsertRequest(
+            @NotBlank @Size(max = 150) String title,
+            String description,
+            @NotNull LocalDate deadline
+    ) {}
+
+    public record AssignmentStatusRequest(@NotBlank String status) {}
+
+    public record ExamUpsertRequest(
+            @NotBlank @Size(max = 150) String title,
+            String description,
+            @NotNull Integer duration,
+            @NotNull LocalDate examDate
+    ) {}
+
+    public record ExamStatusRequest(@NotBlank String status) {}
+
+    public record StudentResultUpsertRequest(
+            @NotBlank String studentId,
+            String assignmentId,
+            String examId,
+            @NotNull BigDecimal score,
+            String feedback
+    ) {}
+
+    public record SupportOverrideRequest(
+            @NotBlank String newCsId,
+            @NotBlank String reason,
+            boolean allowConflict
+    ) {}
+
     public record CourseSummary(
             String courseId,
             String name
