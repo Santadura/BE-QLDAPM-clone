@@ -9,4 +9,5 @@ public interface AssignmentRepository extends JpaRepository<Assignment, String> 
     List<Assignment> findByClassIdOrderByCreatedAtDesc(String classId);
     boolean existsByClassId(String classId);
     boolean existsByClassIdAndStatusIgnoreCase(String classId, String status);
+    boolean existsByAssignmentIdAndClassId(String assignmentId, String classId);
 }
