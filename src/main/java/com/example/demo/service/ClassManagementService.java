@@ -276,6 +276,15 @@ public class ClassManagementService {
                     "Course cannot be changed after the class has history");
         }
 
+        if (!classItem.getStartDate().equals(request.startDate())
+                || !classItem.getEndDate().equals(request.endDate())) {
+            ensureClassHistoryInsideDateRange(
+                    classId,
+                    request.startDate(),
+                    request.endDate()
+            );
+        }
+
         if (Set.of("RUNNING", "COMPLETED", "CLOSED").contains(classItem.getStatus())) {
             Map<String, BigDecimal> current = targetRequirementRepository
                     .findByClassIdOrderByTargetTypeAsc(classId)
@@ -1125,6 +1134,52 @@ public class ClassManagementService {
                             "New class target would make " + student.getFullName() + " ineligible");
                 }
             }
+        }
+    }
+
+    private void ensureClassHistoryInsideDateRange(
+            String classId,
+            LocalDate startDate,
+            LocalDate endDate
+    ) {
+        boolean teachingOutsideRange = teachingScheduleRepository
+                .findByClassIdAndStatusIgnoreCaseOrderByDateAscStartTimeAsc(classId, "ASSIGNED")
+                .stream()
+                .anyMatch(item -> item.getDate().isBefore(startDate) || item.getDate().isAfter(endDate));
+        if (teachingOutsideRange) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Class date range cannot exclude an assigned teaching schedule");
+        }
+
+        boolean supportOutsideRange = staffScheduleRepository
+                .findByClassIdAndStatusIgnoreCaseOrderByDateAscStartTimeAsc(classId, "ASSIGNED")
+                .stream()
+                .anyMatch(item -> item.getDate().isBefore(startDate) || item.getDate().isAfter(endDate));
+        if (supportOutsideRange) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Class date range cannot exclude an assigned support schedule");
+        }
+
+        boolean assignmentOutsideRange = assignmentRepository
+                .findByClassIdOrderByCreatedAtDesc(classId)
+                .stream()
+                .filter(item -> !"CANCELLED".equalsIgnoreCase(item.getStatus()))
+                .map(item -> item.getDeadline().atZone(ZoneOffset.UTC).toLocalDate())
+                .anyMatch(date -> date.isBefore(startDate) || date.isAfter(endDate));
+        if (assignmentOutsideRange) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Class date range cannot exclude an active assignment deadline");
+        }
+
+        boolean examOutsideRange = examRepository
+                .findByClassIdOrderByExamDateDesc(classId)
+                .stream()
+                .filter(item -> !"CANCELLED".equalsIgnoreCase(item.getStatus()))
+                .map(item -> item.getExamDate().atZone(ZoneOffset.UTC).toLocalDate())
+                .anyMatch(date -> date.isBefore(startDate) || date.isAfter(endDate));
+        if (examOutsideRange) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Class date range cannot exclude an active exam date");
         }
     }
 
