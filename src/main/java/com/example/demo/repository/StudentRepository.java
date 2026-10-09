@@ -7,4 +7,6 @@ import java.util.List;
 
 public interface StudentRepository extends JpaRepository<Student, String> {
     List<Student> findAllByOrderByFullNameAsc();
+    boolean existsByStudentCodeIgnoreCase(String studentCode);
+    boolean existsByStudentCodeIgnoreCaseAndStudentIdNot(String studentCode, String studentId);
 }
