@@ -26,7 +26,7 @@ public class Assignment {
     @Column(name = "title", length = 150, nullable = false)
     private String title;
 
-    @Column(name = "description")
+    @Column(name = "description", columnDefinition = "text")
     private String description;
 
     @Column(name = "deadline", nullable = false)
