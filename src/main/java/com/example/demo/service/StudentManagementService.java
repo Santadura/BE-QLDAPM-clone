@@ -82,22 +82,23 @@ public class StudentManagementService {
             // Admin sees all student data.
         } else if ("TEACHER".equals(actor.role())) {
             Employee teacher = requireEmployee(actor.username());
-            allowedClassIds = teachingScheduleRepository
+            Set<String> teacherClassIds = teachingScheduleRepository
                     .findByTeacherIdAndStatusIgnoreCase(teacher.getEmployeeId(), "ASSIGNED")
                     .stream()
                     .map(TeachingSchedule::getClassId)
                     .collect(Collectors.toSet());
+            allowedClassIds = teacherClassIds;
 
             boolean studentVisible = classStudentRepository.findByStudentId(studentId).stream()
                     .anyMatch(membership ->
                             "ACTIVE".equalsIgnoreCase(membership.getStatus())
-                            && allowedClassIds.contains(membership.getClassId()));
+                            && teacherClassIds.contains(membership.getClassId()));
             if (!studentVisible) {
                 throw new ApiException(HttpStatus.FORBIDDEN,
                         "Teacher can only view students in assigned classes");
             }
 
-            allowedCourseIds = classRepository.findAllById(allowedClassIds).stream()
+            allowedCourseIds = classRepository.findAllById(teacherClassIds).stream()
                     .map(AcademicClass::getCourseId)
                     .collect(Collectors.toSet());
         } else {
