@@ -12,6 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -39,6 +41,7 @@ public class ClassManagementService {
     private final ExamRepository examRepository;
     private final StudentResultRepository studentResultRepository;
     private final AuditLogRepository auditLogRepository;
+    private final UserRepository userRepository;
 
     @Transactional(readOnly = true)
     public List<ClassSummaryResponse> listClasses(Authentication authentication) {
@@ -458,6 +461,380 @@ public class ClassManagementService {
         return eligibility(student, classItem);
     }
 
+    @Transactional
+    public AssignmentResponse createAssignment(
+            String classId,
+            AssignmentUpsertRequest request,
+            Authentication authentication
+    ) {
+        AcademicClass classItem = requireClass(classId);
+        Actor actor = actor(authentication);
+        Employee teacher = requireAssignedTeacher(actor, classId);
+        requireTeachingActivityClass(classItem);
+        validateDateInsideClass(request.deadline(), classItem, "Assignment deadline");
+
+        Assignment assignment = Assignment.builder()
+                .assignmentId(newId("assignment"))
+                .teacherId(teacher.getEmployeeId())
+                .classId(classId)
+                .title(request.title().trim())
+                .description(trimToNull(request.description()))
+                .deadline(request.deadline().atStartOfDay().toInstant(ZoneOffset.UTC))
+                .status("OPEN")
+                .createdAt(Instant.now())
+                .build();
+        assignmentRepository.save(assignment);
+        audit(actor.username(), "CREATE_ASSIGNMENT", classId,
+                "Created assignment " + assignment.getAssignmentId());
+        return toAssignmentResponse(assignment);
+    }
+
+    @Transactional
+    public AssignmentResponse updateAssignment(
+            String classId,
+            String assignmentId,
+            AssignmentUpsertRequest request,
+            Authentication authentication
+    ) {
+        AcademicClass classItem = requireClass(classId);
+        Actor actor = actor(authentication);
+        Employee teacher = requireAssignedTeacher(actor, classId);
+        requireTeachingActivityClass(classItem);
+
+        Assignment assignment = assignmentRepository.findById(assignmentId)
+                .filter(item -> item.getClassId().equals(classId))
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Assignment not found"));
+        if (!assignment.getTeacherId().equals(teacher.getEmployeeId())) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Teacher can only edit their own assignment");
+        }
+        if (!"OPEN".equalsIgnoreCase(assignment.getStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Only open assignments can be edited");
+        }
+        if (studentResultRepository.existsByAssignmentId(assignmentId)) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Assignment details are locked after results are recorded");
+        }
+        validateDateInsideClass(request.deadline(), classItem, "Assignment deadline");
+
+        assignment.setTitle(request.title().trim());
+        assignment.setDescription(trimToNull(request.description()));
+        assignment.setDeadline(request.deadline().atStartOfDay().toInstant(ZoneOffset.UTC));
+        assignmentRepository.save(assignment);
+        audit(actor.username(), "UPDATE_ASSIGNMENT", classId,
+                "Updated assignment " + assignmentId);
+        return toAssignmentResponse(assignment);
+    }
+
+    @Transactional
+    public AssignmentResponse changeAssignmentStatus(
+            String classId,
+            String assignmentId,
+            AssignmentStatusRequest request,
+            Authentication authentication
+    ) {
+        AcademicClass classItem = requireClass(classId);
+        Actor actor = actor(authentication);
+        Employee teacher = requireAssignedTeacher(actor, classId);
+        requireTeachingActivityClass(classItem);
+
+        Assignment assignment = assignmentRepository.findById(assignmentId)
+                .filter(item -> item.getClassId().equals(classId))
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Assignment not found"));
+        if (!assignment.getTeacherId().equals(teacher.getEmployeeId())) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Teacher can only manage their own assignment");
+        }
+
+        String next = request.status().trim().toUpperCase();
+        if (!"OPEN".equalsIgnoreCase(assignment.getStatus())
+                || !Set.of("CLOSED", "CANCELLED").contains(next)) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Invalid assignment status transition");
+        }
+        if ("CANCELLED".equals(next)
+                && studentResultRepository.existsByAssignmentId(assignmentId)) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Assignment with recorded results cannot be cancelled");
+        }
+
+        assignment.setStatus(next);
+        assignmentRepository.save(assignment);
+        audit(actor.username(), "CHANGE_ASSIGNMENT_STATUS", classId,
+                "Changed assignment " + assignmentId + " to " + next);
+        return toAssignmentResponse(assignment);
+    }
+
+    @Transactional
+    public ExamResponse createExam(
+            String classId,
+            ExamUpsertRequest request,
+            Authentication authentication
+    ) {
+        AcademicClass classItem = requireClass(classId);
+        Actor actor = actor(authentication);
+        Employee teacher = requireAssignedTeacher(actor, classId);
+        requireTeachingActivityClass(classItem);
+        if (request.duration() == null || request.duration() <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Exam duration must be positive");
+        }
+        validateDateInsideClass(request.examDate(), classItem, "Exam date");
+
+        Exam exam = Exam.builder()
+                .examId(newId("exam"))
+                .teacherId(teacher.getEmployeeId())
+                .classId(classId)
+                .title(request.title().trim())
+                .description(trimToNull(request.description()))
+                .duration(request.duration())
+                .examDate(request.examDate().atStartOfDay().toInstant(ZoneOffset.UTC))
+                .status("SCHEDULED")
+                .createdAt(Instant.now())
+                .build();
+        examRepository.save(exam);
+        audit(actor.username(), "CREATE_EXAM", classId,
+                "Created exam " + exam.getExamId());
+        return toExamResponse(exam);
+    }
+
+    @Transactional
+    public ExamResponse updateExam(
+            String classId,
+            String examId,
+            ExamUpsertRequest request,
+            Authentication authentication
+    ) {
+        AcademicClass classItem = requireClass(classId);
+        Actor actor = actor(authentication);
+        Employee teacher = requireAssignedTeacher(actor, classId);
+        requireTeachingActivityClass(classItem);
+
+        Exam exam = examRepository.findById(examId)
+                .filter(item -> item.getClassId().equals(classId))
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Exam not found"));
+        if (!exam.getTeacherId().equals(teacher.getEmployeeId())) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Teacher can only edit their own exam");
+        }
+        if (!"SCHEDULED".equalsIgnoreCase(exam.getStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Only scheduled exams can be edited");
+        }
+        if (studentResultRepository.existsByExamId(examId)) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Exam details are locked after results are recorded");
+        }
+        if (request.duration() == null || request.duration() <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Exam duration must be positive");
+        }
+        validateDateInsideClass(request.examDate(), classItem, "Exam date");
+
+        exam.setTitle(request.title().trim());
+        exam.setDescription(trimToNull(request.description()));
+        exam.setDuration(request.duration());
+        exam.setExamDate(request.examDate().atStartOfDay().toInstant(ZoneOffset.UTC));
+        examRepository.save(exam);
+        audit(actor.username(), "UPDATE_EXAM", classId,
+                "Updated exam " + examId);
+        return toExamResponse(exam);
+    }
+
+    @Transactional
+    public ExamResponse changeExamStatus(
+            String classId,
+            String examId,
+            ExamStatusRequest request,
+            Authentication authentication
+    ) {
+        AcademicClass classItem = requireClass(classId);
+        Actor actor = actor(authentication);
+        Employee teacher = requireAssignedTeacher(actor, classId);
+        requireTeachingActivityClass(classItem);
+
+        Exam exam = examRepository.findById(examId)
+                .filter(item -> item.getClassId().equals(classId))
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Exam not found"));
+        if (!exam.getTeacherId().equals(teacher.getEmployeeId())) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Teacher can only manage their own exam");
+        }
+
+        String next = request.status().trim().toUpperCase();
+        if (!"SCHEDULED".equalsIgnoreCase(exam.getStatus())
+                || !Set.of("COMPLETED", "CANCELLED").contains(next)) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Invalid exam status transition");
+        }
+        if ("CANCELLED".equals(next)
+                && studentResultRepository.existsByExamId(examId)) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Exam with recorded results cannot be cancelled");
+        }
+
+        exam.setStatus(next);
+        examRepository.save(exam);
+        audit(actor.username(), "CHANGE_EXAM_STATUS", classId,
+                "Changed exam " + examId + " to " + next);
+        return toExamResponse(exam);
+    }
+
+    @Transactional
+    public StudentResultResponse upsertStudentResult(
+            String classId,
+            StudentResultUpsertRequest request,
+            Authentication authentication
+    ) {
+        AcademicClass classItem = requireClass(classId);
+        Actor actor = actor(authentication);
+        Employee teacher = requireAssignedTeacher(actor, classId);
+
+        if (!Set.of("READY", "RUNNING", "COMPLETED").contains(classItem.getStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Results can only be recorded for Ready, Running or Completed classes");
+        }
+
+        boolean hasAssignment = request.assignmentId() != null && !request.assignmentId().isBlank();
+        boolean hasExam = request.examId() != null && !request.examId().isBlank();
+        if (hasAssignment == hasExam) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Result must reference exactly one assignment or exam");
+        }
+
+        ClassStudent membership = classStudentRepository
+                .findByClassIdAndStudentId(classId, request.studentId())
+                .filter(item -> "ACTIVE".equalsIgnoreCase(item.getStatus()))
+                .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT,
+                        "Student is not currently active in this class"));
+
+        if (membership == null) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Student is not currently active in this class");
+        }
+
+        StudentResult result;
+        if (hasAssignment) {
+            Assignment assignment = assignmentRepository.findById(request.assignmentId())
+                    .filter(item -> item.getClassId().equals(classId))
+                    .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST,
+                            "Assignment does not belong to this class"));
+            if ("CANCELLED".equalsIgnoreCase(assignment.getStatus())) {
+                throw new ApiException(HttpStatus.CONFLICT,
+                        "Results cannot be recorded for a cancelled assignment");
+            }
+            result = studentResultRepository
+                    .findByStudentIdAndClassIdAndAssignmentId(
+                            request.studentId(), classId, request.assignmentId())
+                    .orElseGet(() -> StudentResult.builder()
+                            .studentResultId(newId("result"))
+                            .studentId(request.studentId())
+                            .classId(classId)
+                            .assignmentId(request.assignmentId())
+                            .examId(null)
+                            .build());
+        } else {
+            Exam exam = examRepository.findById(request.examId())
+                    .filter(item -> item.getClassId().equals(classId))
+                    .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST,
+                            "Exam does not belong to this class"));
+            if (!"COMPLETED".equalsIgnoreCase(exam.getStatus())) {
+                throw new ApiException(HttpStatus.CONFLICT,
+                        "Exam must be completed before results are recorded");
+            }
+            result = studentResultRepository
+                    .findByStudentIdAndClassIdAndExamId(
+                            request.studentId(), classId, request.examId())
+                    .orElseGet(() -> StudentResult.builder()
+                            .studentResultId(newId("result"))
+                            .studentId(request.studentId())
+                            .classId(classId)
+                            .assignmentId(null)
+                            .examId(request.examId())
+                            .build());
+        }
+
+        result.setScore(request.score());
+        result.setFeedback(trimToNull(request.feedback()));
+        result.setEvaluatedById(teacher.getEmployeeId());
+        result.setEvaluatedAt(Instant.now());
+        studentResultRepository.save(result);
+
+        audit(actor.username(), "EVALUATE_STUDENT", classId,
+                "Recorded result for student " + request.studentId());
+        return toStudentResultResponse(result);
+    }
+
+    @Transactional
+    public StaffScheduleResponse overrideSupport(
+            String classId,
+            String scheduleId,
+            SupportOverrideRequest request,
+            Authentication authentication
+    ) {
+        Actor actor = actor(authentication);
+        if (!"ADMIN".equals(actor.role())) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Only Admin can perform support overrides");
+        }
+
+        AcademicClass classItem = requireClass(classId);
+        if ("CLOSED".equalsIgnoreCase(classItem.getStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Closed classes are read-only");
+        }
+
+        StaffSchedule schedule = staffScheduleRepository.findById(scheduleId)
+                .filter(item -> classId.equals(item.getClassId()))
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
+                        "Support schedule not found"));
+
+        Employee newCs = employeeRepository.findById(request.newCsId())
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
+                        "Replacement CS not found"));
+        User user = userRepository.findByUsername(newCs.getUsername())
+                .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT,
+                        "Replacement employee has no user account"));
+        if (!"CS".equalsIgnoreCase(user.getRoleId())
+                || !"ACTIVE".equalsIgnoreCase(newCs.getStatus())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    "Replacement employee must be an active CS");
+        }
+
+        List<StaffSchedule> conflicts = staffScheduleRepository
+                .findByEmployeeIdAndDateAndStatusIgnoreCase(
+                        newCs.getEmployeeId(), schedule.getDate(), "ASSIGNED")
+                .stream()
+                .filter(item -> !item.getStaffScheduleId().equals(scheduleId))
+                .filter(item -> overlaps(
+                        schedule.getStartTime(), schedule.getEndTime(),
+                        item.getStartTime(), item.getEndTime()))
+                .toList();
+
+        if (!conflicts.isEmpty() && !request.allowConflict()) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Replacement CS has an overlapping assigned shift");
+        }
+
+        schedule.setEmployeeId(newCs.getEmployeeId());
+        schedule.setAssignedById(requireEmployee(actor.username()).getEmployeeId());
+        schedule.setAssignmentSource("ADMIN_OVERRIDE");
+        staffScheduleRepository.save(schedule);
+
+        audit(actor.username(), "OVERRIDE_CS_SUPPORT", classId,
+                "Reassigned support schedule " + scheduleId + " to "
+                        + newCs.getEmployeeId() + ". Reason: " + request.reason().trim());
+        return new StaffScheduleResponse(
+                schedule.getStaffScheduleId(),
+                schedule.getEmployeeId(),
+                newCs.getFullName(),
+                schedule.getDate(),
+                schedule.getStartTime(),
+                schedule.getEndTime(),
+                schedule.getWorkType(),
+                schedule.getStatus(),
+                schedule.getAssignmentSource());
+    }
+
     @Transactional(readOnly = true)
     public List<CourseSummary> listCourses() {
         return courseRepository.findByStatusIgnoreCaseOrderByNameAsc("ACTIVE").stream()
@@ -502,6 +879,88 @@ public class ClassManagementService {
                 required,
                 targets
         );
+    }
+
+    private Employee requireAssignedTeacher(Actor actor, String classId) {
+        if (!"TEACHER".equals(actor.role())) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Only an assigned teacher can manage teaching activities");
+        }
+        Employee teacher = requireEmployee(actor.username());
+        if (!teachingScheduleRepository.existsByTeacherIdAndClassIdAndStatusIgnoreCase(
+                teacher.getEmployeeId(), classId, "ASSIGNED")) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Teacher is not assigned to this class");
+        }
+        return teacher;
+    }
+
+    private void requireTeachingActivityClass(AcademicClass classItem) {
+        if (!Set.of("READY", "RUNNING").contains(classItem.getStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Teaching activities can only be managed while class is Ready or Running");
+        }
+    }
+
+    private void validateDateInsideClass(
+            LocalDate date,
+            AcademicClass classItem,
+            String label
+    ) {
+        if (date.isBefore(classItem.getStartDate()) || date.isAfter(classItem.getEndDate())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                    label + " must be within the class date range");
+        }
+    }
+
+    private boolean overlaps(
+            java.time.LocalTime aStart,
+            java.time.LocalTime aEnd,
+            java.time.LocalTime bStart,
+            java.time.LocalTime bEnd
+    ) {
+        return aStart.isBefore(bEnd) && bStart.isBefore(aEnd);
+    }
+
+    private AssignmentResponse toAssignmentResponse(Assignment item) {
+        return new AssignmentResponse(
+                item.getAssignmentId(),
+                item.getTeacherId(),
+                item.getTitle(),
+                item.getDescription(),
+                item.getDeadline(),
+                item.getStatus(),
+                item.getCreatedAt());
+    }
+
+    private ExamResponse toExamResponse(Exam item) {
+        return new ExamResponse(
+                item.getExamId(),
+                item.getTeacherId(),
+                item.getTitle(),
+                item.getDescription(),
+                item.getDuration(),
+                item.getExamDate(),
+                item.getStatus(),
+                item.getCreatedAt());
+    }
+
+    private StudentResultResponse toStudentResultResponse(StudentResult item) {
+        return new StudentResultResponse(
+                item.getStudentResultId(),
+                item.getStudentId(),
+                item.getAssignmentId(),
+                item.getExamId(),
+                item.getScore(),
+                item.getFeedback(),
+                item.getEvaluatedById(),
+                item.getEvaluatedAt());
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private void validateClassRequest(ClassUpsertRequest request, String currentClassId) {
