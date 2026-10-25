@@ -54,11 +54,16 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                    .requestMatchers("/api/auth/**").permitAll()
+                    .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
                     .requestMatchers("/actuator/health").permitAll()
+                    .requestMatchers("/api/accounts/*/role").denyAll()
+                    .requestMatchers("/api/accounts", "/api/accounts/**").hasAuthority("ROLE_ADMIN")
                     .requestMatchers("/api/statistics", "/api/statistics/**").hasAuthority("ROLE_ADMIN")
                     .anyRequest().authenticated()
             )
+            .exceptionHandling(errors -> errors
+                .authenticationEntryPoint((request, response, exception) -> response.sendError(401, "Authentication required"))
+                .accessDeniedHandler((request, response, exception) -> response.sendError(403, "Access denied")))
             .authenticationProvider(authenticationProvider())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 

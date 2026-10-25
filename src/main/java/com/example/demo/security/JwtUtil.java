@@ -7,15 +7,18 @@ import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import javax.crypto.Mac;
 import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
 import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.function.Function;
+import java.util.HexFormat;
+import java.util.UUID;
 
 @Component
 public class JwtUtil {
-
     @Value("${jwt.secret}")
     private String secret;
 
@@ -23,15 +26,15 @@ public class JwtUtil {
     private long expirationMs;
 
     private SecretKey getSigningKey() {
-        return Keys.hmacShaKeyFor(secret.getBytes());
+        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    public String generateToken(String username, String role) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("role", role);
+    public String generateToken(String username, String role, String passwordHash) {
         return Jwts.builder()
-                .claims(claims)
                 .subject(username)
+                .id(UUID.randomUUID().toString())
+                .claim("role", role)
+                .claim("credentialStamp", credentialStamp(passwordHash))
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expirationMs))
                 .signWith(getSigningKey(), SignatureAlgorithm.HS256)
@@ -39,31 +42,42 @@ public class JwtUtil {
     }
 
     public String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
+        return extractAllClaims(token).getSubject();
     }
 
     public String extractRole(String token) {
         return extractAllClaims(token).get("role", String.class);
     }
 
-    public boolean isTokenValid(String token, String username) {
-        final String extracted = extractUsername(token);
-        return extracted.equals(username) && !isTokenExpired(token);
+    public String extractTokenId(String token) {
+        return extractAllClaims(token).getId();
     }
 
-    private boolean isTokenExpired(String token) {
-        return extractClaim(token, Claims::getExpiration).before(new Date());
+    public boolean isTokenValid(String token, String username, String currentPasswordHash) {
+        // Parsing verifies signature and expiration before reading these claims.
+        Claims claims = extractAllClaims(token);
+        String tokenId = claims.getId();
+        String stamp = claims.get("credentialStamp", String.class);
+        if (!username.equals(claims.getSubject()) || tokenId == null || tokenId.isBlank()
+                || tokenId.length() > 50 || stamp == null || claims.getExpiration() == null) return false;
+        return MessageDigest.isEqual(stamp.getBytes(StandardCharsets.UTF_8),
+                credentialStamp(currentPasswordHash).getBytes(StandardCharsets.UTF_8));
     }
 
-    private <T> T extractClaim(String token, Function<Claims, T> resolver) {
-        return resolver.apply(extractAllClaims(token));
+    private String credentialStamp(String passwordHash) {
+        try {
+            // Domain-separated, keyed digest. Neither the password nor its
+            // BCrypt hash is included in JWT claims or persisted session logs.
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] digest = mac.doFinal(("qldapm:credentials:v1:" + passwordHash).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (GeneralSecurityException ex) {
+            throw new IllegalStateException("Unable to create session credential stamp", ex);
+        }
     }
 
     private Claims extractAllClaims(String token) {
-        return Jwts.parser()
-                .verifyWith(getSigningKey())
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
+        return Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload();
     }
 }
