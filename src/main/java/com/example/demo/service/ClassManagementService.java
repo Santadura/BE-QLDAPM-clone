@@ -47,6 +47,7 @@ public class ClassManagementService {
     private final SchedulingAccess schedulingAccess;
     private final ClassSessionService classSessionService;
     private final StudentClassScheduleGuard studentScheduleGuard;
+    private final ClassLifecycleIntegrityService lifecycleIntegrityService;
 
     @Transactional(readOnly = true)
     public List<ClassSummaryResponse> listClasses(Authentication authentication) {
@@ -404,20 +405,7 @@ public class ClassManagementService {
                 throw new ApiException(HttpStatus.CONFLICT,
                         "Every planned class session must have an assigned teacher before Running");
             }
-            Integer missingCs = jdbc.queryForObject(
-                    "SELECT count(*) FROM class_sessions cs WHERE cs.class_id=? " +
-                    "AND cs.status='PLANNED' AND NOT EXISTS (" +
-                    "SELECT 1 FROM staff_schedules ss WHERE ss.class_id=cs.class_id " +
-                    "AND ss.date=cs.date AND ss.start_time=cs.start_time " +
-                    "AND ss.end_time=cs.end_time AND ss.work_type='CLASS_SUPPORT' " +
-                    "AND ss.status='ASSIGNED')",
-                    Integer.class, classId);
-            if (missingCs == null || missingCs > 0) {
-                throw new ApiException(HttpStatus.CONFLICT,
-                    "Cannot start class: " + missingCs +
-                    " planned lesson(s) lack a CM-assigned CS support shift. " +
-                    "Assign CS before moving to RUNNING.");
-            }
+            lifecycleIntegrityService.requireCsCoverageBeforeRunning(classId);
 
             boolean hasValidSchedule = teachingScheduleRepository
                     .findByClassIdAndStatusIgnoreCaseOrderByDateAscStartTimeAsc(classId, "ASSIGNED")
@@ -449,26 +437,7 @@ public class ClassManagementService {
         }
 
         if ("COMPLETED".equals(nextStatus)) {
-            Integer unmarked = jdbc.queryForObject(
-                "SELECT count(*) FROM teaching_schedules ts " +
-                "JOIN class_sessions lesson ON lesson.class_id=ts.class_id " +
-                "AND lesson.date=ts.date AND lesson.start_time=ts.start_time " +
-                "AND lesson.end_time=ts.end_time AND lesson.status='PLANNED' " +
-                "LEFT JOIN teacher_session_attendance ta " +
-                "ON ta.teaching_schedule_id=ts.teaching_schedule_id " +
-                "WHERE ts.class_id=? AND ts.status='ASSIGNED' " +
-                "AND (ts.date < ? OR (ts.date=? AND ts.start_time<=?)) " +
-                "AND ta.attendance_id IS NULL",
-                Integer.class, classId,
-                LocalDate.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")),
-                LocalDate.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")),
-                java.time.LocalTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
-            if (unmarked != null && unmarked > 0) {
-                throw new ApiException(HttpStatus.CONFLICT,
-                    "Cannot complete class: " + unmarked +
-                    " teacher lesson(s) are missing CS attendance. " +
-                    "Record PRESENT, ABSENT or LATE for each taught lesson first.");
-            }
+            lifecycleIntegrityService.requireTeacherAttendanceBeforeCompleted(classId);
         }
 
         if ("COMPLETED".equals(nextStatus)
