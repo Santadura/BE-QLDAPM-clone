@@ -60,7 +60,7 @@ async function registerAndApprove(employee,reviewer,day) {
     availableDate:null,dayOfWeek:weekday(day),shift:'MORNING',
     startTime:'08:30',endTime:'11:30',availabilityType:'RECURRING',
     campus:'Cơ sở chính',note:'isolated class-integrity test',
-  });
+  },201);
   assert.equal(slot.status,'PENDING');
   const reviewed = await send(reviewer,'PATCH',
     '/availabilities/' + slot.id + '/review',{status:'APPROVED'});
