@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ClassSessionService {
     private final JdbcTemplate db;
+    private final StudentClassScheduleGuard studentScheduleGuard;
 
     public record PlannedSessionInput(LocalDate date, LocalTime startTime, LocalTime endTime) {}
     public record RescheduleRequest(
@@ -204,6 +205,13 @@ public class ClassSessionService {
             }
         }
 
+        if (makeUp) {
+            studentScheduleGuard.lockClassStudents(classId);
+            studentScheduleGuard.validateTimetable(classId, List.of(
+                new StudentClassScheduleGuard.Slot(
+                    input.newDate(), input.newStartTime(), input.newEndTime())));
+        }
+
         // Cancel only assignments belonging to this one lesson, keeping payroll/audit history.
         db.update("UPDATE teaching_schedules SET status='CANCELLED' " +
                   "WHERE class_id=? AND date=? AND start_time=? AND end_time=? AND status='ASSIGNED'",
@@ -212,6 +220,20 @@ public class ClassSessionService {
                   "WHERE class_id=? AND work_type='CLASS_SUPPORT' " +
                   "AND date=? AND start_time=? AND end_time=? AND status='ASSIGNED'",
                   classId, oldDate, oldStart, oldEnd);
+        // Rescheduling can cancel the course manager's last support shift.
+        // Retain creator visibility, but revoke outdated full-class edit rights.
+        db.update(
+            "UPDATE class_access_scopes scope SET " +
+            "status=CASE WHEN c.created_by=e.username THEN 'ACTIVE' ELSE 'INACTIVE' END, " +
+            "source=CASE WHEN c.created_by=e.username THEN 'CREATED_BY_CS' " +
+            "ELSE 'CM_ASSIGNED_COURSE' END FROM classes c, employees e " +
+            "WHERE scope.class_id=c.class_id AND scope.employee_id=e.employee_id " +
+            "AND scope.class_id=? AND scope.status='ACTIVE' " +
+            "AND scope.source IN ('CM_ASSIGNED_COURSE','ASSIGNED_SCOPE','AUTO_ASSIGNED') " +
+            "AND NOT EXISTS (SELECT 1 FROM staff_schedules ss " +
+            "WHERE ss.class_id=scope.class_id AND ss.employee_id=scope.employee_id " +
+            "AND ss.work_type='CLASS_SUPPORT' AND ss.status='ASSIGNED')",
+            classId);
         db.update("UPDATE class_sessions SET status='CANCELLED' WHERE class_session_id=?",
                   input.originalSessionId());
         if (makeUp) {
@@ -277,6 +299,12 @@ public class ClassSessionService {
             }
             desired.add(slot);
         }
+
+        studentScheduleGuard.lockClassStudents(classId);
+        studentScheduleGuard.validateTimetable(classId, desired.stream()
+            .map(slot -> new StudentClassScheduleGuard.Slot(
+                    slot.date(),slot.start(),slot.end()))
+            .toList());
 
         List<Map<String,Object>> assigned = db.queryForList(
             "SELECT date,start_time,end_time FROM teaching_schedules " +
