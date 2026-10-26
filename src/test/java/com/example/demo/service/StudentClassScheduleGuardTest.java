@@ -62,8 +62,8 @@ class StudentClassScheduleGuardTest {
 
     @Test
     void changingATimetableCannotCauseAnotherClassConflict() {
-        when(db.queryForList(anyString(), eq(DATE), eq(START), eq(END),
-            eq(DATE), eq(END), eq(START), eq("class-b"))).thenReturn(
+        when(db.queryForList(anyString(), eq(DATE), eq(END),
+            eq(START), eq("class-b"))).thenReturn(
             List.of(Map.of("otherClass","IELTS-A","studentCode","HV001")));
         var ex = assertThrows(ApiException.class, () -> guard.validateTimetable(
             "class-b", List.of(new StudentClassScheduleGuard.Slot(DATE, START, END))));
