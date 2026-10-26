@@ -57,8 +57,7 @@ public class StudentClassScheduleGuard {
         for (Slot slot : proposed) {
             List<Map<String,Object>> conflicts = db.queryForList(
                 "SELECT other_class.class_code AS \"otherClass\", " +
-                "s.student_code AS \"studentCode\", ?::date AS date, " +
-                "?::time AS \"startTime\", ?::time AS \"endTime\" " +
+                "s.student_code AS \"studentCode\" " +
                 "FROM class_students own " +
                 "JOIN students s ON s.student_id=own.student_id " +
                 "JOIN class_students other ON other.student_id=own.student_id " +
@@ -69,7 +68,6 @@ public class StudentClassScheduleGuard {
                 "AND occupied.status='PLANNED' AND occupied.date=? " +
                 "AND occupied.start_time<? AND occupied.end_time>? " +
                 "WHERE own.class_id=? AND own.status='ACTIVE' LIMIT 1",
-                slot.date(),slot.start(),slot.end(),
                 slot.date(),slot.end(),slot.start(),classId);
             if (!conflicts.isEmpty()) {
                 Map<String,Object> first = conflicts.get(0);
