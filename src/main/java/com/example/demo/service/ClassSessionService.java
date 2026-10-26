@@ -301,10 +301,6 @@ public class ClassSessionService {
         }
 
         studentScheduleGuard.lockClassStudents(classId);
-        studentScheduleGuard.validateTimetable(classId, desired.stream()
-            .map(slot -> new StudentClassScheduleGuard.Slot(
-                    slot.date(),slot.start(),slot.end()))
-            .toList());
 
         List<Map<String,Object>> assigned = db.queryForList(
             "SELECT date,start_time,end_time FROM teaching_schedules " +
@@ -327,6 +323,13 @@ public class ClassSessionService {
                 .map(item -> new Slot(((Date)item.get("date")).toLocalDate(),
                         LocalTime.parse(item.get("start_time").toString()), LocalTime.parse(item.get("end_time").toString())))
                 .collect(Collectors.toSet());
+        // Existing historical inconsistencies must not prevent unrelated plan
+        // edits. Validate only newly introduced slots against other classes.
+        studentScheduleGuard.validateTimetable(classId, desired.stream()
+            .filter(slot -> !old.contains(slot))
+            .map(slot -> new StudentClassScheduleGuard.Slot(
+                    slot.date(),slot.start(),slot.end()))
+            .toList());
         if (running) {
             // Extending a running course is append-only: no existing planned lesson
             // is allowed to vanish or change time. Past lessons remain historical.
