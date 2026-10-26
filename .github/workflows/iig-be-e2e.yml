@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, feature/iig-automated-e2e-ci]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -73,7 +73,8 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in {1..100}; do
-            if curl --fail --silent http://127.0.0.1:8080/api/public/ping >/dev/null; then
+            status=$(curl --silent -o /dev/null -w "%{http_code}" http://localhost:8080/api/public/ping || true)
+            if [[ "$status" == "200" || "$status" == "401" ]]; then
               echo "Backend ready"
               exit 0
             fi
@@ -105,8 +106,8 @@ jobs:
         working-directory: frontend
         env:
           CI: 'true'
-          E2E_BASE_URL: http://127.0.0.1:5173
-          E2E_API_URL: http://127.0.0.1:8080/api
+          E2E_BASE_URL: http://localhost:5173
+          E2E_API_URL: http://localhost:8080/api
           E2E_SEED_PASSWORD: '123456'
         run: ./e2e/node_modules/.bin/playwright test --config=e2e/playwright.config.mjs
       - name: Save service logs
