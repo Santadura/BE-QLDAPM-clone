@@ -25,7 +25,7 @@ class ClassLifecycleIntegrityServiceTest {
         verify(db).queryForObject(
             argThat(sql -> sql.contains("CLASS_SUPPORT") &&
                 sql.contains("status='ASSIGNED'") &&
-                sql.contains("cs.start_time=ss.start_time")),
+                sql.contains("ss.start_time=cs.start_time")),
             eq(Integer.class),eq("class-01"));
     }
 
