@@ -46,6 +46,8 @@ public class ClassManagementService {
     private final JdbcTemplate jdbc;
     private final SchedulingAccess schedulingAccess;
     private final ClassSessionService classSessionService;
+    private final StudentClassScheduleGuard studentScheduleGuard;
+    private final ClassLifecycleIntegrityService lifecycleIntegrityService;
 
     @Transactional(readOnly = true)
     public List<ClassSummaryResponse> listClasses(Authentication authentication) {
@@ -403,6 +405,7 @@ public class ClassManagementService {
                 throw new ApiException(HttpStatus.CONFLICT,
                         "Every planned class session must have an assigned teacher before Running");
             }
+            lifecycleIntegrityService.requireCsCoverageBeforeRunning(classId);
 
             boolean hasValidSchedule = teachingScheduleRepository
                     .findByClassIdAndStatusIgnoreCaseOrderByDateAscStartTimeAsc(classId, "ASSIGNED")
@@ -431,6 +434,10 @@ public class ClassManagementService {
                         "Cannot complete a class while today or future planned lessons remain. " +
                         "Finish scheduled lessons or cancel future lessons through the approved workflow.");
             }
+        }
+
+        if ("COMPLETED".equals(nextStatus)) {
+            lifecycleIntegrityService.requireTeacherAttendanceBeforeCompleted(classId);
         }
 
         if ("COMPLETED".equals(nextStatus)
@@ -474,6 +481,9 @@ public class ClassManagementService {
             Student student = studentRepository.findById(studentId)
                     .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
                             "Student not found: " + studentId));
+            // Serialize concurrent enrollment/timetable mutations for this student.
+            jdbc.queryForObject("SELECT student_id FROM students WHERE student_id=? FOR UPDATE",
+                    String.class, studentId);
             EligibilityResponse eligibility = eligibility(student, classItem);
             if (!eligibility.eligible()) {
                 throw new ApiException(HttpStatus.CONFLICT,
@@ -1007,6 +1017,11 @@ public class ClassManagementService {
             } else if (value.compareTo(requirement.getValue()) < 0) {
                 reasons.add(requirement.getKey() + " target is below class requirement");
             }
+        }
+        if (reasons.isEmpty()) {
+            String collision = studentScheduleGuard.enrollmentConflict(
+                    student.getStudentId(), classItem.getClassId());
+            if (collision != null) reasons.add(collision);
         }
 
         return new EligibilityResponse(

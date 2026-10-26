@@ -67,6 +67,7 @@ public class TeacherSessionAttendanceService {
         return db.queryForList(
             "SELECT t.teaching_schedule_id AS id, t.class_id AS \"classId\", " +
             "t.teacher_id AS \"teacherId\", e.full_name AS \"teacherName\", " +
+            "t.status AS \"assignmentStatus\", " +
             "t.date, t.start_time AS \"startTime\", t.end_time AS \"endTime\", " +
             "a.status AS \"attendanceStatus\", a.recorded_at AS \"recordedAt\", " +
             "a.updated_at AS \"updatedAt\", recorder.full_name AS \"recordedByName\", " +
@@ -78,10 +79,13 @@ public class TeacherSessionAttendanceService {
             "JOIN employees e ON e.employee_id=t.teacher_id " +
             "JOIN class_sessions lesson ON lesson.class_id=t.class_id " +
             "AND lesson.date=t.date AND lesson.start_time=t.start_time " +
-            "AND lesson.end_time=t.end_time AND lesson.status='PLANNED' " +
+            "AND lesson.end_time=t.end_time " +
+            "AND lesson.status IN ('PLANNED','CANCELLED') " +
             "LEFT JOIN teacher_session_attendance a ON a.teaching_schedule_id=t.teaching_schedule_id " +
             "LEFT JOIN employees recorder ON recorder.employee_id=a.recorded_by " +
-            "WHERE t.class_id=? AND t.status='ASSIGNED' ORDER BY t.date,t.start_time,e.full_name",
+            "WHERE t.class_id=? AND ((t.status='ASSIGNED' AND lesson.status='PLANNED') " +
+            "OR (t.status='CANCELLED' AND a.attendance_id IS NOT NULL)) " +
+            "ORDER BY t.date,t.start_time,CASE WHEN t.status='CANCELLED' THEN 0 ELSE 1 END,e.full_name",
             actor.id(), classId);
     }
 
