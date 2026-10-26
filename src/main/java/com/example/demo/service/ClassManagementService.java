@@ -46,6 +46,7 @@ public class ClassManagementService {
     private final JdbcTemplate jdbc;
     private final SchedulingAccess schedulingAccess;
     private final ClassSessionService classSessionService;
+    private final StudentClassScheduleGuard studentScheduleGuard;
 
     @Transactional(readOnly = true)
     public List<ClassSummaryResponse> listClasses(Authentication authentication) {
@@ -403,6 +404,20 @@ public class ClassManagementService {
                 throw new ApiException(HttpStatus.CONFLICT,
                         "Every planned class session must have an assigned teacher before Running");
             }
+            Integer missingCs = jdbc.queryForObject(
+                    "SELECT count(*) FROM class_sessions cs WHERE cs.class_id=? " +
+                    "AND cs.status='PLANNED' AND NOT EXISTS (" +
+                    "SELECT 1 FROM staff_schedules ss WHERE ss.class_id=cs.class_id " +
+                    "AND ss.date=cs.date AND ss.start_time=cs.start_time " +
+                    "AND ss.end_time=cs.end_time AND ss.work_type='CLASS_SUPPORT' " +
+                    "AND ss.status='ASSIGNED')",
+                    Integer.class, classId);
+            if (missingCs == null || missingCs > 0) {
+                throw new ApiException(HttpStatus.CONFLICT,
+                    "Cannot start class: " + missingCs +
+                    " planned lesson(s) lack a CM-assigned CS support shift. " +
+                    "Assign CS before moving to RUNNING.");
+            }
 
             boolean hasValidSchedule = teachingScheduleRepository
                     .findByClassIdAndStatusIgnoreCaseOrderByDateAscStartTimeAsc(classId, "ASSIGNED")
@@ -430,6 +445,29 @@ public class ClassManagementService {
                 throw new ApiException(HttpStatus.CONFLICT,
                         "Cannot complete a class while today or future planned lessons remain. " +
                         "Finish scheduled lessons or cancel future lessons through the approved workflow.");
+            }
+        }
+
+        if ("COMPLETED".equals(nextStatus)) {
+            Integer unmarked = jdbc.queryForObject(
+                "SELECT count(*) FROM teaching_schedules ts " +
+                "JOIN class_sessions lesson ON lesson.class_id=ts.class_id " +
+                "AND lesson.date=ts.date AND lesson.start_time=ts.start_time " +
+                "AND lesson.end_time=ts.end_time AND lesson.status='PLANNED' " +
+                "LEFT JOIN teacher_session_attendance ta " +
+                "ON ta.teaching_schedule_id=ts.teaching_schedule_id " +
+                "WHERE ts.class_id=? AND ts.status='ASSIGNED' " +
+                "AND (ts.date < ? OR (ts.date=? AND ts.start_time<=?)) " +
+                "AND ta.attendance_id IS NULL",
+                Integer.class, classId,
+                LocalDate.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")),
+                LocalDate.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")),
+                java.time.LocalTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")));
+            if (unmarked != null && unmarked > 0) {
+                throw new ApiException(HttpStatus.CONFLICT,
+                    "Cannot complete class: " + unmarked +
+                    " teacher lesson(s) are missing CS attendance. " +
+                    "Record PRESENT, ABSENT or LATE for each taught lesson first.");
             }
         }
 
@@ -474,6 +512,9 @@ public class ClassManagementService {
             Student student = studentRepository.findById(studentId)
                     .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
                             "Student not found: " + studentId));
+            // Serialize concurrent enrollment/timetable mutations for this student.
+            jdbc.queryForObject("SELECT student_id FROM students WHERE student_id=? FOR UPDATE",
+                    String.class, studentId);
             EligibilityResponse eligibility = eligibility(student, classItem);
             if (!eligibility.eligible()) {
                 throw new ApiException(HttpStatus.CONFLICT,
@@ -1007,6 +1048,11 @@ public class ClassManagementService {
             } else if (value.compareTo(requirement.getValue()) < 0) {
                 reasons.add(requirement.getKey() + " target is below class requirement");
             }
+        }
+        if (reasons.isEmpty()) {
+            String collision = studentScheduleGuard.enrollmentConflict(
+                    student.getStudentId(), classItem.getClassId());
+            if (collision != null) reasons.add(collision);
         }
 
         return new EligibilityResponse(
