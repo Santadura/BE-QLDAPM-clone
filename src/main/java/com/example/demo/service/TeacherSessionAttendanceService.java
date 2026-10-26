@@ -67,7 +67,7 @@ public class TeacherSessionAttendanceService {
         return db.queryForList(
             "SELECT t.teaching_schedule_id AS id, t.class_id AS \"classId\", " +
             "t.teacher_id AS \"teacherId\", e.full_name AS \"teacherName\", " +
-            "t.status AS \"assignmentStatus\", "
+            "t.status AS \"assignmentStatus\", " +
             "t.date, t.start_time AS \"startTime\", t.end_time AS \"endTime\", " +
             "a.status AS \"attendanceStatus\", a.recorded_at AS \"recordedAt\", " +
             "a.updated_at AS \"updatedAt\", recorder.full_name AS \"recordedByName\", " +
