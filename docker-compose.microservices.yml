@@ -39,6 +39,8 @@ services:
       DB_PASSWORD: ${CORE_DB_PASSWORD:-postgres}
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-key-at-least-256-bits-please}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      PAYROLL_BRIDGE_ENABLED: "true"
+      PAYROLL_INTERNAL_API_KEY: ${PAYROLL_INTERNAL_API_KEY:-local-dev-payroll-key-change-before-deployment}
       HR_CERTIFICATE_BRIDGE_ENABLED: "true"
       HR_CERTIFICATES_EXTERNAL: "true"
       HR_INTERNAL_API_KEY: ${HR_INTERNAL_API_KEY:-local-dev-hr-key-change-before-deployment}
@@ -226,6 +228,39 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  payroll-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iig_payroll
+      POSTGRES_USER: iig_payroll
+      POSTGRES_PASSWORD: ${PAYROLL_DB_PASSWORD:-local-dev-payroll-password}
+    volumes:
+      - payroll_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iig_payroll -d iig_payroll"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  payroll-service:
+    build:
+      context: ./services/payroll-service
+    environment:
+      SERVER_PORT: "8097"
+      PAYROLL_DB_URL: jdbc:postgresql://payroll-postgres:5432/iig_payroll
+      PAYROLL_DB_USERNAME: iig_payroll
+      PAYROLL_DB_PASSWORD: ${PAYROLL_DB_PASSWORD:-local-dev-payroll-password}
+      PAYROLL_INTERNAL_API_KEY: ${PAYROLL_INTERNAL_API_KEY:-local-dev-payroll-key-change-before-deployment}
+      CORE_INTERNAL_URL: http://backend:8081
+    expose:
+      - "8097"
+    depends_on:
+      payroll-postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
   api-gateway:
     build:
       context: ./services/api-gateway
@@ -236,6 +271,7 @@ services:
       IDENTITY_SERVICE_URI: http://identity-service:8094
       REPORTING_SERVICE_URI: http://reporting-service:8095
       HR_SERVICE_URI: http://hr-service:8096
+      PAYROLL_SERVICE_URI: http://payroll-service:8097
     ports:
       - "8080:8080"
     depends_on:
@@ -249,6 +285,8 @@ services:
         condition: service_started
       hr-service:
         condition: service_started
+      payroll-service:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
@@ -258,3 +296,4 @@ volumes:
   identity_pgdata:
   reporting_pgdata:
   hr_pgdata:
+  payroll_pgdata:
