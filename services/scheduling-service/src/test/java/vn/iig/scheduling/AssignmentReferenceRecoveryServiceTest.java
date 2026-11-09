@@ -22,7 +22,7 @@ class AssignmentReferenceRecoveryServiceTest {
         var proof=new SchedulingCoreClient.DurableAssignmentReferenceReceipt(
             "event-2",2,"a".repeat(64));
         when(outbox.unresolvedEvent("event-2")).thenReturn(event);
-        when(core.committedAssignmentReceipt("STAFF","shift-1")).thenReturn(proof);
+        when(core.committedAssignmentReceipt("STAFF","shift-1","event-2")).thenReturn(proof);
         when(lifecycle.reconcileVerified(event,proof)).thenReturn(true);
         var result=service.verifyAndRecover("event-2");
         assertEquals("COMMITTED",result.state());
@@ -30,13 +30,13 @@ class AssignmentReferenceRecoveryServiceTest {
         var sequence=inOrder(core,outbox,lifecycle);
         sequence.verify(core).requireCoreWriterQuiesced();
         sequence.verify(outbox).unresolvedEvent("event-2");
-        sequence.verify(core).committedAssignmentReceipt("STAFF","shift-1");
+        sequence.verify(core).committedAssignmentReceipt("STAFF","shift-1","event-2");
         sequence.verify(lifecycle).reconcileVerified(event,proof);
     }
 
     @Test void differentCoreDigestNeverAdvancesSchedulingInbox() {
         when(outbox.unresolvedEvent("event-2")).thenReturn(event);
-        when(core.committedAssignmentReceipt("STAFF","shift-1")).thenReturn(
+        when(core.committedAssignmentReceipt("STAFF","shift-1","event-2")).thenReturn(
             new SchedulingCoreClient.DurableAssignmentReferenceReceipt(
                 "event-2",2,"b".repeat(64)));
         assertEquals(HttpStatus.CONFLICT,
@@ -47,7 +47,7 @@ class AssignmentReferenceRecoveryServiceTest {
 
     @Test void nonexistentCoreProofLeavesEventUnresolved() {
         when(outbox.unresolvedEvent("event-2")).thenReturn(event);
-        when(core.committedAssignmentReceipt("STAFF","shift-1"))
+        when(core.committedAssignmentReceipt("STAFF","shift-1","event-2"))
             .thenThrow(new ResponseStatusException(HttpStatus.CONFLICT,
                 "No matching Core receipt"));
         assertEquals(HttpStatus.CONFLICT,
@@ -69,7 +69,7 @@ class AssignmentReferenceRecoveryServiceTest {
         var proof=new SchedulingCoreClient.DurableAssignmentReferenceReceipt(
             "event-2",2,"a".repeat(64));
         when(outbox.unresolvedEvent("event-2")).thenReturn(event);
-        when(core.committedAssignmentReceipt("STAFF","shift-1")).thenReturn(proof);
+        when(core.committedAssignmentReceipt("STAFF","shift-1","event-2")).thenReturn(proof);
         when(lifecycle.reconcileVerified(event,proof)).thenReturn(false);
         assertEquals("COMPENSATING",service.verifyAndRecover("event-2").state());
     }
