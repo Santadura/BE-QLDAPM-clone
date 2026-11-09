@@ -2,11 +2,11 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 6 (Payroll ledger extraction)**, not a claim
-that all IIG business modules are independently deployable microservices.
-Core still owns Academic, Students, Scheduling, HR employee lifecycle,
+This branch is **migration phase 7 (Scheduling availability extraction)**, not
+a claim that all IIG business modules are independently deployable microservices.
+Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
-Authentication, Reporting, HR and Payroll** run as independent Spring Boot services
+Authentication, Reporting, HR, Payroll and Scheduling** run as independent Spring Boot services
 with different processes and exclusive PostgreSQL databases.
 
 The legacy `docker-compose.yml` and FE `/api/**` contract are unchanged.
@@ -20,11 +20,12 @@ React -> Spring Cloud Gateway :8080
   |-- /api/employee-management/*/certificates/** -> HR :8096 -> hr-postgres
   |-- /api/payroll/ranks/** -> HR :8096 -> hr-postgres
   |-- /api/payroll (read/detail/calculate) -> Payroll :8097 -> payroll-postgres
+  |-- /api/availabilities/** -> Scheduling :8098 -> scheduling-postgres
   +-- remaining /api/** -> Core :8081 -> core-postgres
                                    +-- audit events -> Audit :8092 -> audit-postgres
 ```
 
-Core, Audit, Catalog, Identity, Reporting, HR and Payroll use **seven independent PostgreSQL instances**, not just two schemas in
+Core, Audit, Catalog, Identity, Reporting, HR, Payroll and Scheduling use **eight independent PostgreSQL instances**, not just two schemas in
 the same logical database. The API gateway is a separately started Spring
 application, not an Nginx reverse proxy or a folder named gateway.
 
@@ -243,6 +244,56 @@ CI uses seven isolated PostgreSQL instances, tests first-time import,
 calculation in Payroll's own database, role restrictions, finalized-payroll
 protection and the existing FE Playwright suite.
 
+## Phase 7: Scheduling availability ownership with transaction leases
+
+`services/scheduling-service` runs on the Compose-only port **8098** and
+writes authoritative `scheduling_availabilities` to its **exclusive** database.
+Spring Cloud Gateway routes all existing `/api/availabilities/**` endpoints to
+this service with unchanged JSON field names. Class/teacher/CS assignments and
+attendance **remain in Core** for this migration phase.
+
+- One-time bootstrap imports the Core `availabilities` table, preserving
+  existing IDs, workers, review status and history. `scheduling_metadata`
+  prevents repeat imports from overwriting live rows. A transactionally updated,
+  versioned `scheduling_availability_outbox` synchronizes the Core read/reference
+  table. `scheduling_availability_versions` rejects stale revisions, including
+  deleted tombstones that must never be resurrected.
+- Scheduler registration and updates use **per-employee PostgreSQL advisory
+  transaction locks**, preventing two concurrent writes from bypassing the
+  no-overlap check. Date-specific and recurring weekday slots, rejected slots,
+  role restrictions and approval status are preserved. TC approves teachers;
+  CM approves CS/Sale.
+- Before any Core teacher or support assignment, Core requests a **live**
+  approved-slot reservation from Scheduling using a private service key.
+  The reservation is atomically created with the same per-employee database
+  lock used by Scheduling's mutations. Core holds it **until the local
+  assignment transaction completes**, then releases it. If the process dies,
+  the server expires the lease (10-minute maximum) instead of blocking edits
+  indefinitely. Mutations reject outstanding reservations, and Core's private
+  edit guard also rejects existing ASSIGNED schedules.
+- Consequently, a mutation cannot invalidate an approved slot during an
+  in-flight assignment, nor can a Core assignment rely solely on stale
+  asynchronous availability projections. If Scheduling cannot be reached,
+  Core fails closed rather than making an unsafe assignment.
+- REGISTER, UPDATE, DELETE and REVIEW are appended to a separate
+  **durable Scheduling audit outbox** in the same local transaction. A relay
+  sends idempotently to Core's private audit ingest, which feeds the already
+  independent Audit Service. A latest-state projection cannot collapse
+  intermediate audit events.
+- All internal APIs are reachable only within the Docker Compose network
+  under a unique `SCHEDULING_INTERNAL_API_KEY`. Gateway does not publish
+  `/internal/**`.
+- **Remaining extraction gates:** class sessions, teaching/staff assignment,
+  attendance and atomic employee/conflict reservations still reside in Core.
+  Source authentication/employee metadata also remains Core-owned pending
+  Identity/HR migration. Student enrollment/timetable cross-domain invariants
+  still require an Academic service and explicit compensation contracts.
+
+Regression now uses **8 isolated PostgreSQL instances**, tests legacy import,
+public API compatibility, conflict detection, approvals, worker/manager role
+restrictions, active-reservation edit/delete protection, versioned tombstone
+projection, durable audit and the existing React Playwright suite.
+
 ## Architecture decisions
 
 | Concern | Design | Reason |
@@ -304,6 +355,7 @@ mvn -B -ntp -f services/identity-service/pom.xml test
 mvn -B -ntp -f services/reporting-service/pom.xml test
 mvn -B -ntp -f services/hr-service/pom.xml test
 mvn -B -ntp -f services/payroll-service/pom.xml test
+mvn -B -ntp -f services/scheduling-service/pom.xml test
 npm ci && npx prisma validate
 docker compose -f docker-compose.microservices.yml config --quiet
 docker compose -f docker-compose.microservices.yml up --build -d
@@ -324,10 +376,10 @@ scenarios through the Gateway.
    without sharing the `users` table.
 2. **Academics** — classes, student membership, course targets and assessments
    belong together initially. Isolate write model and public contracts.
-3. **Scheduling** — own availability, assignments and staff shifts, avoid
-   cross-service SQL joins. Build a schedule-conflict API and request/response
-   contracts with Academics. The current enrollment conflict transaction must
-   be redesigned before either database is separated.
+3. **Scheduling** — availability ownership and live assignment leases are
+   extracted; next move staff/teacher assignment and attendance into the same
+   service. Build Academic session/conflict APIs with reservation and
+   compensation semantics before eliminating Core's scheduling writes.
 4. **HR/Payroll** — HR must own employee lifecycle; Payroll already owns its
    ledger but must consume versioned, finalized attendance/rate events instead
    of synchronous Core facts, and move review/rank-assignment workflows out.

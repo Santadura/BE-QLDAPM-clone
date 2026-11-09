@@ -540,3 +540,15 @@ private_scheduling_code="$(curl -sS -o /dev/null -w '%{http_code}' \
   "${BASE}/internal/scheduling/availability/export")"
 test "$private_scheduling_code" = "404"
 echo "PASS: scheduling migration internals are unavailable via public Gateway"
+
+# The independent Audit Service must eventually receive all four distinct
+# availability events, not just the last version of the state projection.
+audit_events_delivered=0
+for i in $(seq 1 60); do
+  result="$("${COMPOSE[@]}" exec -T audit-postgres psql -U iig_audit -d iig_audit -tAc \
+    "SELECT count(*) FROM audit_events WHERE entity_id='${slot_id}' AND entity_type='AVAILABILITY'" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [ "$result" = "4" ]; then audit_events_delivered=1; break; fi
+  sleep 2
+done
+test "$audit_events_delivered" = "1" || { echo "Independent Audit Service did not receive scheduling history ($result/4)"; exit 1; }
+echo "PASS: all four Scheduling mutations reached the independent Audit database"
