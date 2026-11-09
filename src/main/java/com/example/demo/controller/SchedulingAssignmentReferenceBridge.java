@@ -181,22 +181,15 @@ public class SchedulingAssignmentReferenceBridge {
             // considered delivered only if Core can PROVE it was committed
             // with the exact ID, digest, actor and command identity.
             if(event.revision()<old.revision()) {
-                Long exact=db.queryForObject(
-                    "SELECT count(*) FROM scheduling_assignment_reference_event_receipts " +
-                    "WHERE source_type=? AND schedule_id=? AND revision=? " +
-                    "AND event_id=? AND payload_hash=? AND actor_username=? " +
-                    "AND operation=? AND request_key=?",
-                    Long.class,event.sourceType(),event.scheduleId(),
-                    event.revision(),event.eventId(),event.payloadHash(),
-                    event.actorUsername(),event.operation(),event.requestKey());
-                if(exact!=null && exact==1)
+                if(exactHistoricalReceipt(event))
                     return new Receipt(event.eventId(),event.revision(),"ALREADY_APPLIED");
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Old reference event has no exact immutable Core proof");
             }
             if(event.revision()==old.revision()) {
                 if(old.eventId().equals(event.eventId()) &&
-                   old.hash().equals(event.payloadHash()))
+                   old.hash().equals(event.payloadHash()) &&
+                   exactHistoricalReceipt(event))
                     return new Receipt(event.eventId(),event.revision(),"ALREADY_APPLIED");
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Reference revision cannot be reused for another event");
@@ -372,6 +365,24 @@ public class SchedulingAssignmentReferenceBridge {
             throw new IllegalStateException(
                 "Could not confirm Core writer claim with reference transaction");
         return new Receipt(event.eventId(),event.revision(),"APPLIED");
+    }
+
+    /**
+     * Never acknowledge a replay from the collapsed latest-revision row
+     * alone: its actor does not identify the original command. The append-only
+     * per-event receipt must also prove the actor, operation, request key and
+     * exact payload digest, for both latest and older revisions.
+     */
+    private boolean exactHistoricalReceipt(Event event) {
+        Long exact=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_reference_event_receipts " +
+            "WHERE source_type=? AND schedule_id=? AND revision=? " +
+            "AND event_id=? AND payload_hash=? AND actor_username=? " +
+            "AND operation=? AND request_key=?",
+            Long.class,event.sourceType(),event.scheduleId(),
+            event.revision(),event.eventId(),event.payloadHash(),
+            event.actorUsername(),event.operation(),event.requestKey());
+        return exact!=null && exact==1;
     }
 
     private String text(JsonNode node,String key) {
