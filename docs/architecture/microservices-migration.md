@@ -133,6 +133,37 @@ properties (`period`, `overview`, `employees`, `schedules`, `financial`,
 - Architecture now uses **five separate PostgreSQL containers**, with no
   cross-service JDBC access. Do not call this full reporting extraction.
 
+## Phase 5: HR certificate write ownership (not full HR)
+
+`services/hr-service` and its private `iig_hr` PostgreSQL database
+own employee **certificate** creation, updates and reads. The public
+`/api/employee-management/{id}/certificates` GET/POST/PUT routes now go
+to HR through Gateway, preserving the prior JSON fields and response codes.
+
+- HR verifies each request's JWT and employee management scope against
+  the existing Core `EmployeeManagementService.detail` via a private
+  service-key-protected API. TC/CM restrictions and Admin access remain
+  enforced by the same business rules.
+- Existing certificates are imported once from Core into `hr_certificates`.
+  HR creates certificate events in `hr_certificate_outbox` in the same
+  database transaction as each write; retries propagate the latest version
+  to Core.
+- Core's `certificates` table remains a read-only reference projection
+  for older profile/salary dependencies. Per-certificate
+  `hr_certificate_versions` prevents stale/out-of-order deliveries from
+  overwriting newer records. Direct Core writes are blocked in the new
+  Compose topology; the original monolith Compose retains its old behavior.
+- All HR service APIs stay on the Compose private network, except the
+  routes explicitly exposed through Gateway. Internal import/access/project
+  APIs are **not** routed publicly.
+- **Not yet migrated:** employee/role lifecycle, salary ranks,
+  payroll ledgers, HR authentication independence and other HR workflows.
+  Core still owns the `employees` table, so this is a safe incremental
+  bounded-context extraction, not the end of the HR migration.
+
+The six PostgreSQL containers are logically isolated: core, audit,
+catalog, identity, reporting and HR.
+
 ## Architecture decisions
 
 | Concern | Design | Reason |
@@ -191,6 +222,7 @@ mvn -B -ntp -f services/audit-service/pom.xml test
 mvn -B -ntp -f services/catalog-service/pom.xml test
 mvn -B -ntp -f services/identity-service/pom.xml test
 mvn -B -ntp -f services/reporting-service/pom.xml test
+mvn -B -ntp -f services/hr-service/pom.xml test
 npm ci && npx prisma validate
 docker compose -f docker-compose.microservices.yml config --quiet
 docker compose -f docker-compose.microservices.yml up --build -d
