@@ -240,9 +240,8 @@ public class SchedulingAssignmentReferenceBridge {
         // that case instead of accepting a stale worker/assigner.
         Long activeWorker=db.queryForObject(
             "SELECT count(*) FROM employees e JOIN users u ON u.username=e.username " +
-            "JOIN roles r ON r.role_id=u.role_id " +
             "WHERE e.employee_id=? AND e.status='ACTIVE' AND u.status='ACTIVE' " +
-            "AND upper(r.role_name)=?",
+            "AND u.role_id=?",
             Long.class,employee,role);
         // Cancellation must remain possible after an employee is disabled.
         // Prevent *new* assignments to inactive workers; the manager still
@@ -252,9 +251,8 @@ public class SchedulingAssignmentReferenceBridge {
                 "Scheduling reference worker is inactive or has changed role");
         Long activeAssigner=db.queryForObject(
             "SELECT count(*) FROM employees e JOIN users u ON u.username=e.username " +
-            "JOIN roles r ON r.role_id=u.role_id " +
             "WHERE e.employee_id=? AND e.username=? AND e.status='ACTIVE' " +
-            "AND u.status='ACTIVE' AND upper(r.role_name)='CM'",
+            "AND u.status='ACTIVE' AND u.role_id='CM'",
             Long.class,assignedBy,event.actorUsername());
         if(activeAssigner==null || activeAssigner!=1)
             throw new ResponseStatusException(HttpStatus.CONFLICT,
