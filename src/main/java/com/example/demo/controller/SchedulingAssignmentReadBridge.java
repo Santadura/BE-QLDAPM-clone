@@ -132,7 +132,8 @@ public class SchedulingAssignmentReadBridge {
         db.batchUpdate(sql,args);
     }
 
-    public record ManifestSummary(long rowCount,long versionSum,long pendingCount) {}
+    public record ManifestSummary(long rowCount,long versionSum,long pendingCount,
+                                  long liveSchedules,long trackedLiveSchedules) {}
 
     /**
      * Private, cursor-paginated source manifest for read-model cutover checks.
@@ -165,11 +166,20 @@ public class SchedulingAssignmentReadBridge {
     public ManifestSummary manifestSummary(
             @RequestHeader(value="X-Internal-Key",required=false) String key) {
         authorize(key);
+        // Count actual source rows as well as outbox entries: a missing
+        // trigger/outbox record must block ownership transfer rather than
+        // silently looking consistent on both sides.
         return db.queryForObject(
-            "SELECT count(*),COALESCE(sum(version),0)," +
-            "count(*) FILTER (WHERE delivered_at IS NULL) " +
-            "FROM scheduling_assignment_outbox",
-            (rs,i)->new ManifestSummary(rs.getLong(1),rs.getLong(2),rs.getLong(3)));
+            "SELECT (SELECT count(*) FROM scheduling_assignment_outbox)," +
+            "(SELECT COALESCE(sum(version),0) FROM scheduling_assignment_outbox)," +
+            "(SELECT count(*) FROM scheduling_assignment_outbox WHERE delivered_at IS NULL)," +
+            "((SELECT count(*) FROM teaching_schedules)+(SELECT count(*) FROM staff_schedules))," +
+            "((SELECT count(*) FROM teaching_schedules t JOIN scheduling_assignment_outbox o " +
+            "ON o.source_type='TEACHING' AND o.schedule_id=t.teaching_schedule_id)+" +
+            "(SELECT count(*) FROM staff_schedules s JOIN scheduling_assignment_outbox o " +
+            "ON o.source_type='STAFF' AND o.schedule_id=s.staff_schedule_id))",
+            (rs,i)->new ManifestSummary(rs.getLong(1),rs.getLong(2),rs.getLong(3),
+                rs.getLong(4),rs.getLong(5)));
     }
 
     private List<AssignmentSnapshot> snapshots(List<Pending> changes) {
