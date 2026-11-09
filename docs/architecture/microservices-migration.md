@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8a (independent assignment query model)**, not
+This branch is **migration phase 8b-1 (independent assignment intent reservations)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -345,6 +345,43 @@ the JSON key shapes that React already expects.
 - CI checks bootstrap of existing schedules, GET field/role compatibility,
   Core-side inserts, status transitions, class-name invalidation, tombstones,
   exact-version outbox acknowledgement, and all existing FE Playwright tests.
+
+## Phase 8b-1: Scheduling-owned assignment intent reservations
+
+Scheduling's independent database now owns an additional *short-lived worker /
+time assignment intent* table, `scheduling_assignment_intent_reservations`.
+The private reservation API still returns the same lease ID to Core. In one
+Scheduling transaction it:
+
+1. Takes the existing PostgreSQL employee advisory transaction lock (shared
+   with availability create/update/delete/review), then checks a live approved
+   availability slot.
+2. Rejects overlapping **in-flight** intents for that employee/date/time with
+   HTTP 409. Adjacent intervals are allowed. Different employees do not block
+   one another; expired intents do not count.
+3. Inserts both the availability lease and the assignment intent atomically.
+   Releasing the lease after Core commits/rolls back deletes the intent using
+   a PostgreSQL foreign-key cascade. The existing 10-minute expiry cleanup
+   also removes both if Core crashes.
+4. Core preserves HTTP 409 as a business conflict instead of translating it
+   to a misleading HTTP 503 outage.
+
+The table is created through the Scheduling service's idempotent startup
+`schema.sql`, including for existing preserved database volumes. Neither the
+Gateway public routes nor the React request/response contracts change.
+
+**Scope and safety:** The reservation only blocks *simultaneous in-flight
+commands*. It is NOT a check against already committed assignments: that
+check, the last-support-CS rule, teacher attendance association, timetable
+rules, and the authoritative assignment writes still execute in Core's local
+transaction. There is no cross-database transaction. Core remains the sole
+writer; assignment reservations must NOT be advertised as completion of
+phase 8b or as permission to route POST/PUT/DELETE to Scheduling yet.
+
+Next gates: define durable idempotent assignment commands and a
+versioned Academic session/coverage contract; then migrate ownership of
+teaching/CS/Sale assignment **and** attendance writes only with replay,
+compensation, reference projection and verified FE regression.
 
 **Still required for full Scheduling extraction:** move the assignment and
 teacher attendance write model together with its worker-conflict
