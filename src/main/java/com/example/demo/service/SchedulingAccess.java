@@ -23,6 +23,7 @@ import java.util.UUID;
 public class SchedulingAccess {
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
     private final JdbcTemplate jdbc;
+    private final SchedulingReservationClient reservations;
 
     public record StaffIdentity(String id, String username, String role) {}
 
@@ -134,6 +135,10 @@ public class SchedulingAccess {
 
     public boolean hasApprovedAvailability(String employeeId, LocalDate date,
                                             LocalTime start, LocalTime end, String campus) {
+        if(reservations.enabled()) {
+            // Source of truth + post-transaction lease, not the async FK copy.
+            return reservations.reserveIfApproved(employeeId,date,start,end,campus);
+        }
         // RECURRING applies to the same weekday, including past lessons.
         // WEEKLY is valid only for its exact available_date.
         Integer count = jdbc.queryForObject(
