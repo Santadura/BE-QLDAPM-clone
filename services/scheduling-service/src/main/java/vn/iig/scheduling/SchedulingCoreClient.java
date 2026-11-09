@@ -68,6 +68,43 @@ public class SchedulingCoreClient {
         }
     }
 
+    public record AssignmentManifestSummary(long rowCount,long versionSum,long pendingCount) {}
+
+    /** An independent non-outbox-draining manifest for ownership cutover checks. */
+    public AssignmentManifestSummary assignmentManifestSummary() {
+        try {
+            AssignmentManifestSummary result=client.get()
+                .uri("/internal/scheduling/assignments/manifest/summary")
+                .header("X-Internal-Key",key)
+                .retrieve().body(AssignmentManifestSummary.class);
+            if(result==null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core assignment manifest summary missing");
+            return result;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core assignment manifest summary unavailable",ex);
+        }
+    }
+
+    public List<AssignmentProjectionRepository.AssignmentSnapshot> assignmentManifest(
+            String afterSource,String afterId,int limit) {
+        try {
+            AssignmentProjectionRepository.AssignmentSnapshot[] rows=client.get()
+                .uri(builder->builder.path("/internal/scheduling/assignments/manifest")
+                    .queryParam("afterSource",afterSource)
+                    .queryParam("afterId",afterId)
+                    .queryParam("limit",limit).build())
+                .header("X-Internal-Key",key)
+                .retrieve().body(AssignmentProjectionRepository.AssignmentSnapshot[].class);
+            if(rows==null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core assignment manifest page missing");
+            return Arrays.asList(rows);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core assignment manifest page unavailable",ex);
+        }
+    }
+
     public List<AssignmentProjectionRepository.AssignmentSnapshot> pendingAssignments(int limit) {
         try {
             AssignmentProjectionRepository.AssignmentSnapshot[] entries=client.get()
