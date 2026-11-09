@@ -1,0 +1,99 @@
+# Parallel, opt-in architecture: the legacy compose file remains untouched.
+# Start: docker compose -f docker-compose.microservices.yml up --build -d
+# Gateway is the ONLY externally published HTTP entrypoint (localhost:8080).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: qlapm_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${CORE_DB_PASSWORD:-postgres}
+    volumes:
+      - core_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d qlapm_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  db-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.prisma
+    environment:
+      DATABASE_URL: postgresql://postgres:${CORE_DB_PASSWORD:-postgres}@postgres:5432/qlapm_db?schema=public
+      DIRECT_URL: postgresql://postgres:${CORE_DB_PASSWORD:-postgres}@postgres:5432/qlapm_db?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: "8081"
+      DB_URL: jdbc:postgresql://postgres:5432/qlapm_db
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${CORE_DB_PASSWORD:-postgres}
+      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-key-at-least-256-bits-please}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      AUDIT_RELAY_ENABLED: "true"
+      AUDIT_SERVICE_URL: http://audit-service:8092
+      AUDIT_INTERNAL_API_KEY: ${AUDIT_INTERNAL_API_KEY:-local-dev-audit-key-change-before-deployment}
+    expose:
+      - "8081"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      audit-service:
+        condition: service_started
+    restart: unless-stopped
+
+  audit-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iig_audit
+      POSTGRES_USER: iig_audit
+      POSTGRES_PASSWORD: ${AUDIT_DB_PASSWORD:-local-dev-audit-password}
+    volumes:
+      - audit_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iig_audit -d iig_audit"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  audit-service:
+    build:
+      context: ./services/audit-service
+    environment:
+      SERVER_PORT: "8092"
+      AUDIT_DB_URL: jdbc:postgresql://audit-postgres:5432/iig_audit
+      AUDIT_DB_USERNAME: iig_audit
+      AUDIT_DB_PASSWORD: ${AUDIT_DB_PASSWORD:-local-dev-audit-password}
+      AUDIT_INTERNAL_API_KEY: ${AUDIT_INTERNAL_API_KEY:-local-dev-audit-key-change-before-deployment}
+    expose:
+      - "8092"
+    depends_on:
+      audit-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+    environment:
+      SERVER_PORT: "8080"
+      CORE_SERVICE_URI: http://backend:8081
+    ports:
+      - "8080:8080"
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  core_pgdata:
+  audit_pgdata:
