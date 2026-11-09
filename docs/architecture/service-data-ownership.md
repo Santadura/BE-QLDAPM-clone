@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 3 (authentication extraction in progress)**. Do not claim full migration before every
+> Architecture status: **Phase 4 (Reporting statistics read-model extraction)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -17,7 +17,7 @@
 | Course FK projection | `courses` | Legacy academic read/reference copy; Catalog is authoritative |
 | Audit | **`audit_events`** | **Isolated Audit database (extracted)** |
 | Audit relay source | `audit_logs`, `audit_outbox_deliveries` | Transactional source in legacy core |
-| Dashboard / Statistics | Future asynchronous projection DB | Legacy core; no independent read model yet |
+| Dashboard / Statistics | `statistics_snapshots` read model | **Standalone Reporting statistics API and database**; dashboard remains in core; upstream statistics still calculated in core (transitional) |
 
 The above is the **target ownership design** for remaining entities, not a
 claim that the corresponding services already exist. Legacy FK links and SQL
@@ -32,6 +32,8 @@ Spring Cloud Gateway (:8080 public)
   |-- POST /api/auth/login, /api/auth/logout --> Auth (:8094) --> identity-postgres
   |     (live credential lookup & logout revocation --> Core private API)
   |-- /api/classes/courses, /api/catalog/** --> Catalog (:8093) --> catalog-postgres
+  |-- /api/statistics ------------------------> Reporting (:8095) --> reporting-postgres
+  |      (live JWT authorization + key-protected snapshot via Core)
   |-- /api/** -------------------------------> Core (:8081) --> core-postgres
                                                 |   |
                                                 |   +-- catalog reference projection (internal API)
@@ -120,7 +122,14 @@ service-key-protected projection API after bootstrap.
 
 ### E. Read models & operational readiness
 
-- Move Dashboard/Statistics into independent projection storage via events.
+- [x] Extract Admin statistics GET API to standalone Reporting service with an
+  exclusive PostgreSQL snapshot store; validate current ADMIN session on
+  every read; expose `X-Reporting-Refreshed-At`; tolerate at most a configurable
+  30-second stale response while the source is healthy.
+- [ ] Replace the temporary Core snapshot endpoint with domain event streams
+  (Academic/Scheduling/HR/Payroll), including idempotent backfill and replay.
+- [ ] Move role-specific Dashboard into owned Reporting projections.
+- [ ] Move all statistics computation out of the Core monolith.
 - Add correlation IDs, distributed tracing, readiness endpoints, retry limits,
   dead-letter handling and alerting on unsent outbox records.
 - Run all FE Playwright tests plus BE integrity tests on the composed stack.
@@ -136,5 +145,7 @@ there are no cross-service SQL joins or shared writable tables,
 distributed business invariants and rollback are proven by automated tests,
 and actual FE flows continue to work through Gateway.
 
-Phase 2 has deliberately satisfied **only** the Audit and Catalog extraction
-gates, with core still present.
+Phase 4 now has independent Audit and Catalog ownership and separately
+deployed Authentication and Reporting read-model processes. **It is not a
+fully migrated system**: Core is still the source of credential updates,
+reporting computations, dashboard queries and domain transactions.
