@@ -46,13 +46,42 @@ class SchedulingAssignmentReadServiceTest {
         var entries=List.of(changed);
         when(core.currentViewer("cm")).thenReturn(
             new SchedulingCoreClient.Viewer("cm-1","cm001","CM"));
-        when(core.pendingAssignments(500)).thenReturn(entries);
+        when(core.pendingAssignments(500)).thenReturn(entries,List.of());
         service.staff("cm",monday,"CS");
         var order=inOrder(repo,core);
         order.verify(core).pendingAssignments(500);
         order.verify(repo).applyBatch(entries);
         order.verify(core).acknowledgeAssignments(entries);
         order.verify(repo).list("STAFF",null,"CS",monday,false);
+    }
+
+    @Test void drainsNewCommitArrivingAfterShortFirstBatch() {
+        var first=new AssignmentProjectionRepository.AssignmentSnapshot(
+            "STAFF","cs-cancelled","cs-001","CS Name","CS","class-1",
+            "C001","My class","center-01",monday,java.time.LocalTime.of(9,0),
+            java.time.LocalTime.of(11,0),"CLASS_SUPPORT","CANCELLED","cm-1",8,false);
+        var second=new AssignmentProjectionRepository.AssignmentSnapshot(
+            "STAFF","cs-new","cs-002","CS New","CS","class-1",
+            "C001","My class","center-01",monday,java.time.LocalTime.of(9,0),
+            java.time.LocalTime.of(11,0),"CLASS_SUPPORT","ASSIGNED","cm-1",2,false);
+        var firstBatch=List.of(first);
+        var secondBatch=List.of(second);
+        when(core.currentViewer("cm")).thenReturn(
+            new SchedulingCoreClient.Viewer("cm-1","cm001","CM"));
+        // A committed change appears while the first, short batch is applied.
+        when(core.pendingAssignments(500))
+            .thenReturn(firstBatch,secondBatch,List.of());
+        service.staff("cm",monday,"CS");
+        var order=inOrder(core,repo);
+        order.verify(core).pendingAssignments(500);
+        order.verify(repo).applyBatch(firstBatch);
+        order.verify(core).acknowledgeAssignments(firstBatch);
+        order.verify(core).pendingAssignments(500);
+        order.verify(repo).applyBatch(secondBatch);
+        order.verify(core).acknowledgeAssignments(secondBatch);
+        order.verify(core).pendingAssignments(500);
+        order.verify(repo).list("STAFF",null,"CS",monday,false);
+        verify(core,times(3)).pendingAssignments(500);
     }
 
     @Test void unavailableCoreChangesNeverReturnStaleAssignments() {
