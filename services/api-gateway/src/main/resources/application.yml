@@ -13,6 +13,23 @@ spring:
         connect-timeout: 3000
         response-timeout: 45s
       routes:
+        # Phase 8a: schedule GETs served from independent Scheduling read
+        # database. POST/PUT/DELETE remain in Core for class/CS invariants.
+        - id: scheduling-assignment-teaching-read
+          uri: ${SCHEDULING_SERVICE_URI:http://localhost:8098}
+          predicates:
+            - Path=/api/teaching-schedules
+            - Method=GET
+        - id: scheduling-assignment-staff-read
+          uri: ${SCHEDULING_SERVICE_URI:http://localhost:8098}
+          predicates:
+            - Path=/api/staff-schedules
+            - Method=GET
+        - id: scheduling-assignment-worker-read
+          uri: ${SCHEDULING_SERVICE_URI:http://localhost:8098}
+          predicates:
+            - Path=/api/schedules/me
+            - Method=GET
         # Availability is now registered/reviewed in Scheduling's independent
         # database. Other class/teacher/staff assignments remain in Core.
         - id: scheduling-availabilities
