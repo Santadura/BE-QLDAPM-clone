@@ -44,3 +44,17 @@ CREATE TABLE IF NOT EXISTS scheduling_metadata (
   key VARCHAR(80) PRIMARY KEY,
   value VARCHAR(200) NOT NULL
 );
+
+-- Distinct append-only audit stream: a collapsed latest-version projection
+-- must never erase intermediate REGISTER/REVIEW/UPDATE/DELETE audit events.
+CREATE TABLE IF NOT EXISTS scheduling_availability_audit_outbox (
+  event_id VARCHAR(50) PRIMARY KEY,
+  username VARCHAR(100) NOT NULL,
+  action VARCHAR(50) NOT NULL,
+  availability_id VARCHAR(50) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  delivered_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_scheduling_audit_pending
+  ON scheduling_availability_audit_outbox(created_at,event_id)
+  WHERE delivered_at IS NULL;
