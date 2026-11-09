@@ -2,34 +2,28 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 4 (reporting read-model extraction)**, not a claim that the entire IIG system
-has become independently deployable microservices. The existing monolith
-still owns Auth, HR, Classes, Students, Scheduling, Payroll and Statistics.
-**Audit, Course Catalog, Authentication and Reporting** now run as independent Spring Boot services
+This branch is **migration phase 5b (HR salary-rank ownership)**, not a claim
+that all IIG business modules are independently deployable microservices.
+Core still owns Academic, Students, Scheduling, Payroll transactions,
+employee lifecycle and credential writes. **Audit, Course Catalog,
+Authentication, Reporting and HR** run as independent Spring Boot services
 with different processes and exclusive PostgreSQL databases.
 
 The legacy `docker-compose.yml` and FE `/api/**` contract are unchanged.
 The opt-in `docker-compose.microservices.yml` runs the new stack:
 
-```text
-React (localhost:5173)
-  |
-  | /api/** with JWT
-  v
-Spring Cloud Gateway :8080         [public]
-  |
-  v
-IIG Core Spring Boot :8081         [private container network]
-  |                              \\
-  v                               \\ durable audit event delivery (HTTP)
-PostgreSQL core_db                   v
-[classes/students/rosters/etc.]   Audit Service :8092 [private]
-                                    |
-                                    v
-                                 PostgreSQL audit_db [private]
-```
+\`\`\`text
+React -> Spring Cloud Gateway :8080
+  |-- /api/auth/login, /api/auth/logout -> Identity :8094 -> identity-postgres
+  |-- /api/classes/courses, /api/catalog/** -> Catalog :8093 -> catalog-postgres
+  |-- /api/statistics, /api/dashboard -> Reporting :8095 -> reporting-postgres
+  |-- /api/employee-management/*/certificates/** -> HR :8096 -> hr-postgres
+  |-- /api/payroll/ranks/** -> HR :8096 -> hr-postgres
+  +-- remaining /api/** -> Core :8081 -> core-postgres
+                                   +-- audit events -> Audit :8092 -> audit-postgres
+\`\`\`
 
-Core, Audit and Catalog use **different PostgreSQL instances**, not just two schemas in
+Core, Audit, Catalog, Identity, Reporting and HR use **different PostgreSQL instances**, not just two schemas in
 the same logical database. The API gateway is a separately started Spring
 application, not an Nginx reverse proxy or a folder named gateway.
 
@@ -156,13 +150,47 @@ to HR through Gateway, preserving the prior JSON fields and response codes.
 - All HR service APIs stay on the Compose private network, except the
   routes explicitly exposed through Gateway. Internal import/access/project
   APIs are **not** routed publicly.
-- **Not yet migrated:** employee/role lifecycle, salary ranks,
-  payroll ledgers, HR authentication independence and other HR workflows.
+- **Not yet migrated in phase 5a:** employee/role lifecycle and salary ranks
+  (salary ranks are extracted in phase 5b below), payroll ledgers,
+  HR authentication independence and other HR workflows.
   Core still owns the `employees` table, so this is a safe incremental
   bounded-context extraction, not the end of the HR migration.
 
 The six PostgreSQL containers are logically isolated: core, audit,
 catalog, identity, reporting and HR.
+
+## Phase 5b: HR salary ranks and latest Core Payroll compatibility
+
+The same **independent HR service and database** that owns certificates
+now owns salary-rank creation, updates and management queries.
+
+- Gateway routes `/api/payroll/ranks` and
+  `/api/payroll/ranks/{id}` to the HR service, preserving the existing
+  rank JSON contract. Current JWTs and active role are checked against the
+  protected Core `/api/me` endpoint on every request. Admin can write;
+  TC sees TEACHER ranks and CM sees CS/SALE ranks.
+- On initial startup HR imports existing rank records from
+  `GET /internal/hr/salary-ranks/export`. It stores authoritative
+  `hr_salary_ranks` with transactionally written
+  `hr_salary_rank_outbox`. A versioned HTTP projection updates Core's
+  local `salary_ranks` reference table, and `hr_salary_rank_versions`
+  prevents a stale event overwriting a newer rank.
+- The newer `main` branch introduced payroll endpoints and new
+  `SchedulingAccess.requireActiveRole`. These files were carried into
+  the **same** Microservices branch without replacing the protected
+  CS-cancellation logic or removing the planned-session seed fixture.
+- Core Prisma migrations now create salary rank histories, salary review
+  requests and calculated work items expected by the new Payroll API.
+- **Payroll is not independently owned yet.** Those new tables,
+  calculation transactions and review workflows are still in the Core DB
+  and must later move to a dedicated Payroll ledger.
+- Four business-write ownership boundaries have been established:
+  Course Catalog, Audit, HR Certificates, HR Salary Ranks. Reporting
+  owns snapshots, and Authentication owns its local credential projection
+  but still depends on Core for authoritative account state.
+
+There are still **six PostgreSQL instances**, not seven: HR Certificates
+and HR Salary Ranks are two bounded contexts in the same HR deployment.
 
 ## Architecture decisions
 
@@ -187,7 +215,7 @@ catalog, identity, reporting and HR.
   events without rows in `audit_logs` cannot be propagated. An outbox-wide
   cleanup/retention policy and alarm for delivery lag are still needed.
 - Gateway and core remain a single point of failure for classroom workflows.
-- Classes, students, scheduling, HR and payroll are **not yet independently
+- Classes, students, scheduling, the employee lifecycle and payroll are **not yet independently
   deployed bounded contexts**. Calling phase 1 a completed full migration is
   incorrect.
 - Local default passwords in the Compose file are for the disposable demo only,
