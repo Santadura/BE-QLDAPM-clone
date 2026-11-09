@@ -486,6 +486,16 @@ Strict cutover verification now compares **both** the FE read copy and this
 candidate write-shadow with Core, including row counts, indexed fields and
 JSON values. Neither projection is authoritative for mutations yet.
 
+A new transaction-scoped `AssignmentWriteConflictGuard` is available for
+the future writer. While holding the same employee advisory lock used for
+availability, it requires an unexpired corresponding reservation and rejects
+overlapping **committed** worker slots from the normalized shadow. Teacher
+assignment also locks the class and rejects an already-covered class slot.
+Adjacency is allowed; CS coverage replacement and teacher attendance still
+need Academic coordination. The guard is a component, not an enabled API:
+it cannot be used as authoritative permission until that shadow becomes
+the sole writable Scheduling assignment state inside one database transaction.
+
 A new private `POST /internal/scheduling/assignments/commands/stage`
 validates the service key plus a *currently active* Core JWT. An independent
 Scheduling-owned `scheduling_assignment_command_inbox` records
