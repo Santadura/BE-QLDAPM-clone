@@ -104,8 +104,9 @@ public class SchedulingAssignmentReferenceBridge {
         String rowId=text(p,"id");
         if(employee==null || employee.isBlank() || employee.length()>50 ||
                 !event.scheduleId().equals(rowId) ||
-                !Set.of("CS","SALE").contains(role) ||
-                !Set.of("ASSIGNED","CANCELLED").contains(status) ||
+                role==null || !Set.of("CS","SALE").contains(role) ||
+                status==null || !Set.of("ASSIGNED","CANCELLED").contains(status) ||
+                workType==null ||
                 (p.hasNonNull("classId") && !p.get("classId").asText().isBlank()) ||
                 ("CS".equals(role) && !Set.of("OPERATIONS_SUPPORT","FRONT_DESK").contains(workType)) ||
                 ("SALE".equals(role) && !Set.of("SALES_SHIFT","LEAD_FOLLOWUP","CONSULTATION").contains(workType)))
