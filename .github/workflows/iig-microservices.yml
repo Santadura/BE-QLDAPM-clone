@@ -13,6 +13,7 @@ on:
   push:
     branches:
       - feature/spring-microservices-migration-20261109
+      - feature/spring-microservices-identity-20261109
   workflow_dispatch:
 
 concurrency:
@@ -24,7 +25,7 @@ permissions:
 
 jobs:
   service-tests:
-    name: Gateway, Catalog, Audit, core and Prisma validation
+    name: Gateway, Identity, Catalog, Audit, core and Prisma validation
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -46,6 +47,8 @@ jobs:
         run: mvn -B -ntp -f services/audit-service/pom.xml test
       - name: Catalog microservice tests
         run: mvn -B -ntp -f services/catalog-service/pom.xml test
+      - name: Identity authentication microservice tests
+        run: mvn -B -ntp -f services/identity-service/pom.xml test
       - name: Validate Prisma schema
         run: |
           npm ci
@@ -57,7 +60,7 @@ jobs:
         run: docker compose -f docker-compose.microservices.yml config --quiet
 
   distributed-smoke:
-    name: Docker PostgreSQL x3, gateway routes, catalog and outbox
+    name: Docker PostgreSQL x4, Gateway, Identity, Catalog and Audit
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -104,7 +107,7 @@ jobs:
         run: ./e2e/node_modules/.bin/playwright test --config=e2e/playwright.config.mjs
       - name: Print service logs when smoke fails
         if: failure()
-        run: docker compose -f docker-compose.microservices.yml logs --no-color --tail=160 backend api-gateway audit-service catalog-service
+        run: docker compose -f docker-compose.microservices.yml logs --no-color --tail=160 backend api-gateway audit-service catalog-service identity-service
       - name: Logs for diagnosis
         if: always()
         run: |
