@@ -3,8 +3,8 @@
 -- A future saga must renew/verify the lease before committing its own DB.
 CREATE TABLE IF NOT EXISTS scheduling_academic_session_leases (
   lease_id VARCHAR(50) PRIMARY KEY,
-  class_id VARCHAR(50) NOT NULL REFERENCES classes(class_id),
-  class_session_id VARCHAR(50) NOT NULL REFERENCES class_sessions(class_session_id),
+  class_id VARCHAR(50) NOT NULL REFERENCES classes(class_id) ON DELETE CASCADE,
+  class_session_id VARCHAR(50) NOT NULL REFERENCES class_sessions(class_session_id) ON DELETE CASCADE,
   expected_class_version BIGINT NOT NULL,
   expected_session_version BIGINT NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
@@ -25,7 +25,8 @@ BEGIN
     RAISE EXCEPTION 'Academic lesson is reserved by an in-flight Scheduling command'
       USING ERRCODE='55000';
   END IF;
-  RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
 END;
 $$;
 DROP TRIGGER IF EXISTS trg_iig_leased_lesson_guard ON class_sessions;
