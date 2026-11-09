@@ -109,6 +109,8 @@ class SchedulingAssignmentReferenceBridgeTest {
             eq(Long.class),eq("cs-001"),eq("CS"))).thenReturn(1L);
         when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
             eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
+        when(db.update(startsWith("INSERT INTO staff_schedules"),
+            any(Object[].class))).thenReturn(1);
         var result=bridge.apply("trusted-core-key",valid());
         assertEquals("APPLIED",result.outcome());
         verify(db).queryForObject(contains("set_config('iig.assignment_reference_projection'"),
@@ -171,6 +173,80 @@ class SchedulingAssignmentReferenceBridgeTest {
             assertThrows(ResponseStatusException.class,
                 ()->bridge.apply("trusted-core-key",event)).getStatusCode());
         verify(db,never()).update(startsWith("INSERT INTO staff_schedules"),
+            any(Object[].class));
+    }
+
+    @SuppressWarnings({"rawtypes","unchecked"})
+    private void committedShift(String employeeId,String classId,String workplaceId,
+                                String status) throws Exception {
+        when(db.query(startsWith("SELECT employee_id,class_id,workplace_id"),
+                any(RowMapper.class),eq("shift-1")))
+            .thenAnswer(invocation -> {
+                RowMapper mapper=invocation.getArgument(1);
+                var rs=mock(java.sql.ResultSet.class);
+                when(rs.getString(1)).thenReturn(employeeId);
+                when(rs.getString(2)).thenReturn(classId);
+                when(rs.getString(3)).thenReturn(workplaceId);
+                when(rs.getObject(4,java.time.LocalDate.class))
+                    .thenReturn(java.time.LocalDate.of(2027,2,11));
+                when(rs.getObject(5,java.time.LocalTime.class))
+                    .thenReturn(java.time.LocalTime.of(9,0));
+                when(rs.getObject(6,java.time.LocalTime.class))
+                    .thenReturn(java.time.LocalTime.of(11,0));
+                when(rs.getString(7)).thenReturn("FRONT_DESK");
+                when(rs.getString(8)).thenReturn(status);
+                return List.of(mapper.mapRow(rs,0));
+            });
+    }
+
+    private SchedulingAssignmentReferenceBridge.Event cancelEvent()
+            throws Exception {
+        String payload="{\"id\":\"shift-1\",\"employeeId\":\"cs-001\"," +
+            "\"staffRole\":\"CS\",\"workType\":\"FRONT_DESK\"," +
+            "\"status\":\"CANCELLED\",\"date\":\"2027-02-11\"," +
+            "\"startTime\":\"09:00\",\"endTime\":\"11:00\"," +
+            "\"assignedBy\":\"cm-001\"}";
+        var original=event(payload,2);
+        return new SchedulingAssignmentReferenceBridge.Event(
+            original.eventId(),original.actorUsername(),"CANCEL_STAFF",
+            original.requestKey(),original.sourceType(),original.scheduleId(),
+            original.revision(),original.eventKind(),original.payloadJson(),
+            original.payloadHash());
+    }
+
+    @Test void cancellationOnlyChangesStatusAndAssigningManager() throws Exception {
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        existingVersion(1,"create-event","a".repeat(64));
+        committedShift("cs-001",null,null,"ASSIGNED");
+        when(db.queryForObject(startsWith("SELECT COALESCE(max(version),0)"),
+            eq(Long.class),eq("STAFF"),eq("shift-1"))).thenReturn(1L);
+        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+            eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
+        when(db.update(startsWith("UPDATE staff_schedules"),
+            eq("cm-001"),eq("shift-1"))).thenReturn(1);
+        var result=bridge.apply("trusted-core-key",cancelEvent());
+        assertEquals("APPLIED",result.outcome());
+        verify(db,never()).update(startsWith("INSERT INTO staff_schedules"),
+            any(Object[].class));
+        verify(db).update(startsWith("UPDATE staff_schedules"),
+            eq("cm-001"),eq("shift-1"));
+    }
+
+    @Test void cancellationCannotRewriteEmployeeOrClassLinkedRow()
+            throws Exception {
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        existingVersion(1,"create-event","a".repeat(64));
+        committedShift("cs-001","class-1",null,"ASSIGNED");
+        when(db.queryForObject(startsWith("SELECT COALESCE(max(version),0)"),
+            eq(Long.class),eq("STAFF"),eq("shift-1"))).thenReturn(1L);
+        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+            eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->bridge.apply("trusted-core-key",cancelEvent())).getStatusCode());
+        verify(db,never()).update(startsWith("UPDATE staff_schedules"),
             any(Object[].class));
     }
 
