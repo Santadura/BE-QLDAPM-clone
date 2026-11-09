@@ -263,6 +263,27 @@ public class AvailabilityRepository {
             "WHERE availability_id=? AND version=? AND delivered_at IS NULL",id,version);
     }
 
+    /**
+     * Serialize overlapping in-flight assignment commands across all future
+     * writer services, rather than relying on Core's employee row lock alone.
+     * Only short-lived intents are checked here: the durable existing schedule
+     * conflict and academic invariants still belong to Core in phase 8b.
+     * Must run after lockEmployee() inside the reservation transaction.
+     */
+    void assertNoConcurrentAssignmentIntent(ReservationRequest request) {
+        Long busy=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_intent_reservations i " +
+            "JOIN scheduling_availability_reservations lease " +
+            "ON lease.reservation_id=i.reservation_id " +
+            "WHERE i.employee_id=? AND i.work_date=? AND i.start_time<? " +
+            "AND i.end_time>? AND lease.expires_at>NOW()",
+            Long.class,request.employeeId(),request.date(),
+            request.endTime(),request.startTime());
+        if(busy!=null && busy>0)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "ASSIGNMENT_IN_PROGRESS: Employee already has an in-flight overlapping assignment");
+    }
+
     /** Reserve with the SAME per-employee lock that guards editing/deleting. */
     @Transactional
     public Lease reserve(ReservationRequest request) {
@@ -285,11 +306,17 @@ public class AvailabilityRepository {
             request.startTime(),request.endTime(),request.date(),day,
             request.campus(),request.campus());
         if(matches.isEmpty()) return new Lease(false,null);
+        // The advisory employee lock covers this check AND both inserts.
+        assertNoConcurrentAssignmentIntent(request);
         String id=UUID.randomUUID().toString();
         db.update("INSERT INTO scheduling_availability_reservations " +
             "(reservation_id,availability_id,employee_id,expires_at) " +
             "VALUES(?,?,?,NOW()+interval '10 minutes')",
             id,matches.get(0),request.employeeId());
+        db.update("INSERT INTO scheduling_assignment_intent_reservations " +
+            "(reservation_id,employee_id,work_date,start_time,end_time) " +
+            "VALUES(?,?,?,?,?)",
+            id,request.employeeId(),request.date(),request.startTime(),request.endTime());
         return new Lease(true,id);
     }
 
