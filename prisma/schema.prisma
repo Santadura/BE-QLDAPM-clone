@@ -168,6 +168,7 @@ model Class {
   createdBy          User?                    @relation("ClassCreatedBy", fields: [createdByUsername], references: [username], onDelete: SetNull)
   lessons            Lesson[]
   plannedSessions    ClassSession[]
+  academicSessionLeases SchedulingAcademicSessionLease[]
   teachingSchedules  TeachingSchedule[]
   staffSchedules     StaffSchedule[]
   classStudents      ClassStudent[]
@@ -468,6 +469,25 @@ model StaffSalary {
 // Core-side transactional relay source for the Scheduling assignment READ model.
 // Core-only transactional assignment command receipts. These are transitional
 // until Scheduling independently owns the authoritative assignment write model.
+
+// Core-owned Academic temporary session reservations, never shared SQL.
+model SchedulingAcademicSessionLease {
+  leaseId String @id @map("lease_id") @db.VarChar(50)
+  classId String @map("class_id") @db.VarChar(50)
+  classSessionId String @map("class_session_id") @db.VarChar(50)
+  expectedClassVersion BigInt @map("expected_class_version")
+  expectedSessionVersion BigInt @map("expected_session_version")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  academicClass Class @relation(fields: [classId], references: [classId], onDelete: Cascade)
+  plannedSession ClassSession @relation(fields: [classSessionId], references: [classSessionId], onDelete: Cascade)
+
+  @@index([classSessionId,expiresAt], map:"idx_scheduling_academic_active_leases")
+  @@index([classId,expiresAt], map:"idx_scheduling_academic_active_class_leases")
+  @@map("scheduling_academic_session_leases")
+}
+
 // Core's database-wide cutover fence (never a shared Scheduling DB table).
 // Set QUIESCED only under an operator-controlled migration window.
 model SchedulingAssignmentWriterControl {
@@ -632,6 +652,7 @@ model ClassSession {
   schedulingVersion BigInt @default(1) @map("scheduling_version")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   class          Class    @relation(fields: [classId], references: [classId], onDelete: Restrict)
+  academicSessionLeases SchedulingAcademicSessionLease[]
 
   @@unique([classId, date, startTime, endTime])
   @@index([classId, date])
