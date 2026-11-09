@@ -13,6 +13,16 @@ spring:
         connect-timeout: 3000
         response-timeout: 45s
       routes:
+        # Most-specific catalog route must precede the core /api/** fallback.
+        # This retains FE contracts while using catalog-owned persistence.
+        - id: course-catalog-options
+          uri: ${CATALOG_SERVICE_URI:http://localhost:8093}
+          predicates:
+            - Path=/api/classes/courses
+        - id: course-catalog-admin
+          uri: ${CATALOG_SERVICE_URI:http://localhost:8093}
+          predicates:
+            - Path=/api/catalog/**
         # Strangler migration: retain every /api/** contract while individual
         # bounded contexts are extracted into separately owned services.
         - id: legacy-core
