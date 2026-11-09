@@ -132,6 +132,46 @@ public class SchedulingAssignmentReadBridge {
         db.batchUpdate(sql,args);
     }
 
+    public record ManifestSummary(long rowCount,long versionSum,long pendingCount) {}
+
+    /**
+     * Private, cursor-paginated source manifest for read-model cutover checks.
+     * Unlike /changes it includes already acknowledged versions, so an
+     * accidentally missing Scheduling row cannot be hidden by an empty outbox.
+     */
+    @GetMapping("/manifest")
+    @Transactional(readOnly=true)
+    public List<AssignmentSnapshot> manifest(
+            @RequestHeader(value="X-Internal-Key",required=false) String key,
+            @RequestParam(defaultValue="") String afterSource,
+            @RequestParam(defaultValue="") String afterId,
+            @RequestParam(defaultValue="250") int limit) {
+        authorize(key);
+        if(limit<1 || limit>250 || afterId.length()>50 ||
+                !(afterSource.isEmpty() || List.of("TEACHING","STAFF").contains(afterSource)) ||
+                (afterSource.isEmpty() && !afterId.isEmpty()))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid assignment manifest cursor");
+        List<Pending> page=db.query(
+            "SELECT source_type,schedule_id,version FROM scheduling_assignment_outbox " +
+            "WHERE (source_type,schedule_id)>(?,?) " +
+            "ORDER BY source_type,schedule_id LIMIT ?",
+            (rs,i)->new Pending(rs.getString(1),rs.getString(2),rs.getLong(3)),
+            afterSource,afterId,limit);
+        return snapshots(page);
+    }
+
+    @GetMapping("/manifest/summary")
+    @Transactional(readOnly=true)
+    public ManifestSummary manifestSummary(
+            @RequestHeader(value="X-Internal-Key",required=false) String key) {
+        authorize(key);
+        return db.queryForObject(
+            "SELECT count(*),COALESCE(sum(version),0)," +
+            "count(*) FILTER (WHERE delivered_at IS NULL) " +
+            "FROM scheduling_assignment_outbox",
+            (rs,i)->new ManifestSummary(rs.getLong(1),rs.getLong(2),rs.getLong(3)));
+    }
+
     private List<AssignmentSnapshot> snapshots(List<Pending> changes) {
         List<AssignmentSnapshot> result=new ArrayList<>(changes.size());
         for(Pending p:changes) {
