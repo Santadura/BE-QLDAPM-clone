@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8b-3a (cutover readiness verification, Core still owns writes)**. Do not claim full migration before every
+> Architecture status: **Phase 8b-3b (Core writer fence + Scheduling shadow/inbox, not cutover)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -134,6 +134,19 @@ service-key-protected projection API after bootstrap.
   metadata/JSON, tombstones, version parity, empty pending queue). A 200
   readiness report is only a *precondition*, never permission by itself to
   move writes while Academic and attendance still depend on Core.
+- [x] Phase 8b-3b: fence every Core assignment table INSERT/UPDATE/DELETE
+  with a transactional `CORE/QUIESCED` guard; no Scheduling writer mode yet.
+- [x] Build a normalized, versioned, tombstone-safe Scheduling write-shadow,
+  backfilled from existing projection and maintained in its local DB transaction.
+  It remains a Core-backed mirror until explicit ownership transfer.
+- [x] Persist private, actor-scoped **STAGED-only** command identities and
+  normalized hashes in the Scheduling database; reject reused keys with
+  different input. These commands currently have NO executable handler.
+- [x] Version Core Academic class/session state and expose private HTTP
+  session facts. This is not a transactional reservation across service DBs.
+- [ ] Introduce a version-checked Academic session reservation that cannot
+  expire during an in-flight Scheduling command and an idempotent saga
+  coordinating Core reference projections, attendance and Payroll.
 - [ ] Introduce idempotent, durable commands for staff/teacher assignment,
   attendance and Academic session reservation; remove direct Academic SQL.
 - [ ] Check existing committed assignment conflicts in the new authoritative
