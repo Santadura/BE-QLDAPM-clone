@@ -13,6 +13,16 @@ spring:
         connect-timeout: 3000
         response-timeout: 45s
       routes:
+        # Payroll owns the ledger and calculation; rank reviews/assignments
+        # remain with Core and salary rank management is HR-owned.
+        - id: payroll-legacy-hr-actions
+          uri: ${CORE_SERVICE_URI:http://localhost:8081}
+          predicates:
+            - Path=/api/payroll/rank-assignments/**,/api/payroll/reviews/**,/api/payroll/employees/**,/api/payroll/*/history
+        - id: payroll-ledger
+          uri: ${PAYROLL_SERVICE_URI:http://localhost:8097}
+          predicates:
+            - Path=/api/payroll,/api/payroll/calculate,/api/payroll/*/*
         # HR owns salary-rank writes; core only retains a versioned FK copy.
         - id: hr-salary-ranks
           uri: ${HR_SERVICE_URI:http://localhost:8096}
