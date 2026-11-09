@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 7 (Scheduling availability extraction)**, not
+This branch is **migration phase 8a (independent assignment query model)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -21,6 +21,8 @@ React -> Spring Cloud Gateway :8080
   |-- /api/payroll/ranks/** -> HR :8096 -> hr-postgres
   |-- /api/payroll (read/detail/calculate) -> Payroll :8097 -> payroll-postgres
   |-- /api/availabilities/** -> Scheduling :8098 -> scheduling-postgres
+  |-- GET /api/teaching-schedules, /api/staff-schedules, /api/schedules/me -> Scheduling :8098
+  |-- POST/PUT/DELETE /api/teaching-schedules*, /api/staff-schedules* -> Core :8081
   +-- remaining /api/** -> Core :8081 -> core-postgres
                                    +-- audit events -> Audit :8092 -> audit-postgres
 ```
@@ -293,6 +295,52 @@ Regression now uses **8 isolated PostgreSQL instances**, tests legacy import,
 public API compatibility, conflict detection, approvals, worker/manager role
 restrictions, active-reservation edit/delete protection, versioned tombstone
 projection, durable audit and the existing React Playwright suite.
+
+## Phase 8a: independent assignment query model (writes remain in Core)
+
+The independent Scheduling PostgreSQL now stores a **READ model** of teacher
+assignments, CS/Sale shifts, and worker-visible schedules. It uses exactly
+the JSON key shapes that React already expects.
+
+- Gateway routes **only GET** `/api/teaching-schedules`,
+  `/api/staff-schedules`, and `/api/schedules/me` to Scheduling.
+  **POST/PUT/DELETE and batch/range assignment commands stay in Core.**
+  Its ClassSession, ClassStaffingRange and TeacherSessionAttendance code
+  still requires an atomic local database transaction, especially the
+  rule preventing cancellation of the final CS support shift on a
+  RUNNING lesson.
+- The Prisma migration installs `scheduling_assignment_outbox` in Core,
+  with PostgreSQL AFTER INSERT/UPDATE/DELETE triggers on teacher and staff
+  assignments. Triggers also invalidate the snapshot when employee names,
+  staff roles or class names/codes change. Any Core write path therefore
+  creates an outbox record **within its original transaction**, even for
+  bulk SQL that bypasses `AssignmentService`.
+- Core exposes private service-key-protected **bootstrap, changes, and exact
+  version acknowledgement** endpoints. The independent Scheduling process
+  imports existing schedules once, marking the import in its own DB. Core
+  then sends updated snapshots over internal HTTP (at-least-once); a record
+  with a version lower than or equal to the stored one cannot overwrite a
+  newer projection. Hard deletions become durable tombstones.
+- Scheduling validates the **current JWT role/status on each GET** using a
+  protected Core viewer endpoint. Admin can browse management schedules
+  without having an employee profile; TC sees teacher schedules, CM sees
+  CS/Sale shifts, and workers see only their own active schedules.
+- Queries **must not join Core DB**. Scheduling stores the projection with
+  JSONB response payload and typed indexed date, employee, source and role
+  columns in `scheduling_assignment_read_model`.
+- **Consistency limit:** this read model is asynchronous (normally one
+  polling interval). Immediately after an assignment write, the React list
+  can briefly reflect the prior state; don't claim read-your-writes or use
+  this projection to authorize new assignments, enrollment, attendance or
+  cancellation. Those authoritative safety checks still run in Core.
+- CI checks bootstrap of existing schedules, GET field/role compatibility,
+  Core-side inserts, status transitions, class-name invalidation, tombstones,
+  exact-version outbox acknowledgement, and all existing FE Playwright tests.
+
+**Still required for full Scheduling extraction:** move the assignment and
+teacher attendance write model together with its worker-conflict
+reservations, class lifecycle APIs and compensating commands. Move all
+Academic/Student ownership out of Core before removing the legacy backend.
 
 ## Architecture decisions
 

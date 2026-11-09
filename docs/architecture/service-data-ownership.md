@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 7 (Scheduling availability ownership)**. Do not claim full migration before every
+> Architecture status: **Phase 8a (Scheduling assignment query projection)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -13,7 +13,9 @@
 | HR salary ranks | **`hr_salary_ranks`, `hr_salary_rank_outbox`** | HR Service owns salary-rank writes; Core `salary_ranks` is a versioned FK reference projection |
 | Academic | `classes`, `lessons`, `students`, `student_targets`, `class_target_requirements`, `class_students`, `class_access_scopes`, `assignments`, `exams`, `student_results`, `class_sessions` | Legacy core |
 | Scheduling availability | **`scheduling_availabilities`, `scheduling_availability_outbox`, `scheduling_availability_reservations`, `scheduling_availability_audit_outbox`** | Independent Scheduling database owns registration, approval, active leases and append-only audit |
-| Scheduling assignment/attendance | `teaching_schedules`, `staff_schedules`, `teacher_session_attendance` | Core remains write owner; uses Scheduling's live approval reservation, never stale availability copies for eligibility |
+| Scheduling assignment/attendance writes | `teaching_schedules`, `staff_schedules`, `teacher_session_attendance` | Core remains **exclusive write owner**; class lifecycle, CS guard and attendance transactions are not yet distributable |
+| Scheduling assignment read model | **`scheduling_assignment_read_model`** | Scheduling PostgreSQL stores teacher/staff/worker GET snapshots, not authoritative writes |
+| Core assignment relay | `scheduling_assignment_outbox` | Transactional change trigger and versioned HTTP delivery to Scheduling; metadata changes also enqueue updates |
 | Availability reference | `availabilities`, `scheduling_availability_versions` | Core reference projection only; versioned updates and deletion tombstones from Scheduling |
 | Payroll write model | **`payroll_ledgers`, `payroll_items`, `payroll_meta`** | Payroll Service owns calculations and payslip history in exclusive PostgreSQL |
 | Payroll legacy/source | `employee_salaries`, `employee_salary_details`, `staff_salaries`, `salary_rank_history`, `salary_review_requests`, `salary_calculation_items` | Core keeps historical rollback data and still owns rate history/reviews; it is NOT the active pay ledger |
@@ -42,6 +44,8 @@ Spring Cloud Gateway (:8080 public)
   |-- /api/payroll/ranks/** ----------------> HR (:8096) --> hr-postgres
   |-- /api/payroll (list/calculate/detail) --> Payroll (:8097) --> payroll-postgres
   |-- /api/availabilities/** ----------------> Scheduling (:8098) --> scheduling-postgres
+  |-- GET /api/teaching-schedules,/api/staff-schedules,/api/schedules/me --> Scheduling read model
+  |-- POST/PUT/DELETE teaching/staff assignment APIs --> Core transactional write model
   |      (live JWT authorization + key-protected snapshot via Core)
   |-- /api/** -------------------------------> Core (:8081) --> core-postgres
                                                 |   |
@@ -164,7 +168,7 @@ there are no cross-service SQL joins or shared writable tables,
 distributed business invariants and rollback are proven by automated tests,
 and actual FE flows continue to work through Gateway.
 
-Phase 7 now has independent Audit, Catalog, HR salary-rank, Payroll-ledger and Scheduling-availability ownership and separately
+Phase 8a has independent Audit, Catalog, HR salary-rank, Payroll-ledger and Scheduling-availability ownership plus the Scheduling assignment query projection and separately
 deployed Authentication and Reporting read-model processes. **It is not a
 fully migrated system**: Core is still the source of credential updates,
 reporting computations, dashboard queries and domain transactions.
