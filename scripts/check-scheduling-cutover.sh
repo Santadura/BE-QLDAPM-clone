@@ -9,6 +9,26 @@ if [ "${IIG_ALLOW_CUTOVER_CHECK:-}" != "1" ]; then
   exit 2
 fi
 COMPOSE=(docker compose -f docker-compose.microservices.yml)
+# Do not run an automatic CORE-resume dry-run while a separate writer or
+# Core reference relay is active. Inspect the running containers, not just
+# the current shell environment, to prevent accidental split-brain handoff.
+for item in "backend:SCHEDULING_REFERENCE_WRITES_ENABLED" \
+            "scheduling-service:SCHEDULING_REFERENCE_RELAY_ENABLED" \
+            "scheduling-service:SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED"; do
+  service_name="${item%%:*}"
+  flag_name="${item#*:}"
+  container_id="$("${COMPOSE[@]}" ps -q "$service_name")"
+  if [ -z "$container_id" ]; then
+    echo "Expected running $service_name before checking cutover."
+    exit 1
+  fi
+  flag_value="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_id" | \
+    sed -n "s/^${flag_name}=//p")"
+  if [ "${flag_value:-false}" != "false" ]; then
+    echo "Refusing cutover dry-run: $flag_name is active or unknown."
+    exit 1
+  fi
+done
 resume_required=0
 resume_core() {
   if [ "$resume_required" = "1" ]; then
