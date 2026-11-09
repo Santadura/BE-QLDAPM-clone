@@ -19,8 +19,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Scheduling-owned durable inbox for a future assignment command processor.
- * Phase 8b-3b intentionally has NO executor: STAGED is the only state created
- * by this service. Accepting a staging request never writes an assignment.
+ * Phase 8b intentionally has NO executor: a request can be STAGED or
+ * explicitly REJECTED before execution, but never COMMITTED by this service.
+ * Accepting or rejecting a staging request never writes an assignment.
  * The Core monolith remains the sole mutation authority in this phase.
  */
 @Service
