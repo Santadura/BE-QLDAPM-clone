@@ -33,6 +33,26 @@ class AssignmentCommandInboxControllerTest {
         verifyNoInteractions(inbox);
     }
 
+    @Test void rejectRechecksPrivateKeyAndCurrentCoreIdentity() {
+        assertEquals(HttpStatus.UNAUTHORIZED,
+            assertThrows(ResponseStatusException.class,
+                ()->controller.rejectStaged("wrong","Bearer sample","ASSIGN_STAFF","req-1"))
+                .getStatusCode());
+        verifyNoInteractions(core,inbox);
+    }
+
+    @Test void rejectUsesAuthenticatedActorAndStagedOnlyService() {
+        when(core.currentViewer("Bearer sample")).thenReturn(
+            new SchedulingCoreClient.Viewer("cm-001","cm001","CM"));
+        var receipt=new AssignmentCommandInboxService.Receipt(
+            "ASSIGN_STAFF","req-1","REJECTED","some-hash");
+        when(inbox.rejectStaged("cm001","CM","ASSIGN_STAFF","req-1"))
+            .thenReturn(receipt);
+        assertEquals(receipt,controller.rejectStaged(
+            "private-service-key","Bearer sample","ASSIGN_STAFF","req-1"));
+        verify(inbox).rejectStaged("cm001","CM","ASSIGN_STAFF","req-1");
+    }
+
     @Test void stageForwardsOnlyLiveCurrentRoleAndNeverCommitsAssignments() {
         when(core.currentViewer("Bearer sample")).thenReturn(
             new SchedulingCoreClient.Viewer("cm-001","cm001","CM"));
