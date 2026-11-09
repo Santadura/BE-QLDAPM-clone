@@ -141,6 +141,35 @@ class SchedulingAssignmentReferenceBridgeTest {
         verify(db,never()).update(anyString(),any(Object[].class));
     }
 
+    @Test void cannotOverwriteAnExistingLegacyCoreShiftWithoutMigratedReceipt()
+            throws Exception {
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        when(db.queryForObject(startsWith("SELECT count(*) FROM staff_schedules"),
+            eq(Long.class),eq("shift-1"))).thenReturn(1L);
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->bridge.apply("trusted-core-key",valid())).getStatusCode());
+        verify(db,never()).update(startsWith("INSERT INTO staff_schedules"),
+            any(Object[].class));
+    }
+
+    @Test void missingReferenceRevisionCannotSilentlySkipACommittedEvent()
+            throws Exception {
+        var event=event("{\"id\":\"shift-1\",\"employeeId\":\"cs-001\"," +
+            "\"staffRole\":\"CS\",\"workType\":\"FRONT_DESK\"," +
+            "\"status\":\"ASSIGNED\",\"date\":\"2027-02-11\"," +
+            "\"startTime\":\"09:00\",\"endTime\":\"11:00\"}",3);
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        existingVersion(1,"event-old","f".repeat(64));
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->bridge.apply("trusted-core-key",event)).getStatusCode());
+        verify(db,never()).update(startsWith("INSERT INTO staff_schedules"),
+            any(Object[].class));
+    }
+
     @Test void sameRevisionWithChangedDigestIsRejected() throws Exception {
         var event=valid();
         when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
