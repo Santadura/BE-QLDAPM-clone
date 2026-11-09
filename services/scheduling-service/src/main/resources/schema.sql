@@ -40,6 +40,22 @@ CREATE TABLE IF NOT EXISTS scheduling_availability_reservations (
 );
 CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_active
   ON scheduling_availability_reservations(availability_id,expires_at);
+-- Phase 8b: Scheduling also owns short-lived employee/time assignment
+-- intents. A reservation uses the same ID and expiration as its approved
+-- availability lease, so commit/rollback release and expiry clean both.
+-- PostgreSQL employee advisory locks serialize overlap checks with inserts.
+CREATE TABLE IF NOT EXISTS scheduling_assignment_intent_reservations (
+  reservation_id VARCHAR(50) PRIMARY KEY
+    REFERENCES scheduling_availability_reservations(reservation_id) ON DELETE CASCADE,
+  employee_id VARCHAR(50) NOT NULL,
+  work_date DATE NOT NULL,
+  start_time TIME NOT NULL,
+  end_time TIME NOT NULL,
+  CHECK (end_time > start_time)
+);
+CREATE INDEX IF NOT EXISTS idx_scheduling_intent_overlap
+  ON scheduling_assignment_intent_reservations(employee_id,work_date,start_time,end_time);
+
 CREATE TABLE IF NOT EXISTS scheduling_metadata (
   key VARCHAR(80) PRIMARY KEY,
   value VARCHAR(200) NOT NULL
