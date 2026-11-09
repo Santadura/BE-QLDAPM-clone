@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 4b (Reporting dashboard read-model extraction)**. Do not claim full migration before every
+> Architecture status: **Phase 5 (HR certificate write-model extraction)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -8,7 +8,8 @@
 | Domain | Owned entities / tables | State |
 | --- | --- | --- |
 | Identity & Access | `roles`, `app_functions`, `permissions`, `users` | Legacy core remains **write owner**; standalone Authentication Service authenticates and holds an isolated `identity_users` projection, **not full Identity extraction** |
-| HR & People | `employees`, `certificates`, `salary_ranks` | Legacy core |
+| HR & People | `employees`, `salary_ranks` | Employee lifecycle still owned by Core; certificates now written by independent HR Service |
+| HR certificates | **`hr_certificates`, `hr_certificate_outbox`** | HR Service owns certificate writes; Core `certificates` is a versioned read/reference projection |
 | Academic | `classes`, `lessons`, `students`, `student_targets`, `class_target_requirements`, `class_students`, `class_access_scopes`, `assignments`, `exams`, `student_results`, `class_sessions` | Legacy core |
 | Scheduling | `availabilities`, `teaching_schedules`, `staff_schedules`, `teacher_session_attendance` | Legacy core |
 | Payroll | `employee_salaries`, `employee_salary_details`, `staff_salaries` | Legacy core |
@@ -33,6 +34,7 @@ Spring Cloud Gateway (:8080 public)
   |     (live credential lookup & logout revocation --> Core private API)
   |-- /api/classes/courses, /api/catalog/** --> Catalog (:8093) --> catalog-postgres
   |-- /api/statistics and /api/dashboard -----> Reporting (:8095) --> reporting-postgres
+  |-- /api/employee-management/*/certificates -> HR (:8096) --> hr-postgres
   |      (live JWT authorization + key-protected snapshot via Core)
   |-- /api/** -------------------------------> Core (:8081) --> core-postgres
                                                 |   |
@@ -114,7 +116,13 @@ service-key-protected projection API after bootstrap.
 
 ### D. HR and Payroll
 
-- Separate staff lifecycle, certificates and salary ranks from authenticated
+- [x] Extract certificate create/update/read to HR's separate Spring Boot
+  process and PostgreSQL with the existing FE routes, Core-validated
+  role/employee scope and versioned outbox. Core certificates are reference
+  projections for profile screens, not a second writer.
+- [ ] Extract the rest of employees, salary ranks, salary history and staff
+  lifecycle into HR.
+- [ ] Separate staff lifecycle, certificates and salary ranks from authenticated
   identity; HR owns `employee` reference versions and publishes changes.
 - Payroll consumes finalized attendance events and maintains a separate ledger.
 - Check deactivating an assigned employee, salary aggregation by month,
