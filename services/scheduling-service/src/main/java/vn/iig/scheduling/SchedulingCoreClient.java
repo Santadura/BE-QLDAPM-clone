@@ -72,6 +72,10 @@ public class SchedulingCoreClient {
     }
 
     public record AssignmentReferenceReceipt(String eventId,long revision,String outcome) {}
+    public record AssignmentReferenceEnvelope(
+        String eventId,String actorUsername,String operation,String requestKey,
+        String sourceType,String scheduleId,long revision,String eventKind,
+        String payloadJson,String payloadHash) {}
 
     /**
      * Private, feature-gated Core reference receiver. This must return only
@@ -85,7 +89,11 @@ public class SchedulingCoreClient {
             AssignmentReferenceReceipt result=client.post()
                 .uri("/internal/scheduling/assignments/reference")
                 .header("X-Internal-Key",key)
-                .body(event)
+                .body(new AssignmentReferenceEnvelope(
+                    event.eventId(),event.actorUsername(),event.operation(),
+                    event.requestKey(),event.sourceType(),event.scheduleId(),
+                    event.revision(),event.eventKind(),event.payloadJson(),
+                    event.payloadHash()))
                 .retrieve().body(AssignmentReferenceReceipt.class);
             if(result==null || result.eventId()==null)
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
