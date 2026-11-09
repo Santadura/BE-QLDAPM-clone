@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8d-2 (private standalone CS/Sale executor; public writes still in Core)**. Do not claim full migration before every
+> Architecture status: **Phase 8d-3 (private standalone CS/Sale create/edit/cancel; Core remains public writer)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -162,6 +162,16 @@ service-key-protected projection API after bootstrap.
 - [x] Provide a **disabled-by-default** Core reference consumer for standalone,
   non-class STAFF UPSERTs with a receipt, exact version, hash checks and
   an audited Core write-fence bypass confined to the reference transaction.
+- [x] Phase 8d-3: add PRIVATE `EDIT_STAFF` for already Core-confirmed
+  Scheduling-owned standalone shifts using a fresh approved reservation,
+  employee/class immutability and a sequential versioned Core reference event.
+- [x] Core reference edits cannot reassign workers or convert class support,
+  and cancellation validates the exact existing shift rather than rewriting
+  employee, dates or work type. Stale historical events are never considered
+  acknowledged without a matching receipt.
+- [x] Prevent unsafe `QUIESCED -> CORE` handback once an independent
+  Scheduling reference receipt exists, until a separate reviewed
+  reconciliation/rollback path is established.
 - [x] Phase 8d-2: implement opt-in, PRIVATE standalone CS/Sale create
   and cancel executors; use live CM identity, Core QUIESCED mode, approved
   Scheduling lease, committed shift conflicts, revisioned local projection,
