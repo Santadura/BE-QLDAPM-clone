@@ -41,6 +41,7 @@ services:
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
       SCHEDULING_BRIDGE_ENABLED: "true"
       SCHEDULING_ASSIGNMENT_RELAY_ENABLED: "true"
+      SCHEDULING_REFERENCE_WRITES_ENABLED: ${SCHEDULING_REFERENCE_WRITES_ENABLED:-false}
       SCHEDULING_AVAILABILITY_EXTERNAL: "true"
       SCHEDULING_INTERNAL_API_KEY: ${SCHEDULING_INTERNAL_API_KEY:-local-dev-scheduling-key-change-before-deployment}
       SCHEDULING_SERVICE_URL: http://scheduling-service:8098
@@ -121,6 +122,7 @@ services:
       CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:-local-dev-catalog-password}
       CATALOG_INTERNAL_API_KEY: ${CATALOG_INTERNAL_API_KEY:-local-dev-catalog-key-change-before-deployment}
       CORE_INTERNAL_URL: http://backend:8081
+      SCHEDULING_REFERENCE_RELAY_ENABLED: ${SCHEDULING_REFERENCE_RELAY_ENABLED:-false}
     expose:
       - "8093"
     depends_on:
