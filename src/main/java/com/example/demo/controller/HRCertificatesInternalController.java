@@ -84,7 +84,7 @@ public class HRCertificatesInternalController {
                 || event.employeeId().isBlank() || event.employeeId().length() > 50
                 || event.certificateType() == null || event.certificateType().isBlank()
                 || event.certificateType().length() > 30 || event.version() < 1
-                || !List.of("ACTIVE","INACTIVE").contains(event.status())) {
+                || event.status()==null || !List.of("ACTIVE","INACTIVE").contains(event.status())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid certificate projection");
         }
         db.update("INSERT INTO hr_certificate_versions(certificate_id,version) VALUES(?,0) " +
