@@ -143,6 +143,17 @@ khi Core lỗi**. Đây là bước chuyển read model, chưa phải quyền gh
 độc lập hay khả năng tắt Core. Docker smoke so sánh JSON Academic và Core,
 kiểm tra quyền và chứng minh Academic sở hữu PostgreSQL riêng.
 
+**Attendance read microservice (bước đọc an toàn):** Service riêng trên mạng
+nội bộ cổng `8100` với PostgreSQL `iig_attendance` sở hữu snapshot
+điểm danh giảng viên theo CS/lớp. Gateway chuyển
+`GET /api/classes/{classId}/teacher-attendance` sang Attendance, nhưng
+`PUT /api/classes/{classId}/teacher-attendance/{teachingScheduleId}`
+tiếp tục do Core xử lý. Mỗi GET xác thực JWT hiện hành và được Core xác
+nhận quyền CS quản lý/hỗ trợ chính lớp đó; JSON giữ nguyên cho FE, không
+trả bản cache cũ khi Core lỗi. Phần ghi điểm danh và dữ liệu lương **chưa
+được chuyển sang Attendance**. Docker smoke kiểm tra quyền CS/ADMIN,
+đối chiếu phản hồi với Core và persistence ở DB mới.
+
 Dừng stack bằng `docker compose -f docker-compose.microservices.yml down` để giữ dữ liệu.
 
 

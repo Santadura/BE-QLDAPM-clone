@@ -49,6 +49,14 @@ spring:
           predicates:
             - Path=/api/classes/*/planned-sessions
             - Method=GET
+        # Teacher attendance GET has its own role-scoped persistence and
+        # checks the current Core JWT and CS class access on every request.
+        # PUT /.../teacher-attendance/{teachingScheduleId} remains Core-owned.
+        - id: attendance-teacher-read
+          uri: ${ATTENDANCE_SERVICE_URI:http://localhost:8100}
+          predicates:
+            - Path=/api/classes/*/teacher-attendance
+            - Method=GET
         # HR owns salary-rank writes; core only retains a versioned FK copy.
         - id: hr-salary-ranks
           uri: ${HR_SERVICE_URI:http://localhost:8096}

@@ -119,6 +119,39 @@ if ! [[ "$academic_rows" =~ ^[0-9]+$ ]] || [ "$academic_rows" -lt 1 ] \
 fi
 echo "PASS: Academic owned planning projection matches Core source revision and live ACL"
 
+# Attendance read extraction has its own DB but Core remains the actual
+# attendance writer. The seeded cs001 owns class-0001 scope; compare the
+# exact FE-visible JSON to Core under the same live CS token.
+cs_login="$(curl -fsS -X POST "${BASE}/api/auth/login" \
+  -H 'Content-Type: application/json' -d '{"username":"cs001","password":"123456"}')"
+cs_token="$(printf '%s' "$cs_login" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["token"])')"
+attendance_api="${BASE}/api/classes/class-0001/teacher-attendance"
+attendance_view="$(curl -fsS -H "Authorization: Bearer ${cs_token}" "$attendance_api")"
+core_attendance="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "Authorization: Bearer ${cs_token}" \
+  "http://backend:8081/api/classes/class-0001/teacher-attendance")"
+ATTENDANCE_SOURCE="$core_attendance" ATTENDANCE_READ="$attendance_view" python3 -c \
+  'import os,json; a=json.loads(os.environ["ATTENDANCE_READ"]); b=json.loads(os.environ["ATTENDANCE_SOURCE"]); assert isinstance(a,list) and a==b and any(row.get("id")=="teaching-001" for row in a), (a,b)'
+attendance_rows="$("${COMPOSE[@]}" exec -T attendance-postgres \
+  psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT count(*) FROM attendance_teacher_read_snapshots WHERE actor_username='cs001' AND class_id='class-0001';" | tr -d '[:space:]')"
+test "$attendance_rows" = "1" || { echo "Attendance separate DB did not record scoped read"; exit 1; }
+test "$(curl -sS -o /dev/null -w '%{http_code}' "$attendance_api")" = "401" || {
+  echo "Attendance exposed records without JWT"; exit 1;
+}
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer ${TOKEN}" "$attendance_api")" = "403" || {
+  echo "Attendance allowed ADMIN to read CS-only attendance"; exit 1;
+}
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+  -d '{"status":"PRESENT"}' "${attendance_api}/teaching-001")" = "403" || {
+  echo "Teacher attendance PUT is not still protected by Core's CS-only writer"; exit 1;
+}
+echo "PASS: independent Attendance GET matches Core, scopes CS snapshots, protects JWT and leaves PUT in Core"
+
+
 
 # Course Catalog is a separate Spring service with independent storage.
 # The initial import must preserve all legacy course options for React.

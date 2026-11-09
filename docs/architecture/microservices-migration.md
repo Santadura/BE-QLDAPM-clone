@@ -649,6 +649,28 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Attendance read-service extraction (Core still owns writes)
+
+The standalone Spring Boot `services/attendance-service` and private
+`iig_attendance` PostgreSQL materialize an actor-and-class-scoped teacher
+attendance snapshot. Only existing `GET
+/api/classes/{classId}/teacher-attendance` routes through this service;
+PUT of teacher attendance is intentionally left in Core. Each GET calls
+Core `/api/me` for current identity/role and then Core's existing
+CS-only GET endpoint, which validates the full managing-CS or active
+CLASS_SUPPORT scope. A response is served **only** after the live
+source succeeds; stale local snapshots never grant authorization or
+override recent attendance changes. Independent smoke compares the
+teacher attendance JSON for seeded CS against Core, checks both 401
+and 403 paths, and verifies the Gateway sends teacher-attendance
+mutations back to Core.
+
+Still needed: transfer teacher-attendance write authority into its own
+transaction boundary, project teaching-session/CS support snapshots
+and Payroll evidence, implement durable versioned events and end-to-end
+sagas before Core can be retired. This read boundary alone is not a
+completed microservice migration.
+
 ## Academic read-service extraction (Core still owns writes)
 
 Academic now has a separate Spring Boot application

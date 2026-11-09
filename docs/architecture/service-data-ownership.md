@@ -171,6 +171,12 @@ service-key-protected projection API after bootstrap.
 - [ ] Verify the full event replay/recovery flow against real PostgreSQL,
   then finish independent Academic/Attendance and class-support mutation
   ownership before public API cutover.
+- [x] Attendance teacher-attendance GET routed to a standalone service with
+  private actor/class-scoped PostgreSQL snapshots and live Core CS class-access
+  verification. FE response shape unchanged. PUT remains in Core, so this
+  is read separation, **not** Attendance mutation ownership.
+- [ ] Move attendance event ownership and finalized evidence for Payroll to
+  Attendance, preserving the lesson-start and assigned-CS-only gates.
 - [x] Academic class-planning and planned-session GET routes now pass
   through an independently deployed Academic service with isolated
   `iig_academic` PostgreSQL read snapshots. Authorization and responses

@@ -340,6 +340,38 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  attendance-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iig_attendance
+      POSTGRES_USER: iig_attendance
+      POSTGRES_PASSWORD: ${ATTENDANCE_DB_PASSWORD:-local-dev-attendance-password}
+    volumes:
+      - attendance_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iig_attendance -d iig_attendance"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  attendance-service:
+    build:
+      context: ./services/attendance-service
+    environment:
+      SERVER_PORT: "8100"
+      ATTENDANCE_DB_URL: jdbc:postgresql://attendance-postgres:5432/iig_attendance
+      ATTENDANCE_DB_USERNAME: iig_attendance
+      ATTENDANCE_DB_PASSWORD: ${ATTENDANCE_DB_PASSWORD:-local-dev-attendance-password}
+      CORE_INTERNAL_URL: http://backend:8081
+    expose:
+      - "8100"
+    depends_on:
+      attendance-postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
   api-gateway:
     build:
       context: ./services/api-gateway
@@ -353,6 +385,7 @@ services:
       PAYROLL_SERVICE_URI: http://payroll-service:8097
       SCHEDULING_SERVICE_URI: http://scheduling-service:8098
       ACADEMIC_SERVICE_URI: http://academic-service:8099
+      ATTENDANCE_SERVICE_URI: http://attendance-service:8100
     ports:
       - "8080:8080"
     depends_on:
@@ -372,6 +405,8 @@ services:
         condition: service_started
       academic-service:
         condition: service_started
+      attendance-service:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
@@ -384,3 +419,4 @@ volumes:
   payroll_pgdata:
   scheduling_pgdata:
   academic_pgdata:
+  attendance_pgdata:
