@@ -136,13 +136,13 @@ public class SchedulingCoreClient {
 
     /** Read-only exact Core receipt; never assume a 503/timeout means rollback. */
     public DurableAssignmentReferenceReceipt committedAssignmentReceipt(
-            String sourceType,String scheduleId) {
+            String sourceType,String scheduleId,String eventId) {
         try {
             DurableAssignmentReferenceReceipt receipt=client.get()
                 .uri(builder->builder
-                    .path("/internal/scheduling/assignments/reference/receipt")
+                    .path("/internal/scheduling/assignments/reference/receipt/event/{eventId}")
                     .queryParam("sourceType",sourceType)
-                    .queryParam("scheduleId",scheduleId).build())
+                    .queryParam("scheduleId",scheduleId).build(eventId))
                 .header("X-Internal-Key",key)
                 .retrieve().body(DurableAssignmentReferenceReceipt.class);
             if(receipt==null || receipt.eventId()==null || receipt.payloadHash()==null)
