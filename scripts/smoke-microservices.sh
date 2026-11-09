@@ -240,3 +240,59 @@ private_dashboard="$(curl -sS -o /dev/null -w '%{http_code}' \
   "${BASE}/internal/reporting/dashboard?username=admin")"
 test "$private_dashboard" = "404"
 echo "PASS: role-scoped dashboards served from Reporting without cache leakage"
+
+# HR Certificate writes are authoritative in HR's own PostgreSQL.
+# Core retains an ordered, idempotent projection for legacy profile reads.
+employee_id="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT employee_id FROM employees WHERE username='teacher001'" | tr -d '[:space:]')"
+test -n "$employee_id" || { echo "Seed teacher employee was not found"; exit 1; }
+
+cert_status="$(curl -sS -o /tmp/iig-hr-created.json -w '%{http_code}' \
+  -X POST "${BASE}/api/employee-management/${employee_id}/certificates" \
+  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+  -d '{"certificateType":"IELTS","score":8.0,"scoreSW":null,"issueDate":"2026-01-01","expiryDate":"2028-01-01","issuer":"IIG CI","certificateUrl":"https://example.com/iig-ci","status":"ACTIVE"}')"
+test "$cert_status" = "201" || { cat /tmp/iig-hr-created.json; echo "HR create $cert_status"; exit 1; }
+certificate_id="$(python3 -c 'import json;print(json.load(open("/tmp/iig-hr-created.json"))["certificateId"])')"
+test -n "$certificate_id"
+cert_count="$("${COMPOSE[@]}" exec -T hr-postgres psql -U iig_hr -d iig_hr -tAc \
+  "SELECT count(*) FROM hr_certificates WHERE certificate_id='${certificate_id}'" | tr -d '[:space:]')"
+test "$cert_count" = "1" || { echo "HR database did not own certificate"; exit 1; }
+
+core_cert_projected=0
+for i in $(seq 1 50); do
+  score="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT score FROM certificates WHERE certificate_id='${certificate_id}'" | tr -d '[:space:]')"
+  if [ "$score" = "8" ]; then core_cert_projected=1; break; fi
+  sleep 2
+done
+test "$core_cert_projected" = "1" || { echo "HR initial projection unavailable"; exit 1; }
+
+update_status="$(curl -sS -o /tmp/iig-hr-updated.json -w '%{http_code}' \
+  -X PUT "${BASE}/api/employee-management/${employee_id}/certificates/${certificate_id}" \
+  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+  -d '{"certificateType":"IELTS","score":8.5,"scoreSW":null,"issueDate":"2026-01-01","expiryDate":"2028-01-01","issuer":"IIG CI","certificateUrl":"https://example.com/iig-ci","status":"ACTIVE"}')"
+test "$update_status" = "200" || { cat /tmp/iig-hr-updated.json; echo "HR update $update_status"; exit 1; }
+core_hr_updated=0
+for i in $(seq 1 50); do
+  score="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT score FROM certificates WHERE certificate_id='${certificate_id}'" | tr -d '[:space:]')"
+  if [ "$score" = "8.5" ]; then core_hr_updated=1; break; fi
+  sleep 2
+done
+test "$core_hr_updated" = "1" || { echo "HR update did not reach core reference"; exit 1; }
+version="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT version FROM hr_certificate_versions WHERE certificate_id='${certificate_id}'" | tr -d '[:space:]')"
+test "$version" = "2"
+acknowledged="$("${COMPOSE[@]}" exec -T hr-postgres psql -U iig_hr -d iig_hr -tAc \
+  "SELECT version FROM hr_certificate_outbox WHERE certificate_id='${certificate_id}' AND delivered_at IS NOT NULL" | tr -d '[:space:]')"
+test "$acknowledged" = "2"
+echo "PASS: HR owns certificates and propagates versioned updates"
+
+staff_hr_denied="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -X POST "${BASE}/api/employee-management/${employee_id}/certificates" \
+  -H "Authorization: Bearer ${staff_token}" -H 'Content-Type: application/json' \
+  -d '{"certificateType":"IELTS","status":"ACTIVE"}')"
+test "$staff_hr_denied" = "403" || { echo "Teacher was able to write certificates: $staff_hr_denied"; exit 1; }
+hr_private="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/hr/certificates/export")"
+test "$hr_private" = "404"
+echo "PASS: HR certificate permissions and private service contracts"
