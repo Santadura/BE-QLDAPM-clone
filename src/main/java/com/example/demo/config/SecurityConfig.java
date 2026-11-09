@@ -57,6 +57,9 @@ public class SecurityConfig {
                     .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
                     .requestMatchers("/actuator/health").permitAll()
                     // Not published by Gateway; controller enforces service-to-service key.
+                    // Academic's revision and snapshot adapters are private;
+                    // their controllers validate X-Internal-Key, not browser JWT.
+                    .requestMatchers("/internal/academic/**").permitAll()
                     .requestMatchers("/internal/catalog/**").permitAll()
                     .requestMatchers("/internal/identity/**").permitAll()
                     .requestMatchers("/internal/reporting/**").permitAll()
