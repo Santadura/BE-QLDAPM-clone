@@ -65,6 +65,8 @@ model SalaryRank {
 
   role      Role       @relation(fields: [roleId], references: [roleId], onDelete: Restrict)
   employees Employee[]
+  salaryRankHistory SalaryRankHistory[]
+  salaryReviewRequests SalaryReviewRequest[]
 
   @@unique([roleId, rank])
   @@map("salary_ranks")
@@ -99,6 +101,8 @@ model Employee {
   employeeSalaries         EmployeeSalary[]
   staffSalaries            StaffSalary[]      @relation("StaffSalaryEmployee")
   managedStaffSalaries     StaffSalary[]      @relation("StaffSalaryManager")
+  salaryRankHistory        SalaryRankHistory[]
+  salaryReviewRequests     SalaryReviewRequest[]
 
   @@index([salaryRankId])
   @@map("employees")
@@ -454,6 +458,68 @@ model StaffSalary {
 
   @@unique([employeeId, period])
   @@map("staff_salaries")
+}
+
+// Transitional payroll source state migrated from the newer main branch.
+// These records will move to the Payroll service as part of ledger extraction.
+model SalaryRankHistory {
+  historyId String @id @map("history_id") @db.VarChar(50)
+  employeeId String @map("employee_id") @db.VarChar(50)
+  previousSalaryRankId String? @map("previous_salary_rank_id") @db.VarChar(50)
+  salaryRankId String @map("salary_rank_id") @db.VarChar(50)
+  amount Decimal @db.Decimal(14,2)
+  effectiveAt DateTime @map("effective_at") @db.Timestamptz(6)
+  reviewRequestId String? @map("review_request_id") @db.VarChar(50)
+  approvedBy String? @map("approved_by") @db.VarChar(50)
+  reason String? @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee Employee @relation(fields: [employeeId], references: [employeeId], onDelete: Restrict)
+  rank SalaryRank @relation(fields: [salaryRankId], references: [salaryRankId], onDelete: Restrict)
+
+  @@index([employeeId,effectiveAt(sort: Desc),createdAt(sort: Desc)],map:"idx_salary_rank_history_employee")
+  @@map("salary_rank_history")
+}
+
+model SalaryReviewRequest {
+  requestId String @id @map("request_id") @db.VarChar(50)
+  employeeId String @map("employee_id") @db.VarChar(50)
+  currentSalaryRankId String? @map("current_salary_rank_id") @db.VarChar(50)
+  proposedSalaryRankId String @map("proposed_salary_rank_id") @db.VarChar(50)
+  proposedAmount Decimal @map("proposed_amount") @db.Decimal(14,2)
+  requestedBy String? @map("requested_by") @db.VarChar(50)
+  reason String @db.Text
+  status String @default("PENDING") @db.VarChar(20)
+  decisionNote String? @map("decision_note") @db.Text
+  reviewedBy String? @map("reviewed_by") @db.VarChar(50)
+  requestedAt DateTime @default(now()) @map("requested_at") @db.Timestamptz(6)
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+
+  employee Employee @relation(fields: [employeeId], references: [employeeId], onDelete: Restrict)
+  proposedRank SalaryRank @relation(fields: [proposedSalaryRankId], references: [salaryRankId], onDelete: Restrict)
+
+  @@index([employeeId,requestedAt(sort: Desc)],map:"idx_salary_reviews_employee")
+  @@index([status,requestedAt(sort: Desc)],map:"idx_salary_reviews_status")
+  @@map("salary_review_requests")
+}
+
+model SalaryCalculationItem {
+  itemId String @id @map("item_id") @db.VarChar(50)
+  payrollSource String @map("payroll_source") @db.VarChar(20)
+  payrollId String @map("payroll_id") @db.VarChar(50)
+  scheduleId String @map("schedule_id") @db.VarChar(50)
+  workDate DateTime @map("work_date") @db.Date
+  workType String @map("work_type") @db.VarChar(50)
+  attendanceStatus String @map("attendance_status") @db.VarChar(20)
+  workedHours Decimal @map("worked_hours") @db.Decimal(8,2)
+  salaryRankId String? @map("salary_rank_id") @db.VarChar(50)
+  hourlyRate Decimal @map("hourly_rate") @db.Decimal(14,2)
+  payFactor Decimal @default(1) @map("pay_factor") @db.Decimal(8,2)
+  amount Decimal @db.Decimal(14,2)
+
+  @@unique([payrollSource,payrollId,scheduleId])
+  @@index([payrollSource,payrollId,workDate],map:"idx_salary_items_payroll")
+  @@map("salary_calculation_items")
 }
 
 model AuditLog {
