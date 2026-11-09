@@ -20,7 +20,7 @@ class SchedulingAcademicLeaseBridgeTest {
     private final SchedulingAcademicLeaseBridge bridge=
         new SchedulingAcademicLeaseBridge(db,"trusted-academic-key");
     private final SchedulingAcademicLeaseBridge.Request request=
-        new SchedulingAcademicLeaseBridge.Request("class-1","lesson-1",3,7);
+        new SchedulingAcademicLeaseBridge.Request("class-1","lesson-1",3,7,"command-1");
 
     @SuppressWarnings({"rawtypes","unchecked"})
     private void classAndLesson(long cv,long sv,String status,String lessonStatus)
