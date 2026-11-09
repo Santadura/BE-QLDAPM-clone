@@ -94,6 +94,25 @@ CREATE INDEX IF NOT EXISTS idx_scheduling_assignment_read_week
   ON scheduling_assignment_read_model (source_type,work_date,employee_id)
   WHERE deleted=FALSE;
 
+-- Durable independent Scheduling command inbox. The only enabled state
+-- in this phase is STAGED; no worker is allowed to commit it as an assignment
+-- until Academic contracts and compensation are ready. It provides a stable
+-- actor-scoped command identity and exact payload digest for future retries.
+CREATE TABLE IF NOT EXISTS scheduling_assignment_command_inbox (
+  actor_username VARCHAR(100) NOT NULL,
+  operation VARCHAR(40) NOT NULL,
+  request_key VARCHAR(128) NOT NULL,
+  request_hash CHAR(64) NOT NULL,
+  payload JSONB NOT NULL,
+  state VARCHAR(20) NOT NULL DEFAULT 'STAGED'
+    CHECK (state IN ('STAGED','COMMITTED','REJECTED','COMPENSATING')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(actor_username,operation,request_key)
+);
+CREATE INDEX IF NOT EXISTS idx_scheduling_command_inbox_state
+  ON scheduling_assignment_command_inbox(state,created_at);
+
 -- Phase 8b-3b candidate assignment WRITE model. During migration, Core's
 -- transactional outbox is still the ONLY source of writes. The independent
 -- normalized store is transactionally maintained alongside the FE read copy.
