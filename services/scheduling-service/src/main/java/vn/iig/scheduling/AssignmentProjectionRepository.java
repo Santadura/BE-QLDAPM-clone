@@ -159,6 +159,19 @@ public class AssignmentProjectionRepository {
                           LocalTime start,LocalTime end,String workType,
                           String status,String assignedBy) {}
 
+    /**
+     * Staged/compensating commands are unresolved distributed work.
+     * A cutover check must never silently ignore them even when the current
+     * Core-backed projection looks byte-for-byte consistent.
+     */
+    public long pendingAssignmentCommands() {
+        requireReady();
+        Long count=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_command_inbox " +
+            "WHERE state IN ('STAGED','COMPENSATING')",Long.class);
+        return count==null?0:count;
+    }
+
     public long countShadowAssignments() {
         requireReady();
         Long count=db.queryForObject(
