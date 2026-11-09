@@ -10,10 +10,12 @@ import org.springframework.web.server.ResponseStatusException;
 class StandaloneStaffAssignmentExecutorControllerTest {
     private final StandaloneStaffAssignmentExecutor executor=
         mock(StandaloneStaffAssignmentExecutor.class);
+    private final StandaloneStaffCancellationExecutor cancellation=
+        mock(StandaloneStaffCancellationExecutor.class);
     private final SchedulingCoreClient core=mock(SchedulingCoreClient.class);
     private final StandaloneStaffAssignmentExecutorController controller=
         new StandaloneStaffAssignmentExecutorController(
-            executor,core,"private-scheduling-key");
+            executor,cancellation,core,"private-scheduling-key");
 
     @Test void serviceKeyIsValidatedBeforeBearerOrDatabase() {
         assertEquals(HttpStatus.UNAUTHORIZED,
@@ -30,6 +32,32 @@ class StandaloneStaffAssignmentExecutorControllerTest {
                 ()->controller.execute("private-scheduling-key",
                     "Bearer sample","cmd-1")).getStatusCode());
         verifyNoInteractions(executor);
+    }
+
+    @Test void privateCancellationRequiresCurrentCmAndServiceKey() {
+        assertEquals(HttpStatus.UNAUTHORIZED,
+            assertThrows(ResponseStatusException.class,
+                ()->controller.cancel("wrong","Bearer sample","cancel-1"))
+                .getStatusCode());
+        verifyNoInteractions(core,executor,cancellation);
+        when(core.currentViewer("Bearer sample")).thenReturn(
+            new SchedulingCoreClient.Viewer("tc-1","tc001","TC"));
+        assertEquals(HttpStatus.FORBIDDEN,
+            assertThrows(ResponseStatusException.class,
+                ()->controller.cancel("private-scheduling-key","Bearer sample","cancel-1"))
+                .getStatusCode());
+        verifyNoInteractions(cancellation);
+    }
+
+    @Test void authorizedCmCanCancelPreviouslyStagedStandaloneShift() {
+        when(core.currentViewer("Bearer sample")).thenReturn(
+            new SchedulingCoreClient.Viewer("cm-1","cm001","CM"));
+        var result=new StandaloneStaffAssignmentExecutor.Result(
+            "shift-1","PENDING_REFERENCE",2);
+        when(cancellation.cancel("cm001","cm-1","CM","cancel-1")).thenReturn(result);
+        assertEquals(result,controller.cancel(
+            "private-scheduling-key","Bearer sample","cancel-1"));
+        verify(cancellation).cancel("cm001","cm-1","CM","cancel-1");
     }
 
     @Test void authorizedCmCanExecutePreviouslyStagedStandaloneCommand() {
