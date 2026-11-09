@@ -10,6 +10,9 @@ spring:
   sql:
     init:
       mode: always
+      # PL/pgSQL contains semicolons inside function bodies; use an explicit
+      # statement separator instead of Spring ScriptUtils' default `;`.
+      separator: "@@"
       continue-on-error: false
 iig:
   core:
