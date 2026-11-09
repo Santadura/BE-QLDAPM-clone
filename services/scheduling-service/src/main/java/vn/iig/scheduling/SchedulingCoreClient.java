@@ -71,6 +71,28 @@ public class SchedulingCoreClient {
         }
     }
 
+    public record AssignmentWriterState(String mode) {}
+
+    /**
+     * Refuse independent writes while Core's legacy writer is active.
+     * This read is NOT an atomic cross-DB lock: the Core reference consumer
+     * also enforces QUIESCED under its own transaction before applying events.
+     */
+    public void requireCoreWriterQuiesced() {
+        try {
+            AssignmentWriterState state=client.get()
+                .uri("/internal/scheduling/assignments/writer-state")
+                .header("X-Internal-Key",key)
+                .retrieve().body(AssignmentWriterState.class);
+            if(state==null || !"QUIESCED".equals(state.mode()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Core assignment writer must be quiesced");
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core assignment writer state unavailable",ex);
+        }
+    }
+
     public record AssignmentReferenceReceipt(String eventId,long revision,String outcome) {}
     public record AssignmentReferenceEnvelope(
         String eventId,String actorUsername,String operation,String requestKey,
