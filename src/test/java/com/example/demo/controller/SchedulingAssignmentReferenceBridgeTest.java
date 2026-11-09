@@ -329,6 +329,22 @@ class SchedulingAssignmentReferenceBridgeTest {
             any(Object[].class));
     }
 
+    @Test void historicallyCommittedEventIsVerifiedAfterNewerRevision() throws Exception {
+        var original=valid();
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        existingVersion(3,"event-latest","c".repeat(64));
+        when(db.queryForObject(
+            startsWith("SELECT count(*) FROM scheduling_assignment_reference_event_receipts"),
+            eq(Long.class),eq("STAFF"),eq("shift-1"),eq(1L),
+            eq("event-1"),eq(original.payloadHash()),
+            eq("cm001"),eq("ASSIGN_STAFF"),eq("req-1")))
+            .thenReturn(1L);
+        var response=bridge.apply("trusted-core-key",original);
+        assertEquals("ALREADY_APPLIED",response.outcome());
+        verify(db,never()).update(anyString(),any(Object[].class));
+    }
+
     @Test void obsoleteReferenceRevisionIsNotAcknowledgedWithoutAnExactReceipt()
             throws Exception {
         var oldEvent=valid();
