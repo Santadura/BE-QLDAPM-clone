@@ -467,8 +467,9 @@ snapshot report alone never authorizes the switch.
 ## Phase 8b-3b: dry-run cutover primitives (NOT live write ownership)
 
 The **Core PostgreSQL writer fence** installs BEFORE INSERT/UPDATE/DELETE
-triggers on both `teaching_schedules` and `staff_schedules`, including bulk
-SQL paths from class planning and attendance. The singleton
+triggers on `teaching_schedules`, `staff_schedules` and
+`teacher_session_attendance`, including bulk SQL paths from class planning
+and attendance. The singleton
 `scheduling_assignment_writer_control` defaults to `CORE`. Its alternative
 `QUIESCED` state blocks every Core assignment row write with SQLSTATE 55000.
 The trigger obtains a row `FOR SHARE` lock, so changing mode waits for
@@ -485,6 +486,10 @@ its revisions/tombstones are still derived solely from **Core's outbox**.
 Strict cutover verification now compares **both** the FE read copy and this
 candidate write-shadow with Core, including row counts, indexed fields and
 JSON values. Neither projection is authoritative for mutations yet.
+The gate also refuses `READY` while the private Scheduling command inbox
+contains unresolved `STAGED` or `COMPENSATING` requests, even if all
+projected rows match. Until the command executor and saga recovery exist,
+these entries are incomplete work, not successful assignments.
 
 A new transaction-scoped `AssignmentWriteConflictGuard` is available for
 the future writer. While holding the same employee advisory lock used for
