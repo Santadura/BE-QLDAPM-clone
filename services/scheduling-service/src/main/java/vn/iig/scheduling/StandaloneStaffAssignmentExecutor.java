@@ -156,10 +156,11 @@ public class StandaloneStaffAssignmentExecutor {
             "JOIN scheduling_assignment_intent_reservations intent " +
             "ON intent.reservation_id=lease.reservation_id " +
             "WHERE lease.reservation_id=? AND lease.employee_id=? " +
-            "AND lease.expires_at>NOW() AND a.deleted=FALSE " +
+            "AND lease.expires_at>clock_timestamp() AND a.deleted=FALSE " +
             "AND a.status='APPROVED' AND a.employee_id=? AND a.role_id=? " +
             "AND intent.employee_id=? AND intent.work_date=? " +
-            "AND intent.start_time<=? AND intent.end_time>=?",
+            "AND intent.start_time<=? AND intent.end_time>=? " +
+            "FOR UPDATE OF lease,intent",
             (rs,i)->new Availability(rs.getString(1),rs.getString(2)),
             reservationId,employeeId,employeeId,staffRole,employeeId,date,start,end);
         if(eligibility.size()!=1)
@@ -198,8 +199,12 @@ public class StandaloneStaffAssignmentExecutor {
         lifecycle.markLocallyApplied(actorUsername,"ASSIGN_STAFF",requestKey);
         // Delete lease and the intent (FK cascade) only after the local write
         // and event have been safely staged in the SAME transaction.
-        db.update("DELETE FROM scheduling_availability_reservations " +
-            "WHERE reservation_id=? AND employee_id=?",reservationId,employeeId);
+        int released=db.update("DELETE FROM scheduling_availability_reservations " +
+            "WHERE reservation_id=? AND employee_id=? " +
+            "AND expires_at>clock_timestamp()",reservationId,employeeId);
+        if(released!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Assignment lease expired before the local command committed");
         return new Result(scheduleId,"PENDING_REFERENCE",1);
     }
 
