@@ -810,9 +810,9 @@ BEGIN
      SET writer_mode='QUIESCED',changed_at=NOW() WHERE singleton=TRUE;
   INSERT INTO scheduling_academic_session_leases(
     lease_id,class_id,class_session_id,expected_class_version,
-    expected_session_version,expires_at)
+    expected_session_version,command_key,expires_at)
   SELECT '${fixture}-acad','${one}',lesson_id,
-         c.scheduling_version,s.scheduling_version,NOW()+interval '5 minutes'
+         c.scheduling_version,s.scheduling_version,'smoke-academic-command',NOW()+interval '5 minutes'
   FROM classes c JOIN class_sessions s ON s.class_id=c.class_id
   WHERE c.class_id='${one}' AND s.class_session_id=lesson_id;
   BEGIN
