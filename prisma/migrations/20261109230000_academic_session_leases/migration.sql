@@ -7,9 +7,14 @@ CREATE TABLE IF NOT EXISTS scheduling_academic_session_leases (
   class_session_id VARCHAR(50) NOT NULL REFERENCES class_sessions(class_session_id) ON DELETE CASCADE,
   expected_class_version BIGINT NOT NULL,
   expected_session_version BIGINT NOT NULL,
+  command_key VARCHAR(128) NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduling_academic_command
+  ON scheduling_academic_session_leases(class_session_id,command_key);
+CREATE INDEX IF NOT EXISTS idx_scheduling_academic_lease_expiry
+  ON scheduling_academic_session_leases(expires_at);
 CREATE INDEX IF NOT EXISTS idx_scheduling_academic_active_leases
   ON scheduling_academic_session_leases(class_session_id,expires_at);
 CREATE INDEX IF NOT EXISTS idx_scheduling_academic_active_class_leases
