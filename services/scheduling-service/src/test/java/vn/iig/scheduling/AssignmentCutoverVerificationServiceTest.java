@@ -104,6 +104,21 @@ class AssignmentCutoverVerificationServiceTest {
         verify(repo,never()).countAllAssignments();
     }
 
+    @Test void unresolvedStagedInboxCommandsBlockOwnershipHandoff() {
+        when(core.assignmentManifestSummary()).thenReturn(summary(1,8,0,1,1));
+        when(core.assignmentManifest("","",250)).thenReturn(List.of(row));
+        when(repo.matchesManifest(row)).thenReturn(true);
+        when(repo.countAllAssignments()).thenReturn(1L);
+        when(repo.countShadowAssignments()).thenReturn(1L);
+        when(repo.pendingAssignmentCommands()).thenReturn(1L);
+
+        var report=service.verify();
+        assertFalse(report.ready());
+        assertEquals("UNRESOLVED_ASSIGNMENT_COMMANDS",report.state());
+        assertEquals(1L,report.unresolvedCommands());
+        verify(core,times(2)).assignmentManifestSummary();
+    }
+
     @Test void shadowMissingRowBlocksCutoverEvenWhenReadCopyMatches() {
         when(core.assignmentManifestSummary()).thenReturn(summary(1,8,0,1,1));
         when(core.assignmentManifest("","",250)).thenReturn(List.of(row));
