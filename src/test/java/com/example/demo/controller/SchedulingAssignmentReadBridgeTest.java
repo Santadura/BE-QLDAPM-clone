@@ -53,6 +53,24 @@ class SchedulingAssignmentReadBridgeTest {
         verifyNoInteractions(db);
     }
 
+    @Test void manifestRequiresPrivateKeyAndRejectsInvalidCursorWithoutSQL() {
+        assertThrows(ResponseStatusException.class,()->bridge.manifest(
+            null,"","",250));
+        assertThrows(ResponseStatusException.class,()->bridge.manifest(
+            "private-assignment-key","BAD","",250));
+        assertThrows(ResponseStatusException.class,()->bridge.manifest(
+            "private-assignment-key","","",251));
+        verifyNoInteractions(db);
+    }
+
+    @Test void manifestEmptyPageDoesNotAssumePendingOutboxMeansNoHistory() {
+        when(db.query(contains("FROM scheduling_assignment_outbox " +
+                "WHERE (source_type,schedule_id)>(?,?)"),
+                any(org.springframework.jdbc.core.RowMapper.class),
+                eq(""),eq(""),eq(250))).thenReturn(java.util.List.of());
+        assertTrue(bridge.manifest("private-assignment-key","","",250).isEmpty());
+    }
+
     @Test void rejectsRequestWithoutLiveJwt() {
         assertThrows(ResponseStatusException.class,()->bridge.viewer("private-assignment-key",null));
         verifyNoInteractions(db);
