@@ -141,6 +141,9 @@ class SchedulingAssignmentReferenceBridgeTest {
             any(Object[].class));
         verify(db).update(startsWith("INSERT INTO scheduling_assignment_reference_receipts"),
             any(Object[].class));
+        verify(db).update(
+            startsWith("INSERT INTO scheduling_assignment_reference_event_receipts"),
+            any(Object[].class));
         verify(db).update(startsWith("INSERT INTO scheduling_assignment_outbox"),
             eq("STAFF"),eq("shift-1"),eq(1L));
     }
