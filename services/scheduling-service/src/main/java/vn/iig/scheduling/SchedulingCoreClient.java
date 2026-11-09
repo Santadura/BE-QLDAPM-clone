@@ -30,6 +30,44 @@ public class SchedulingCoreClient {
         client=RestClient.builder().baseUrl(url).requestFactory(factory).build();
     }
 
+
+    public record Viewer(String employeeId,String username,String role) {}
+
+    public Viewer currentViewer(String authorization) {
+        if(authorization==null || !authorization.startsWith("Bearer "))
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Bearer token required");
+        try {
+            Viewer viewer=client.get().uri("/internal/scheduling/assignments/viewer")
+                .header("Authorization",authorization)
+                .header("X-Internal-Key",key)
+                .retrieve().body(Viewer.class);
+            if(viewer==null || viewer.username()==null || viewer.role()==null)
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Invalid session");
+            return viewer;
+        } catch(HttpClientErrorException e) {
+            if(e.getStatusCode().value()==401)
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Invalid session");
+            if(e.getStatusCode().value()==403)
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Account inactive");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Identity bridge unavailable");
+        } catch(RestClientException e) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Identity bridge unavailable");
+        }
+    }
+
+    public List<AssignmentProjectionRepository.AssignmentSnapshot> exportAssignments() {
+        try {
+            AssignmentProjectionRepository.AssignmentSnapshot[] rows=client.get()
+                .uri("/internal/scheduling/assignments/export")
+                .header("X-Internal-Key",key).retrieve()
+                .body(AssignmentProjectionRepository.AssignmentSnapshot[].class);
+            return rows==null?List.of():Arrays.asList(rows);
+        } catch(RestClientException e) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core assignment import unavailable");
+        }
+    }
+
     public Actor currentActor(String authorization) {
         if(authorization==null || !authorization.startsWith("Bearer "))
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Bearer token required");
