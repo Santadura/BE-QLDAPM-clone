@@ -22,24 +22,24 @@ CREATE TABLE IF NOT EXISTS scheduling_availabilities (
   CHECK (end_time>start_time),
   CHECK ((availability_type='WEEKLY' AND available_date IS NOT NULL) OR
          (availability_type='RECURRING' AND available_date IS NULL))
-);
+)@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_availabilities_worker
   ON scheduling_availabilities(employee_id,available_date,day_of_week)
-  WHERE deleted=FALSE;
+  WHERE deleted=FALSE@@
 CREATE TABLE IF NOT EXISTS scheduling_availability_outbox (
   availability_id VARCHAR(50) PRIMARY KEY REFERENCES scheduling_availabilities(availability_id),
   version BIGINT NOT NULL CHECK (version>=1),
   delivered_at TIMESTAMPTZ
-);
+)@@
 CREATE TABLE IF NOT EXISTS scheduling_availability_reservations (
   reservation_id VARCHAR(50) PRIMARY KEY,
   availability_id VARCHAR(50) NOT NULL REFERENCES scheduling_availabilities(availability_id),
   employee_id VARCHAR(50) NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+)@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_active
-  ON scheduling_availability_reservations(availability_id,expires_at);
+  ON scheduling_availability_reservations(availability_id,expires_at)@@
 -- Phase 8b: Scheduling also owns short-lived employee/time assignment
 -- intents. A reservation uses the same ID and expiration as its approved
 -- availability lease, so commit/rollback release and expiry clean both.
@@ -52,14 +52,14 @@ CREATE TABLE IF NOT EXISTS scheduling_assignment_intent_reservations (
   start_time TIME NOT NULL,
   end_time TIME NOT NULL,
   CHECK (end_time > start_time)
-);
+)@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_intent_overlap
-  ON scheduling_assignment_intent_reservations(employee_id,work_date,start_time,end_time);
+  ON scheduling_assignment_intent_reservations(employee_id,work_date,start_time,end_time)@@
 
 CREATE TABLE IF NOT EXISTS scheduling_metadata (
   key VARCHAR(80) PRIMARY KEY,
   value VARCHAR(200) NOT NULL
-);
+)@@
 
 -- Distinct append-only audit stream: a collapsed latest-version projection
 -- must never erase intermediate REGISTER/REVIEW/UPDATE/DELETE audit events.
@@ -70,10 +70,10 @@ CREATE TABLE IF NOT EXISTS scheduling_availability_audit_outbox (
   availability_id VARCHAR(50) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   delivered_at TIMESTAMPTZ
-);
+)@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_audit_pending
   ON scheduling_availability_audit_outbox(created_at,event_id)
-  WHERE delivered_at IS NULL;
+  WHERE delivered_at IS NULL@@
 
 -- Assignment READ model only. Core is still the sole assignment writer.
 -- Keep tombstones so a delayed/crossed delivery cannot resurrect a deletion.
@@ -89,10 +89,10 @@ CREATE TABLE IF NOT EXISTS scheduling_assignment_read_model (
   payload JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (source_type,schedule_id)
-);
+)@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_assignment_read_week
   ON scheduling_assignment_read_model (source_type,work_date,employee_id)
-  WHERE deleted=FALSE;
+  WHERE deleted=FALSE@@
 
 -- Durable independent Scheduling command inbox. The only enabled state
 -- in this phase is STAGED; no worker is allowed to commit it as an assignment
@@ -109,16 +109,16 @@ CREATE TABLE IF NOT EXISTS scheduling_assignment_command_inbox (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY(actor_username,operation,request_key)
-);
+)@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_command_inbox_state
-  ON scheduling_assignment_command_inbox(state,created_at);
+  ON scheduling_assignment_command_inbox(state,created_at)@@
 -- Existing persistent Docker volumes may have the narrower pre-outbox CHECK.
 -- Apply the state-machine expansion idempotently without deleting commands.
 ALTER TABLE scheduling_assignment_command_inbox
-  DROP CONSTRAINT IF EXISTS scheduling_assignment_command_inbox_state_check;
+  DROP CONSTRAINT IF EXISTS scheduling_assignment_command_inbox_state_check@@
 ALTER TABLE scheduling_assignment_command_inbox
   ADD CONSTRAINT scheduling_assignment_command_inbox_state_check
-  CHECK (state IN ('STAGED','PENDING_REFERENCE','COMMITTED','REJECTED','COMPENSATING'));
+  CHECK (state IN ('STAGED','PENDING_REFERENCE','COMMITTED','REJECTED','COMPENSATING'))@@
 
 -- Phase 8d: durable replayable outbound change stream. The feature-gated
 -- private standalone CS/Sale executor may produce events while Core is
@@ -143,10 +143,10 @@ CREATE TABLE IF NOT EXISTS scheduling_assignment_domain_outbox (
   FOREIGN KEY(actor_username,operation,request_key)
     REFERENCES scheduling_assignment_command_inbox(actor_username,operation,request_key),
   UNIQUE(source_type,schedule_id,revision)
-);
+)@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_assignment_outbound_pending
   ON scheduling_assignment_domain_outbox(next_attempt_at,created_at,event_id)
-  WHERE delivered_at IS NULL;
+  WHERE delivered_at IS NULL@@
 
 -- Each Scheduling outbox event is a durable immutable business fact.
 -- Retry/delivery metadata may change, but payload, digest, revision and
@@ -156,8 +156,8 @@ RETURNS TRIGGER LANGUAGE plpgsql AS $
 BEGIN
   IF TG_OP='DELETE' THEN
     RAISE EXCEPTION 'Committed assignment events cannot be deleted'
-      USING ERRCODE='55000';
-  END IF;
+      USING ERRCODE='55000'@@
+  END IF@@
   IF NEW.event_id IS DISTINCT FROM OLD.event_id
      OR NEW.actor_username IS DISTINCT FROM OLD.actor_username
      OR NEW.operation IS DISTINCT FROM OLD.operation
@@ -173,16 +173,16 @@ BEGIN
          AND NEW.delivered_at IS DISTINCT FROM OLD.delivered_at)
   THEN
     RAISE EXCEPTION 'Immutable Scheduling assignment event was modified'
-      USING ERRCODE='55000';
-  END IF;
-  RETURN NEW;
-END;
-$;
+      USING ERRCODE='55000'@@
+  END IF@@
+  RETURN NEW@@
+END@@
+$@@
 DROP TRIGGER IF EXISTS trg_iig_assignment_event_immutable
-  ON scheduling_assignment_domain_outbox;
+  ON scheduling_assignment_domain_outbox@@
 CREATE TRIGGER trg_iig_assignment_event_immutable
   BEFORE UPDATE OR DELETE ON scheduling_assignment_domain_outbox
-  FOR EACH ROW EXECUTE FUNCTION iig_guard_assignment_event_immutable();
+  FOR EACH ROW EXECUTE FUNCTION iig_guard_assignment_event_immutable()@@
 
 -- Enforce command-inbox state transitions at the Scheduling DB layer.
 -- HTTP retries and controller bugs must not be able to claim COMMITTED
@@ -222,11 +222,11 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$;
-DROP TRIGGER IF EXISTS trg_iig_assignment_command_state ON scheduling_assignment_command_inbox;
+$$@@
+DROP TRIGGER IF EXISTS trg_iig_assignment_command_state ON scheduling_assignment_command_inbox@@
 CREATE TRIGGER trg_iig_assignment_command_state
   BEFORE UPDATE OF state ON scheduling_assignment_command_inbox
-  FOR EACH ROW EXECUTE FUNCTION iig_guard_assignment_command_state();
+  FOR EACH ROW EXECUTE FUNCTION iig_guard_assignment_command_state()@@
 
 -- Phase 8b-3b candidate assignment WRITE model. During migration, Core's
 -- transactional outbox is still the ONLY source of writes. The independent
@@ -254,13 +254,13 @@ CREATE TABLE IF NOT EXISTS scheduling_assignment_write_shadow (
     deleted OR (employee_id IS NOT NULL AND work_date IS NOT NULL
       AND start_time IS NOT NULL AND end_time IS NOT NULL
       AND end_time>start_time))
-);
+)@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_shadow_person_overlap
   ON scheduling_assignment_write_shadow(employee_id,work_date,start_time,end_time)
-  WHERE deleted=FALSE AND status='ASSIGNED';
+  WHERE deleted=FALSE AND status='ASSIGNED'@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_shadow_class_coverage
   ON scheduling_assignment_write_shadow(class_id,work_date,source_type,status)
-  WHERE deleted=FALSE;
+  WHERE deleted=FALSE@@
 
 -- First-deploy backfill for nonempty databases that imported Scheduling read
 -- projections before the normalized shadow store was introduced. Repeated
@@ -283,4 +283,4 @@ ON CONFLICT(source_type,schedule_id) DO UPDATE SET
   work_date=EXCLUDED.work_date,start_time=EXCLUDED.start_time,
   end_time=EXCLUDED.end_time,work_type=EXCLUDED.work_type,
   status=EXCLUDED.status,assigned_by=EXCLUDED.assigned_by,updated_at=NOW()
-WHERE scheduling_assignment_write_shadow.version<EXCLUDED.version;
+WHERE scheduling_assignment_write_shadow.version<EXCLUDED.version@@
