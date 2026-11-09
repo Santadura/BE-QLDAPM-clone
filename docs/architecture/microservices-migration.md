@@ -2,10 +2,10 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 3 (authentication extraction)**, not a claim that the entire IIG system
+This branch is **migration phase 4 (reporting read-model extraction)**, not a claim that the entire IIG system
 has become independently deployable microservices. The existing monolith
 still owns Auth, HR, Classes, Students, Scheduling, Payroll and Statistics.
-**Audit, Course Catalog, and Authentication** now run as independent Spring Boot services
+**Audit, Course Catalog, Authentication and Reporting** now run as independent Spring Boot services
 with different processes and exclusive PostgreSQL databases.
 
 The legacy `docker-compose.yml` and FE `/api/**` contract are unchanged.
@@ -99,6 +99,34 @@ existing React contract.
 See `docs/architecture/service-data-ownership.md` for subsequent extraction
 gates and distributed business invariants.
 
+## Phase 4: Reporting statistics read model (not yet event-driven reporting)
+
+`services/reporting-service` is a separately deployed Spring Boot process
+and owns the `iig_reporting` PostgreSQL database. The Gateway routes the
+existing Admin `GET /api/statistics` endpoint to Reporting; response
+properties (`period`, `overview`, `employees`, `schedules`, `financial`,
+`monthly`) remain unchanged for React.
+
+- Reporting validates the caller's current JWT and `ROLE_ADMIN` using
+  `GET http://backend:8081/api/me` **on every call**, including cache hits.
+  A disabled or revoked account cannot access a cached snapshot.
+- Snapshot keys are canonicalized by DAY/MONTH/YEAR. JSON payloads are
+  persisted to `statistics_snapshots` only in Reporting's own database.
+  A configurable 30-second TTL avoids repeated cross-service calculations,
+  with a `X-Reporting-Refreshed-At` response header and `no-store`.
+- Misses call a service-key-protected, **private** legacy endpoint,
+  `GET /internal/reporting/statistics`. The Core computes the response from
+  its current SQL tables during this transition. It cannot be called through
+  public Gateway.
+- A source outage results in an explicit 503 (after current auth has been
+  checked), not fabricated values. Reports can be stale up to the TTL;
+  this is an intentional **eventual consistency** contract.
+- **Not yet extracted:** role-specific `/api/dashboard` responses and the
+  source statistics SQL calculations. Those move to domain-event subscriptions
+  after Academic, Scheduling and Payroll own their respective tables.
+- Architecture now uses **five separate PostgreSQL containers**, with no
+  cross-service JDBC access. Do not call this full reporting extraction.
+
 ## Architecture decisions
 
 | Concern | Design | Reason |
@@ -156,6 +184,7 @@ mvn -B -ntp -f services/api-gateway/pom.xml test
 mvn -B -ntp -f services/audit-service/pom.xml test
 mvn -B -ntp -f services/catalog-service/pom.xml test
 mvn -B -ntp -f services/identity-service/pom.xml test
+mvn -B -ntp -f services/reporting-service/pom.xml test
 npm ci && npx prisma validate
 docker compose -f docker-compose.microservices.yml config --quiet
 docker compose -f docker-compose.microservices.yml up --build -d
@@ -182,8 +211,9 @@ scenarios through the Gateway.
    be redesigned before either database is separated.
 4. **HR/Payroll** — own employee lifecycle and payroll ledgers. Consume
    attendance events rather than joining scheduling tables across databases.
-5. **Dashboard/Statistics** — move to an eventual-consistency read model with
-   explicit refresh policy and monitoring.
+5. **Dashboard/Statistics** — Reporting has a standalone statistics snapshot
+   read model with TTL/freshness metadata, but must still replace Core's SQL
+   snapshot source with independently consumed domain events and migrate Dashboard.
 6. Add contract tests, idempotency on commands, distributed tracing, retry
    budgets/timeouts, observability and resilience tests across all services.
 
