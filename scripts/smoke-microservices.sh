@@ -757,6 +757,16 @@ BEGIN
   EXCEPTION WHEN SQLSTATE '55000' THEN
     NULL; -- Expected PostgreSQL fence exception
   END;
+  BEGIN
+    -- BEFORE INSERT must reject this even before the FK check: attendance
+    -- writes are frozen together with teaching assignments.
+    INSERT INTO teacher_session_attendance
+      (attendance_id,teaching_schedule_id,status,recorded_by)
+    VALUES ('${fixture}-fence-att','nonexistent-cutover-shift','PRESENT','teacher-001');
+    RAISE EXCEPTION 'Attendance insert bypassed the Core write fence';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    NULL;
+  END;
   UPDATE scheduling_assignment_writer_control
      SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE;
 END
@@ -784,6 +794,14 @@ test "$staged_count" = "1" || { echo "Staged command inbox was not idempotent"; 
 public_staging="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/scheduling/assignments/commands/stage")"
 test "$public_staging" = "404" || { echo "Private command stage API was publicly routed"; exit 1; }
 echo "PASS: private Scheduling inbox stages repeated commands without business writes"
+# A staged command is unfinished migration work: even if source/JSON/shadow
+# parity holds, cutover verification must return 409 rather than READY.
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" "$verification_url" >/dev/null 2>&1; then
+  echo "Cutover verifier accepted unresolved staged assignment command"; exit 1
+fi
+echo "PASS: cutover gate rejects unresolved command inbox state"
+
 
 # Versioned Academic session facts are private, too. They are a read
 # contract only; a later write cutover needs a real version-checked lease.
