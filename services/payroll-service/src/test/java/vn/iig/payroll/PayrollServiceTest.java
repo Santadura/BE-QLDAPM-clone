@@ -28,6 +28,7 @@ class PayrollServiceTest {
         when(core.historical()).thenReturn(List.of());
         service.bootstrap();
         verify(db).importHistorical(List.of());
+        verify(core).historical();
         verifyNoMoreInteractions(core);
     }
 
