@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8b-3a (strict pre-cutover assignment reconciliation)**, not
+This branch is **migration phase 8b-3b (shadow model, command staging and Core write fencing)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -463,6 +463,74 @@ transactional events and compensation/reconciliation, verify employee/time
 conflicts with committed data (not only in-flight leases), quiesce old Core
 writers, and run full-stack browser and concurrency regressions. A passing
 snapshot report alone never authorizes the switch.
+
+## Phase 8b-3b: dry-run cutover primitives (NOT live write ownership)
+
+The **Core PostgreSQL writer fence** installs BEFORE INSERT/UPDATE/DELETE
+triggers on both `teaching_schedules` and `staff_schedules`, including bulk
+SQL paths from class planning and attendance. The singleton
+`scheduling_assignment_writer_control` defaults to `CORE`. Its alternative
+`QUIESCED` state blocks every Core assignment row write with SQLSTATE 55000.
+The trigger obtains a row `FOR SHARE` lock, so changing mode waits for
+in-flight assignment SQL transactions to commit. There is intentionally NO
+`SCHEDULING` writer mode yet: turning it on prematurely would result in two
+uncoordinated writers or lost Academic/Payroll effects.
+
+Scheduling now maintains a versioned normalized
+`scheduling_assignment_write_shadow` in its own PostgreSQL. It is populated
+in the same local transaction as the FE JSON read projection and can safely
+backfill existing projections at startup. Its primary key and indexed typed
+worker/date/start/end/class/status fields prepare an independent write model;
+its revisions/tombstones are still derived solely from **Core's outbox**.
+Strict cutover verification now compares **both** the FE read copy and this
+candidate write-shadow with Core, including row counts, indexed fields and
+JSON values. Neither projection is authoritative for mutations yet.
+
+A new private `POST /internal/scheduling/assignments/commands/stage`
+validates the service key plus a *currently active* Core JWT. An independent
+Scheduling-owned `scheduling_assignment_command_inbox` records
+actor-scoped operation/key/normalized-payload hashes. Retries return the
+same `STAGED` receipt; the same key with changed data returns 409.
+**No command execution is connected**, and nothing from this inbox writes
+an actual assignment or reaches the public Gateway. The staging boundary is
+for future safe command processing, not a substitute for a completed saga.
+
+Academic (still in Core) now versions class status/date changes and planned
+session timetable/status updates with `scheduling_version`. A protected
+`GET /internal/scheduling/academic/session` returns both entity versions
+and exact planned-session metadata. This is a reference contract, **not**
+a cross-DB lease and not sufficient to authorize a write: between lookup and
+commit, Academic may change unless a later version-checked reservation locks
+the session. Existing Core class and attendance invariants remain intact.
+
+### Safe verification procedure
+
+A maintenance-window dry-run (NOT a live migration) can be invoked with:
+
+```bash
+IIG_ALLOW_CUTOVER_CHECK=1 bash scripts/check-scheduling-cutover.sh
+```
+
+The script verifies the starting state is `CORE`, changes to `QUIESCED`,
+reads the private strict manifest over the Docker network, then restores
+`CORE` through an EXIT trap even on a failed check. It must only be used
+with an intentional maintenance window because all assignment writes stop
+while the scan runs. SIGKILL, host power failure or an unavailable database
+can still interrupt cleanup: restore manually if necessary:
+
+```bash
+docker compose -f docker-compose.microservices.yml exec -T postgres \
+  psql -U postgres -d qlapm_db -c "UPDATE scheduling_assignment_writer_control SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE"
+```
+
+**Not yet complete in milestone 8:** an Academic transactional session
+reservation/version-fencing command, scheduling-owned actual assignment
+writer/inbox state machine and transactional events, Core reference and
+payroll/attendance projection with at-least-once replay, compensation for
+partial distributed failures, employee + class coverage conflict constraints
+against **committed** Scheduling state, read/write routing switch, and passing
+Core/Scheduling/Gateway/FE concurrency and integrity regressions. Do not mark
+Phase 8 or the full migration complete on a shadow-data parity report alone.
 
 **Still required for full Scheduling extraction:** move the assignment and
 teacher attendance write model together with its worker-conflict
