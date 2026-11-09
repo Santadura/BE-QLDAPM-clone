@@ -183,6 +183,8 @@ services:
       REPORTING_DB_USERNAME: iig_reporting
       REPORTING_DB_PASSWORD: ${REPORTING_DB_PASSWORD:-local-dev-reporting-password}
       REPORTING_INTERNAL_API_KEY: ${REPORTING_INTERNAL_API_KEY:-local-dev-reporting-key-change-before-deployment}
+      PAYROLL_INTERNAL_API_KEY: ${PAYROLL_INTERNAL_API_KEY:-local-dev-payroll-key-change-before-deployment}
+      PAYROLL_SERVICE_URL: http://payroll-service:8097
       REPORTING_MAX_AGE_SECONDS: ${REPORTING_MAX_AGE_SECONDS:-30}
       DASHBOARD_MAX_AGE_SECONDS: ${DASHBOARD_MAX_AGE_SECONDS:-10}
       CORE_INTERNAL_URL: http://backend:8081
