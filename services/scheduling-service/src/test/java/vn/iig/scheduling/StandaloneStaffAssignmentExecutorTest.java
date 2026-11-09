@@ -102,6 +102,8 @@ class StandaloneStaffAssignmentExecutorTest {
         order.verify(db).update(startsWith("DELETE FROM scheduling_availability_reservations"),
             eq("lease-1"),eq("cs-001"));
         verify(core).requireCoreWriterQuiesced();
+        verify(core).acquireAssignmentWriterClaim(
+            "cm001","cm-001","ASSIGN_STAFF","cmd-1");
         verify(conflicts).requireUnoccupied(any());
     }
 
@@ -138,6 +140,22 @@ class StandaloneStaffAssignmentExecutorTest {
                 ()->service.execute("cm001","cm-001","CM","cmd-1")).getStatusCode());
         verifyNoInteractions(outbox,lifecycle,conflicts);
         verify(projection,never()).project(any());
+    }
+
+    @Test void aCoreHandbackRaceCannotReachLocalAssignmentMutation()
+            throws Exception {
+        staged("STAGED",request(""));
+        approvedLease();
+        doThrow(new ResponseStatusException(HttpStatus.CONFLICT,
+            "Core writer mode no longer quiesced"))
+            .when(core).acquireAssignmentWriterClaim(
+                "cm001","cm-001","ASSIGN_STAFF","cmd-1");
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->service.execute("cm001","cm-001","CM","cmd-1"))
+                .getStatusCode());
+        verify(projection,never()).project(any());
+        verifyNoInteractions(outbox,lifecycle);
     }
 
     @Test void expiredLeaseAtCommitRollsBackInsteadOfReturningSuccess()
