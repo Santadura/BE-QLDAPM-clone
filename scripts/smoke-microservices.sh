@@ -437,3 +437,106 @@ private_payroll_financial="$(curl -sS -o /dev/null -w '%{http_code}' \
   "${BASE}/internal/payroll/financial?from=2026-01&to=2026-12")"
 test "$private_payroll_financial" = "404"
 echo "PASS: Reporting financial statistics use the independent Payroll ledger"
+
+# Phase 7: Scheduling owns availability registration, approvals, updates and
+# tombstones in its independent PostgreSQL; Core holds a reference read copy.
+schedule_imported=0
+for i in $(seq 1 70); do
+  imported="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc \
+    "SELECT count(*) FROM scheduling_metadata WHERE key='availability-imported'" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [ "$imported" = "1" ]; then schedule_imported=1; break; fi
+  sleep 2
+done
+test "$schedule_imported" = "1" || { echo "Scheduling historical availability import failed"; exit 1; }
+legacy_slot="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc \
+  "SELECT count(*) FROM scheduling_availabilities WHERE availability_id='auto-avail-1'" | tr -d '[:space:]')"
+test "$legacy_slot" = "1" || { echo "Existing availability lost in migration"; exit 1; }
+
+teacher_avail_login="$(curl -fsS -X POST "${BASE}/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"teacher001","password":"123456"}')"
+teacher_avail_token="$(printf '%s' "$teacher_avail_login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+avail_request='{"availableDate":"2026-12-08","dayOfWeek":"tue","shift":"MORNING","startTime":"06:00","endTime":"07:00","availabilityType":"WEEKLY","campus":"Cơ sở chính","note":"Scheduling microservices smoke"}'
+new_slot="$(curl -fsS -X POST "${BASE}/api/availabilities" \
+  -H "Authorization: Bearer ${teacher_avail_token}" \
+  -H 'Content-Type: application/json' -d "$avail_request")"
+slot_id="$(printf '%s' "$new_slot" | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')"
+test -n "$slot_id"
+own_slots="$(curl -fsS "${BASE}/api/availabilities/me?weekStart=2026-12-07" \
+  -H "Authorization: Bearer ${teacher_avail_token}")"
+printf '%s' "$own_slots" | SLOT_ID="$slot_id" python3 -c '
+import sys,json,os
+rows=json.load(sys.stdin)
+assert any(x["id"]==os.environ["SLOT_ID"] and x["status"]=="PENDING" for x in rows)
+'
+duplicate_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE}/api/availabilities" \
+  -H "Authorization: Bearer ${teacher_avail_token}" \
+  -H 'Content-Type: application/json' -d "$avail_request")"
+test "$duplicate_code" = "409" || { echo "Concurrent/duplicate availability overlap not blocked: $duplicate_code"; exit 1; }
+
+review_unauthorized="$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH \
+  "${BASE}/api/availabilities/${slot_id}/review" \
+  -H "Authorization: Bearer ${teacher_avail_token}" \
+  -H 'Content-Type: application/json' -d '{"status":"APPROVED"}')"
+test "$review_unauthorized" = "403" || { echo "Teacher incorrectly reviewed own availability"; exit 1; }
+reviewed="$(curl -fsS -X PATCH "${BASE}/api/availabilities/${slot_id}/review" \
+  -H "Authorization: Bearer ${tc_token}" -H 'Content-Type: application/json' \
+  -d '{"status":"APPROVED"}')"
+printf '%s' "$reviewed" | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"]=="APPROVED"'
+
+projected=0
+for i in $(seq 1 50); do
+  projection="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT v.version||':'||a.status FROM scheduling_availability_versions v JOIN availabilities a ON a.availability_id=v.availability_id WHERE v.availability_id='${slot_id}'" | tr -d '[:space:]')"
+  if [ "$projection" = "2:APPROVED" ]; then projected=1; break; fi
+  sleep 2
+done
+test "$projected" = "1" || { echo "Approved Scheduling status not projected to Core (last=$projection)"; exit 1; }
+echo "PASS: Scheduling owns availabilities and projects versioned updates"
+
+# Simulate an assignment holding a temporary reservation; the same isolation
+# mechanism is used by SchedulingReservationClient during a Core transaction.
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 -c \
+  "INSERT INTO scheduling_availability_reservations(reservation_id,availability_id,employee_id,expires_at) VALUES('smoke-inflight','${slot_id}','teacher-001',NOW()+interval '3 minutes')"
+busy_code="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+  "${BASE}/api/availabilities/${slot_id}" \
+  -H "Authorization: Bearer ${teacher_avail_token}" -H 'Content-Type: application/json' \
+  -d "$avail_request")"
+test "$busy_code" = "409" || { echo "In-flight teacher assignment did not protect availability: $busy_code"; exit 1; }
+delete_busy="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+  "${BASE}/api/availabilities/${slot_id}" -H "Authorization: Bearer ${teacher_avail_token}")"
+test "$delete_busy" = "409" || { echo "Availability deletion bypassed reservation: $delete_busy"; exit 1; }
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 -c \
+  "DELETE FROM scheduling_availability_reservations WHERE reservation_id='smoke-inflight'"
+
+edited="$(curl -fsS -X PUT "${BASE}/api/availabilities/${slot_id}" \
+  -H "Authorization: Bearer ${teacher_avail_token}" -H 'Content-Type: application/json' \
+  -d "$avail_request")"
+printf '%s' "$edited" | python3 -c 'import sys,json; assert json.load(sys.stdin)["status"]=="PENDING"'
+delete_code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+  "${BASE}/api/availabilities/${slot_id}" -H "Authorization: Bearer ${teacher_avail_token}")"
+test "$delete_code" = "204" || { echo "Availability delete failed: $delete_code"; exit 1; }
+
+tombstone=0
+for i in $(seq 1 50); do
+  vers="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT version FROM scheduling_availability_versions WHERE availability_id='${slot_id}'" | tr -d '[:space:]')"
+  count="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT COUNT(*) FROM availabilities WHERE availability_id='${slot_id}'" | tr -d '[:space:]')"
+  if [ "$vers" = "4" ] && [ "$count" = "0" ]; then tombstone=1; break; fi
+  sleep 2
+done
+test "$tombstone" = "1" || { echo "Availability tombstone projection failed: version=$vers, count=$count"; exit 1; }
+audit_delivered=0
+for i in $(seq 1 50); do
+  count="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT count(*) FROM audit_logs WHERE entity_id='${slot_id}' AND entity_type='AVAILABILITY'" | tr -d '[:space:]')"
+  if [ "$count" = "4" ]; then audit_delivered=1; break; fi
+  sleep 2
+done
+test "$audit_delivered" = "1" || { echo "Scheduling audit outbox delivery failed: $count/4"; exit 1; }
+echo "PASS: Scheduling reservations block mutations, tombstones never resurrect, audit is durable"
+
+private_scheduling_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/internal/scheduling/availability/export")"
+test "$private_scheduling_code" = "404"
+echo "PASS: scheduling migration internals are unavailable via public Gateway"
