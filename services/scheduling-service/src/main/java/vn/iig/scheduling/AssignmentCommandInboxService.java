@@ -19,10 +19,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Scheduling-owned durable inbox for a future assignment command processor.
- * Phase 8b intentionally has NO executor: a request can be STAGED or
- * explicitly REJECTED before execution, but never COMMITTED by this service.
- * Accepting or rejecting a staging request never writes an assignment.
- * The Core monolith remains the sole mutation authority in this phase.
+ * Staging/rejection NEVER performs domain writes. A separately feature-gated
+ * private executor now supports only standalone CS/Sale create/cancel when
+ * Core assignment writers are QUIESCED. Teacher/class support and all
+ * normal public assignment routes remain Core-owned.
  */
 @Service
 public class AssignmentCommandInboxService {
