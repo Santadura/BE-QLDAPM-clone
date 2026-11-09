@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8a (Scheduling assignment query projection)**. Do not claim full migration before every
+> Architecture status: **Phase 8b-2 (Scheduling intents + Core assignment command receipts)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -124,6 +124,11 @@ service-key-protected projection API after bootstrap.
 - [x] Phase 8b-1: persist overlapping in-flight employee/time assignment
   intents within Scheduling's local reservation transaction. Employee advisory
   locks serialize reservations; committed Core assignments remain authoritative.
+- [x] Phase 8b-2: add an opt-in Idempotency-Key on single/batch/range
+  assignment, edit and cancel endpoints. Core persists the command receipt
+  and the business mutation in the same transaction, including attendance
+  and class-support rules. This prevents replaying successful writes; it
+  does not make the Scheduling read model authoritative for mutation.
 - [ ] Introduce idempotent, durable commands for staff/teacher assignment,
   attendance and Academic session reservation; remove direct Academic SQL.
 - [ ] Check existing committed assignment conflicts in the new authoritative
