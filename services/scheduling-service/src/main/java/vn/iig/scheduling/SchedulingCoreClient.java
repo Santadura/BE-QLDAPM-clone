@@ -101,7 +101,7 @@ public class SchedulingCoreClient {
     public record AcademicLease(String leaseId,String classId,String sessionId,
                                 long classVersion,long sessionVersion,Instant expiresAt) {}
     private record AcademicLeaseRequest(String classId,String sessionId,
-                                        long classVersion,long sessionVersion) {}
+                                        long classVersion,long sessionVersion,String commandKey) {}
 
     /**
      * PREPARATION ONLY. Core refuses to issue leases while Core is the live
@@ -109,11 +109,12 @@ public class SchedulingCoreClient {
      * this lease and compensate partial writes before enabling public routes.
      */
     public AcademicLease reserveAcademicSession(String classId,String sessionId,
-                                                long classVersion,long sessionVersion) {
+                                                long classVersion,long sessionVersion,
+                                                String commandKey) {
         try {
             AcademicLease lease=client.post().uri("/internal/scheduling/academic/leases")
                 .header("X-Internal-Key",key)
-                .body(new AcademicLeaseRequest(classId,sessionId,classVersion,sessionVersion))
+                .body(new AcademicLeaseRequest(classId,sessionId,classVersion,sessionVersion,commandKey))
                 .retrieve().body(AcademicLease.class);
             if(lease==null || lease.leaseId()==null)
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
