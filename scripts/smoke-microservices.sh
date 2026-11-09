@@ -296,3 +296,60 @@ test "$staff_hr_denied" = "403" || { echo "Teacher was able to write certificate
 hr_private="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/hr/certificates/export")"
 test "$hr_private" = "404"
 echo "PASS: HR certificate permissions and private service contracts"
+
+# HR now owns salary ranks in its own PostgreSQL, including versioned updates.
+# The old salary_ranks table in core is an FK projection for existing payroll.
+rank_options=""
+for i in $(seq 1 60); do
+  rank_options="$(curl -fsS "${BASE}/api/payroll/ranks?roleId=TEACHER" \
+    -H "Authorization: Bearer ${TOKEN}" 2>/dev/null || true)"
+  if printf '%s' "$rank_options" | grep -q '"auto-rank-20"'; then break; fi
+  sleep 2
+done
+printf '%s' "$rank_options" | grep -q '"auto-rank-20"' || { echo "HR salary rank bootstrap failed"; exit 1; }
+
+created_rank="$(curl -fsS -X POST "${BASE}/api/payroll/ranks" \
+  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+  -d '{"roleId":"TEACHER","rank":"Microservices smoke rank","amount":175000,"status":"ACTIVE"}')"
+new_rank_id="$(printf '%s' "$created_rank" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+test -n "$new_rank_id"
+rank_projected=0
+for i in $(seq 1 50); do
+  count="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT count(*) FROM salary_ranks WHERE salary_rank_id='${new_rank_id}' AND amount=175000" | tr -d '[:space:]')"
+  if [ "$count" = "1" ]; then rank_projected=1; break; fi
+  sleep 2
+done
+test "$rank_projected" = "1" || { echo "HR salary rank did not project to core"; exit 1; }
+updated_rank="$(curl -fsS -X PUT "${BASE}/api/payroll/ranks/${new_rank_id}" \
+  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+  -d '{"rank":"Microservices smoke rank","amount":185000,"status":"ACTIVE"}')"
+printf '%s' "$updated_rank" | grep -q '185000'
+for i in $(seq 1 50); do
+  rank_version="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT version FROM hr_salary_rank_versions WHERE salary_rank_id='${new_rank_id}'" | tr -d '[:space:]')"
+  test "$rank_version" = "2" && break
+  sleep 2
+done
+test "$rank_version" = "2" || { echo "HR rank update projection version lagged"; exit 1; }
+rank_db_version="$("${COMPOSE[@]}" exec -T hr-postgres psql -U iig_hr -d iig_hr -tAc \
+  "SELECT version FROM hr_salary_rank_outbox WHERE salary_rank_id='${new_rank_id}' AND delivered_at IS NOT NULL" | tr -d '[:space:]')"
+test "$rank_db_version" = "2"
+echo "PASS: HR salary ranks are independently owned with versioned core projection"
+
+rank_forbidden="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/api/payroll/ranks" -H "Authorization: Bearer ${TOKEN}")"
+test "$rank_forbidden" = "200"
+teacher_login_again="$(curl -fsS -X POST "${BASE}/api/auth/login" \
+  -H 'Content-Type: application/json' -d '{"username":"teacher001","password":"123456"}')"
+teacher_again="$(printf '%s' "$teacher_login_again" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+rank_forbidden="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/api/payroll/ranks" -H "Authorization: Bearer ${teacher_again}")"
+test "$rank_forbidden" = "403" || { echo "Teacher accessed management rank table: $rank_forbidden"; exit 1; }
+tc_login="$(curl -fsS -X POST "${BASE}/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"tc001","password":"123456"}')"
+tc_token="$(printf '%s' "$tc_login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+tc_role_denied="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/api/payroll/ranks?roleId=CS" -H "Authorization: Bearer ${tc_token}")"
+test "$tc_role_denied" = "403"
+echo "PASS: HR salary ranks enforce Admin/TC/CM role boundaries"
