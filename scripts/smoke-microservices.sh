@@ -730,4 +730,39 @@ report="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
 printf '%s' "$report" | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
 echo "PASS: cutover gate detects divergent projection and confirms recovery"
 
+# Phase 8b-3b: every migration row must also be backed by the normalized
+# Scheduling write-shadow, including already-cancelled and tombstoned rows.
+source_rows="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM scheduling_assignment_outbox" | tr -d '[:space:]')"
+shadow_rows="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc \
+  "SELECT count(*) FROM scheduling_assignment_write_shadow" | tr -d '[:space:]')"
+test "$source_rows" = "$shadow_rows" || {
+  echo "Normalized Scheduling shadow does not cover Core history ($shadow_rows/$source_rows)"
+  exit 1
+}
+echo "PASS: normalized assignment write-shadow includes every Core outbox revision"
+
+# In a single DO transaction, verify that the database fence blocks even SQL
+# issued outside the HTTP controllers. Restore CORE before committing; any
+# failure automatically rolls back this test's fence change.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  UPDATE scheduling_assignment_writer_control
+     SET writer_mode='QUIESCED', changed_at=NOW() WHERE singleton=TRUE;
+  BEGIN
+    UPDATE staff_schedules SET status=status
+      WHERE staff_schedule_id='${idem_shift}';
+    RAISE EXCEPTION 'Core assignment update bypassed the write fence';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    NULL; -- Expected PostgreSQL fence exception
+  END;
+  UPDATE scheduling_assignment_writer_control
+     SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE;
+END
+\$\$;
+SQL
+echo "PASS: database write fence blocks direct Core assignment SQL in QUIESCED mode"
+
+
 
