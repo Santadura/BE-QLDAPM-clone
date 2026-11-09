@@ -39,6 +39,8 @@ services:
       DB_PASSWORD: ${CORE_DB_PASSWORD:-postgres}
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-key-at-least-256-bits-please}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      IDENTITY_BRIDGE_ENABLED: "true"
+      IDENTITY_INTERNAL_API_KEY: ${IDENTITY_INTERNAL_API_KEY:-local-dev-identity-key-change-before-deployment}
       CATALOG_PROJECTION_ENABLED: "true"
       CATALOG_INTERNAL_API_KEY: ${CATALOG_INTERNAL_API_KEY:-local-dev-catalog-key-change-before-deployment}
       AUDIT_RELAY_ENABLED: "true"
@@ -116,6 +118,41 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  identity-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iig_identity
+      POSTGRES_USER: iig_identity
+      POSTGRES_PASSWORD: ${IDENTITY_DB_PASSWORD:-local-dev-identity-password}
+    volumes:
+      - identity_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iig_identity -d iig_identity"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  identity-service:
+    build:
+      context: ./services/identity-service
+    environment:
+      SERVER_PORT: "8094"
+      IDENTITY_DB_URL: jdbc:postgresql://identity-postgres:5432/iig_identity
+      IDENTITY_DB_USERNAME: iig_identity
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:-local-dev-identity-password}
+      IDENTITY_INTERNAL_API_KEY: ${IDENTITY_INTERNAL_API_KEY:-local-dev-identity-key-change-before-deployment}
+      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-key-at-least-256-bits-please}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      CORE_INTERNAL_URL: http://backend:8081
+    expose:
+      - "8094"
+    depends_on:
+      identity-postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
   api-gateway:
     build:
       context: ./services/api-gateway
@@ -123,6 +160,7 @@ services:
       SERVER_PORT: "8080"
       CORE_SERVICE_URI: http://backend:8081
       CATALOG_SERVICE_URI: http://catalog-service:8093
+      IDENTITY_SERVICE_URI: http://identity-service:8094
     ports:
       - "8080:8080"
     depends_on:
@@ -130,9 +168,12 @@ services:
         condition: service_started
       catalog-service:
         condition: service_started
+      identity-service:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
   core_pgdata:
   audit_pgdata:
   catalog_pgdata:
+  identity_pgdata:
