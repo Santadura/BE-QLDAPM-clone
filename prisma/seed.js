@@ -345,6 +345,23 @@ async function main() {
     });
   }
 
+  // Give most demo staff a realistic tenure of 1–3 years.  The salary-review
+  // rule remains six months, while the remaining demo employees still model
+  // newly hired staff that are not eligible yet.
+  const reviewEligibleEmployeeIds = [
+    "teacher-001", "teacher-002", "teacher-003",
+    "cs-001", "cs-002", "cs-003",
+    "sale-001", "sale-002", "sale-003",
+    ...Array.from({ length: 11 }, (_, index) => `auto-emp-${index + 1}`),
+  ];
+  for (const [index, employeeId] of reviewEligibleEmployeeIds.entries()) {
+    const yearsAgo = 1 + (index % 3);
+    await prisma.employee.update({
+      where: { employeeId },
+      data: { createdAt: new Date(`${2026 - yearsAgo}-0${(index % 9) + 1}-15T00:00:00.000Z`) },
+    });
+  }
+
   // 4. Course & Lesson
   for (let i = 1; i <= 20; i++) {
     const autoCourseId = `auto-course-${i}`;
