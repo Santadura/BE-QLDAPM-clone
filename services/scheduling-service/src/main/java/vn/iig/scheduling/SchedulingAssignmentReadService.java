@@ -41,7 +41,9 @@ public class SchedulingAssignmentReadService {
             // Local DB commit must succeed before Core acknowledgement.
             repo.applyBatch(changed);
             core.acknowledgeAssignments(changed);
-            if(changed.size()<limit) return;
+            // A short batch is not proof that the feed is drained: a different
+            // Core transaction may have committed while this batch was being
+            // applied. Check again and return only after an empty feed read.
         }
         throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
             "Scheduling assignment synchronization backlog too large");
