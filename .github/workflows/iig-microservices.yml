@@ -10,6 +10,8 @@ on:
       - 'src/main/java/com/example/demo/controller/SchedulingAcademicFactsBridge.java'
       - 'src/main/java/com/example/demo/controller/SchedulingAcademicLeaseBridge.java'
       - 'src/main/java/com/example/demo/controller/SchedulingAssignmentReferenceBridge.java'
+      - 'src/main/java/com/example/demo/controller/SchedulingAssignmentReferenceReceiptController.java'
+      - 'src/test/java/com/example/demo/controller/SchedulingAssignmentReferenceReceiptControllerTest.java'
       - 'src/test/java/com/example/demo/controller/SchedulingAssignmentReferenceBridgeTest.java'
       - 'src/test/java/com/example/demo/controller/SchedulingAcademicLeaseBridgeTest.java'
       - 'src/test/java/com/example/demo/controller/SchedulingAcademicFactsBridgeTest.java'
