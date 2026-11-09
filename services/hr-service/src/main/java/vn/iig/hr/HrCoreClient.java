@@ -1,6 +1,8 @@
 package vn.iig.hr;
 
 import java.util.List;
+import java.util.Map;
+import vn.iig.hr.SalaryRankModels.RankState;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -68,6 +70,58 @@ public class HrCoreClient {
         } catch (RestClientException ex) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Core certificate projection unavailable");
+        }
+    }
+
+    public List<RankState> exportLegacySalaryRanks() {
+        try {
+            RankState[] values=client.get().uri("/internal/hr/salary-ranks/export")
+                .header("X-Internal-Key",internalKey).retrieve().body(RankState[].class);
+            return values==null?List.of():List.of(values);
+        } catch (RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Salary-rank bootstrap unavailable");
+        }
+    }
+
+    public void projectSalaryRank(RankState rank) {
+        try {
+            client.post().uri("/internal/hr/salary-ranks/project")
+                .header("X-Internal-Key",internalKey).body(rank)
+                .retrieve().toBodilessEntity();
+        } catch (RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Salary-rank core projection unavailable");
+        }
+    }
+
+    /** Delegates JWT, active status and current role checks to the Identity-backed core. */
+    @SuppressWarnings("unchecked")
+    public String currentRole(String bearerToken) {
+        if(bearerToken==null || !bearerToken.startsWith("Bearer ")) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Bearer token required");
+        }
+        try {
+            Map<String,Object> snapshot=client.get().uri("/api/me")
+                .header("Authorization",bearerToken).retrieve().body(Map.class);
+            if(snapshot==null || !(snapshot.get("authorities") instanceof List<?> roles)) {
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Invalid session");
+            }
+            for(Object entry:roles) {
+                if(entry instanceof Map<?,?> authority
+                        && authority.get("authority") instanceof String value
+                        && value.startsWith("ROLE_")) {
+                    return value.substring(5);
+                }
+            }
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Missing staff role");
+        } catch (HttpClientErrorException ex) {
+            int code=ex.getStatusCode().value();
+            if(code==401) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Invalid session");
+            if(code==403) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"No permission");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Core identity unavailable");
+        } catch (RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Core identity unavailable");
         }
     }
 }
