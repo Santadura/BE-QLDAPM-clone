@@ -51,6 +51,17 @@ class AssignmentReferenceRelayTest {
         verify(outbox).retryLater(eq("event-01"),contains("reference delivery failed"));
     }
 
+    @Test void supersededEventWithoutExactCoreProofCanNeverBeAcknowledged() {
+        when(outbox.pending(50)).thenReturn(List.of(event));
+        when(core.applyAssignmentReference(event)).thenReturn(
+            new SchedulingCoreClient.AssignmentReferenceReceipt(
+                "event-01",1,"SUPERSEDED"));
+        new AssignmentReferenceRelay(outbox,lifecycle,core,true).relay();
+        verify(lifecycle,never()).confirmReference(
+            anyString(),anyString(),anyString(),anyString(),anyString());
+        verify(outbox).retryLater(eq("event-01"),anyString());
+    }
+
     @Test void mismatchedCoreReceiptCannotAckAnotherEvent() {
         when(outbox.pending(50)).thenReturn(List.of(event));
         when(core.applyAssignmentReference(event)).thenReturn(
