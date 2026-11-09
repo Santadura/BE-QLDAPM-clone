@@ -93,3 +93,60 @@ CREATE TABLE IF NOT EXISTS scheduling_assignment_read_model (
 CREATE INDEX IF NOT EXISTS idx_scheduling_assignment_read_week
   ON scheduling_assignment_read_model (source_type,work_date,employee_id)
   WHERE deleted=FALSE;
+
+-- Phase 8b-3b candidate assignment WRITE model. During migration, Core's
+-- transactional outbox is still the ONLY source of writes. The independent
+-- normalized store is transactionally maintained alongside the FE read copy.
+-- No public mutation route uses it until Academic, attendance and compensation
+-- are independently valid. Deletion tombstones stay to fence delayed retries.
+CREATE TABLE IF NOT EXISTS scheduling_assignment_write_shadow (
+  source_type VARCHAR(12) NOT NULL CHECK (source_type IN ('TEACHING','STAFF')),
+  schedule_id VARCHAR(50) NOT NULL,
+  version BIGINT NOT NULL CHECK (version>=1),
+  deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  employee_id VARCHAR(50),
+  staff_role VARCHAR(50),
+  class_id VARCHAR(50),
+  workplace_id VARCHAR(50),
+  work_date DATE,
+  start_time TIME,
+  end_time TIME,
+  work_type VARCHAR(50),
+  status VARCHAR(20),
+  assigned_by VARCHAR(50),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(source_type,schedule_id),
+  CONSTRAINT scheduling_shadow_live_fields CHECK (
+    deleted OR (employee_id IS NOT NULL AND work_date IS NOT NULL
+      AND start_time IS NOT NULL AND end_time IS NOT NULL
+      AND end_time>start_time))
+);
+CREATE INDEX IF NOT EXISTS idx_scheduling_shadow_person_overlap
+  ON scheduling_assignment_write_shadow(employee_id,work_date,start_time,end_time)
+  WHERE deleted=FALSE AND status='ASSIGNED';
+CREATE INDEX IF NOT EXISTS idx_scheduling_shadow_class_coverage
+  ON scheduling_assignment_write_shadow(class_id,work_date,source_type,status)
+  WHERE deleted=FALSE;
+
+-- First-deploy backfill for nonempty databases that imported Scheduling read
+-- projections before the normalized shadow store was introduced. Repeated
+-- application never downgrades a newer shadow version. An incomplete backfill
+-- is diagnosed by the strict cutover readiness gate.
+INSERT INTO scheduling_assignment_write_shadow (
+  source_type,schedule_id,version,deleted,employee_id,staff_role,class_id,
+  workplace_id,work_date,start_time,end_time,work_type,status,assigned_by
+)
+SELECT source_type,schedule_id,version,deleted,employee_id,staff_role,
+  payload->>'classId',payload->>'workplaceId',work_date,
+  NULLIF(payload->>'startTime','')::TIME,
+  NULLIF(payload->>'endTime','')::TIME,
+  payload->>'workType',status,payload->>'assignedBy'
+FROM scheduling_assignment_read_model
+ON CONFLICT(source_type,schedule_id) DO UPDATE SET
+  version=EXCLUDED.version,deleted=EXCLUDED.deleted,
+  employee_id=EXCLUDED.employee_id,staff_role=EXCLUDED.staff_role,
+  class_id=EXCLUDED.class_id,workplace_id=EXCLUDED.workplace_id,
+  work_date=EXCLUDED.work_date,start_time=EXCLUDED.start_time,
+  end_time=EXCLUDED.end_time,work_type=EXCLUDED.work_type,
+  status=EXCLUDED.status,assigned_by=EXCLUDED.assigned_by,updated_at=NOW()
+WHERE scheduling_assignment_write_shadow.version<EXCLUDED.version;
