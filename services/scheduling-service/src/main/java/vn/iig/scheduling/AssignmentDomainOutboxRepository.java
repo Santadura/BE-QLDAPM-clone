@@ -119,11 +119,15 @@ public class AssignmentDomainOutboxRepository {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Invalid assignment outbox batch size");
         return db.query(
-            "SELECT event_id,actor_username,operation,request_key,source_type," +
-            "schedule_id,revision,event_kind,payload::text,payload_hash,attempt_count " +
-            "FROM scheduling_assignment_domain_outbox " +
-            "WHERE delivered_at IS NULL AND next_attempt_at<=NOW() " +
-            "ORDER BY created_at,event_id LIMIT ?",
+            "SELECT o.event_id,o.actor_username,o.operation,o.request_key,o.source_type," +
+            "o.schedule_id,o.revision,o.event_kind,o.payload::text,o.payload_hash,o.attempt_count " +
+            "FROM scheduling_assignment_domain_outbox o " +
+            "JOIN scheduling_assignment_command_inbox inbox " +
+            "ON inbox.actor_username=o.actor_username " +
+            "AND inbox.operation=o.operation AND inbox.request_key=o.request_key " +
+            "WHERE o.delivered_at IS NULL AND o.next_attempt_at<=NOW() " +
+            "AND inbox.state='PENDING_REFERENCE' " +
+            "ORDER BY o.created_at,o.event_id LIMIT ?",
             (rs,i)->new Event(rs.getString(1),rs.getString(2),rs.getString(3),
                 rs.getString(4),rs.getString(5),rs.getString(6),
                 rs.getLong(7),rs.getString(8),rs.getString(9),rs.getString(10),
