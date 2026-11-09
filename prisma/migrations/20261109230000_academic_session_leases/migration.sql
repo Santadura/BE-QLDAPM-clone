@@ -80,3 +80,25 @@ DROP TRIGGER IF EXISTS trg_iig_leased_lesson_insert_guard ON class_sessions;
 CREATE TRIGGER trg_iig_leased_lesson_insert_guard
   BEFORE INSERT ON class_sessions
   FOR EACH ROW EXECUTE FUNCTION iig_fence_new_leased_academic_lesson();
+
+-- Never resume old Core assignment writers while a Scheduling Academic lease
+-- is active. Mode switch is serialized with lease acquisition using the same
+-- singleton row lock; interrupted commands still expire automatically.
+CREATE OR REPLACE FUNCTION iig_block_assignment_resume_with_active_lease()
+RETURNS TRIGGER LANGUAGE plpgsql AS $
+BEGIN
+  IF OLD.writer_mode='QUIESCED' AND NEW.writer_mode='CORE' AND EXISTS (
+    SELECT 1 FROM scheduling_academic_session_leases
+    WHERE expires_at>NOW()
+  ) THEN
+    RAISE EXCEPTION 'Cannot resume Core assignment writers with active Academic leases'
+      USING ERRCODE='55000';
+  END IF;
+  RETURN NEW;
+END;
+$;
+DROP TRIGGER IF EXISTS trg_iig_assignment_resume_guard ON scheduling_assignment_writer_control;
+CREATE TRIGGER trg_iig_assignment_resume_guard
+  BEFORE UPDATE OF writer_mode ON scheduling_assignment_writer_control
+  FOR EACH ROW EXECUTE FUNCTION iig_block_assignment_resume_with_active_lease();
+
