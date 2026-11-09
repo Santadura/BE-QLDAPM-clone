@@ -225,10 +225,12 @@ public class AvailabilityRepository {
     }
 
     public List<Pending> pending(int max) {
-        return db.query(SELECT.replace(" FROM scheduling_availabilities",
-            " FROM scheduling_availability_outbox o JOIN scheduling_availabilities a " +
-            "ON a.availability_id=o.availability_id")+
-            " WHERE o.delivered_at IS NULL ORDER BY a.availability_id LIMIT ?",
+        return db.query("SELECT a.availability_id,a.employee_id,a.full_name,a.role_id," +
+            "a.available_date,a.day_of_week,a.shift,a.start_time,a.end_time," +
+            "a.availability_type,a.campus,a.note,a.status,a.created_at,a.reviewed_at," +
+            "a.reviewed_by,a.version,a.deleted FROM scheduling_availability_outbox o " +
+            "JOIN scheduling_availabilities a ON a.availability_id=o.availability_id " +
+            "WHERE o.delivered_at IS NULL ORDER BY a.availability_id LIMIT ?",
             (rs,i)->new Pending(map(rs),rs.getLong(17)),max);
     }
 
