@@ -2,7 +2,7 @@
 
 ## Thử kiến trúc Spring Microservices (nhánh migration)
 
-Nhánh `feature/spring-microservices-reporting-20261109` (nối tiếp Identity và Catalog) có Docker stack **riêng** để thử kiến trúc mới.
+Nhánh `feature/spring-microservices-dashboard-20261109` (nối tiếp Reporting, Identity và Catalog) có Docker stack **riêng** để thử kiến trúc mới.
 Bản `docker-compose.yml` bên dưới vẫn chạy monolith như trước.
 
 ```bash
