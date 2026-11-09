@@ -604,6 +604,13 @@ echo "PASS: Core class metadata updates invalidate independent schedule read mod
 
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "UPDATE teaching_schedules SET status='CANCELLED' WHERE teaching_schedule_id='${fixture}-t'"
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "UPDATE staff_schedules SET status='CANCELLED' WHERE staff_schedule_id='${fixture}-s'"
+# Read through Gateway immediately after Core commits, without waiting for
+# the background relay. This is the user-visible cancel-then-refresh contract.
+teacher_view="$(curl -fsS "${BASE}/api/teaching-schedules?weekStart=2027-02-08" -H "Authorization: Bearer ${tc_token}")"
+printf '%s' "$teacher_view" | FIXTURE_ID="${fixture}-t" python3 -c 'import os,sys,json; assert any(x.get("id")==os.environ["FIXTURE_ID"] and x.get("status")=="CANCELLED" for x in json.load(sys.stdin)), "Teacher cancellation read stale"'
+staff_view="$(curl -fsS "${BASE}/api/staff-schedules?weekStart=2027-02-08&role=CS" -H "Authorization: Bearer ${cm_token}")"
+printf '%s' "$staff_view" | FIXTURE_ID="${fixture}-s" python3 -c 'import os,sys,json; assert any(x.get("id")==os.environ["FIXTURE_ID"] and x.get("status")=="CANCELLED" for x in json.load(sys.stdin)), "Staff cancellation read stale"'
+echo "PASS: first GET after committed cancellation sees current teacher and CS status"
 for i in $(seq 1 70); do
   changed="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_assignment_read_model WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND status='CANCELLED' AND version=3" | tr -d '[:space:]')"
   test "$changed" = "2" && break
@@ -612,6 +619,13 @@ done
 test "$changed" = "2" || { echo "Cancelled assignment version didn't sync"; exit 1; }
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "DELETE FROM teaching_schedules WHERE teaching_schedule_id='${fixture}-t'"
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "DELETE FROM staff_schedules WHERE staff_schedule_id='${fixture}-s'"
+# Tombstones must also be visible on the first authorized GET, not after a
+# later browser reload or the 5-second asynchronous relay.
+teacher_view="$(curl -fsS "${BASE}/api/teaching-schedules?weekStart=2027-02-08" -H "Authorization: Bearer ${tc_token}")"
+printf '%s' "$teacher_view" | FIXTURE_ID="${fixture}-t" python3 -c 'import os,sys,json; assert all(x.get("id")!=os.environ["FIXTURE_ID"] for x in json.load(sys.stdin)), "Deleted teacher schedule resurfaced"'
+staff_view="$(curl -fsS "${BASE}/api/staff-schedules?weekStart=2027-02-08&role=CS" -H "Authorization: Bearer ${cm_token}")"
+printf '%s' "$staff_view" | FIXTURE_ID="${fixture}-s" python3 -c 'import os,sys,json; assert all(x.get("id")!=os.environ["FIXTURE_ID"] for x in json.load(sys.stdin)), "Deleted CS shift resurfaced"'
+echo "PASS: first GET after hard delete excludes old teacher and CS schedules"
 for i in $(seq 1 70); do
   deleted="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_assignment_read_model WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND deleted=TRUE AND version=4" | tr -d '[:space:]')"
   test "$deleted" = "2" && break
