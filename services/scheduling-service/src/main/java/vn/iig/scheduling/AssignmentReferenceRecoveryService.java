@@ -34,7 +34,7 @@ public class AssignmentReferenceRecoveryService {
                 "Only independent standalone staff events can be reconciled here");
 
         var receipt=core.committedAssignmentReceipt(
-            event.sourceType(),event.scheduleId());
+            event.sourceType(),event.scheduleId(),event.eventId());
         if(!event.eventId().equals(receipt.eventId()) ||
                 event.revision()!=receipt.revision() ||
                 !event.payloadHash().equals(receipt.payloadHash()))
