@@ -100,6 +100,37 @@ public class AssignmentCommandLifecycleService {
         return true;
     }
 
+    /**
+     * Fail closed after repeated delivery failures. It does NOT undo a local
+     * assignment: Core may already have committed while the HTTP response was
+     * lost. A later human or recovery saga must reconcile both DB receipts.
+     * COMPENSATING is excluded from automatic delivery and blocks cutover.
+     */
+    @Transactional
+    public void flagForReconciliation(String actor,String operation,String key,
+                                      String eventId) {
+        String state=lockedState(actor,operation,key);
+        if("COMPENSATING".equals(state)) return;
+        if(!"PENDING_REFERENCE".equals(state))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Only locally-applied assignment commands can require reconciliation");
+        Long pending=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_domain_outbox " +
+            "WHERE actor_username=? AND operation=? AND request_key=? " +
+            "AND event_id=? AND delivered_at IS NULL",
+            Long.class,actor,operation,key,eventId);
+        if(pending==null || pending!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Cannot reconcile an already-delivered or unrelated event");
+        int changed=db.update("UPDATE scheduling_assignment_command_inbox " +
+            "SET state='COMPENSATING',updated_at=NOW() " +
+            "WHERE actor_username=? AND operation=? AND request_key=? " +
+            "AND state='PENDING_REFERENCE'",
+            actor,operation,key);
+        if(changed!=1)
+            throw new IllegalStateException("Cannot flag assignment command for recovery");
+    }
+
     private String lockedState(String actor,String operation,String key) {
         if(actor==null || actor.isBlank() || operation==null || operation.isBlank() ||
            key==null || key.isBlank())
