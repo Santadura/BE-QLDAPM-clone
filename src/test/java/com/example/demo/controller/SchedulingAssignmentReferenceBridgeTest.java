@@ -214,6 +214,63 @@ class SchedulingAssignmentReferenceBridgeTest {
             original.payloadHash());
     }
 
+    private SchedulingAssignmentReferenceBridge.Event editEvent() throws Exception {
+        String payload="{\"id\":\"shift-1\",\"employeeId\":\"cs-001\"," +
+            "\"staffRole\":\"CS\",\"workType\":\"OPERATIONS_SUPPORT\"," +
+            "\"status\":\"ASSIGNED\",\"date\":\"2027-02-12\"," +
+            "\"startTime\":\"13:00\",\"endTime\":\"15:00\"," +
+            "\"workplaceId\":\"center-02\",\"assignedBy\":\"cm-001\"}";
+        var original=event(payload,2);
+        return new SchedulingAssignmentReferenceBridge.Event(
+            original.eventId(),original.actorUsername(),"EDIT_STAFF",
+            original.requestKey(),original.sourceType(),original.scheduleId(),
+            original.revision(),original.eventKind(),original.payloadJson(),
+            original.payloadHash());
+    }
+
+    @Test void editMayChangeTimeAndLocationButNotWorkerOrClass() throws Exception {
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        existingVersion(1,"create-event","a".repeat(64));
+        committedShift("cs-001",null,null,"ASSIGNED");
+        when(db.queryForObject(startsWith("SELECT COALESCE(max(version),0)"),
+            eq(Long.class),eq("STAFF"),eq("shift-1"))).thenReturn(1L);
+        when(db.queryForObject(contains("AND upper(r.role_name)=?"),
+            eq(Long.class),eq("cs-001"),eq("CS"))).thenReturn(1L);
+        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+            eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
+        when(db.update(startsWith("UPDATE staff_schedules SET workplace_id="),
+            eq("center-02"),eq(java.time.LocalDate.of(2027,2,12)),
+            eq(java.time.LocalTime.of(13,0)),eq(java.time.LocalTime.of(15,0)),
+            eq("OPERATIONS_SUPPORT"),eq("cm-001"),eq("shift-1"),eq("cs-001")))
+            .thenReturn(1);
+        var receipt=bridge.apply("trusted-core-key",editEvent());
+        assertEquals("APPLIED",receipt.outcome());
+        assertEquals(2,receipt.revision());
+        verify(db).update(startsWith("UPDATE staff_schedules SET workplace_id="),
+            any(Object[].class));
+        verify(db,never()).update(startsWith("INSERT INTO staff_schedules"),
+            any(Object[].class));
+    }
+
+    @Test void editCannotTurnCoreClassSupportIntoStandaloneStaff() throws Exception {
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        existingVersion(1,"create-event","a".repeat(64));
+        committedShift("cs-001","class-1",null,"ASSIGNED");
+        when(db.queryForObject(startsWith("SELECT COALESCE(max(version),0)"),
+            eq(Long.class),eq("STAFF"),eq("shift-1"))).thenReturn(1L);
+        when(db.queryForObject(contains("AND upper(r.role_name)=?"),
+            eq(Long.class),eq("cs-001"),eq("CS"))).thenReturn(1L);
+        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+            eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->bridge.apply("trusted-core-key",editEvent())).getStatusCode());
+        verify(db,never()).update(startsWith("UPDATE staff_schedules"),
+            any(Object[].class));
+    }
+
     @Test void cancellationOnlyChangesStatusAndAssigningManager() throws Exception {
         when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
             .thenReturn("QUIESCED");
