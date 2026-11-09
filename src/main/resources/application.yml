@@ -33,3 +33,12 @@ jwt:
 logging:
   level:
     org.springframework.security: INFO
+
+# Disabled in the legacy monolith deployment. Enabled by the microservices stack.
+iig:
+  audit:
+    relay-enabled: ${AUDIT_RELAY_ENABLED:false}
+    base-url: ${AUDIT_SERVICE_URL:}
+    internal-key: ${AUDIT_INTERNAL_API_KEY:}
+    initial-delay-ms: 8000
+    poll-ms: 5000
