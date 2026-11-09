@@ -1,0 +1,23 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: iig-api-gateway
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 3000
+        response-timeout: 45s
+      routes:
+        # Strangler migration: retain every /api/** contract while individual
+        # bounded contexts are extracted into separately owned services.
+        - id: legacy-core
+          uri: ${CORE_SERVICE_URI:http://localhost:8081}
+          predicates:
+            - Path=/api/**
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
