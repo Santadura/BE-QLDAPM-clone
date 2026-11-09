@@ -34,7 +34,19 @@ public class StatisticsService {
     public StatisticsResponse getStatistics(String requestedPeriod, Integer requestedYear, Integer requestedMonth,
                                             LocalDate requestedDate) {
         requireAdmin();
+        return calculateStatistics(requestedPeriod, requestedYear, requestedMonth, requestedDate);
+    }
 
+    /**
+     * Only use behind the protected, non-public internal Reporting API.
+     * Reporting validates an ADMIN JWT against current core state itself.
+     */
+    public StatisticsResponse internalStatistics(String period, Integer year, Integer month, LocalDate date) {
+        return calculateStatistics(period, year, month, date);
+    }
+
+    private StatisticsResponse calculateStatistics(String requestedPeriod, Integer requestedYear,
+                                                    Integer requestedMonth, LocalDate requestedDate) {
         String period = requestedPeriod.toUpperCase(Locale.ROOT);
         LocalDate today = LocalDate.now(BUSINESS_ZONE);
         int year = requestedYear == null ? today.getYear() : requestedYear;
