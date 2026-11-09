@@ -187,6 +187,20 @@ public class AvailabilityService {
         }
     }
 
+    @Scheduled(initialDelay=4000,fixedDelay=3000)
+    public void relayAudit() {
+        if(!store.imported()) return;
+        for(var event:store.pendingAudits(100)) {
+            try {
+                core.relayAudit(event);
+                store.acknowledgeAudit(event.eventId());
+            } catch(Exception ex) {
+                log.warn("Availability audit {} pending: {}",event.eventId(),ex.getMessage());
+                return;
+            }
+        }
+    }
+
     @Scheduled(initialDelay=30000,fixedDelay=60000)
     public void cleanReservations() {
         store.cleanupExpired();
