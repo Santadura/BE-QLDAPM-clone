@@ -168,7 +168,7 @@ public class AssignmentProjectionRepository {
         requireReady();
         Long count=db.queryForObject(
             "SELECT count(*) FROM scheduling_assignment_command_inbox " +
-            "WHERE state IN ('STAGED','COMPENSATING')",Long.class);
+            "WHERE state IN ('STAGED','PENDING_REFERENCE','COMPENSATING')",Long.class);
         return count==null?0:count;
     }
 
