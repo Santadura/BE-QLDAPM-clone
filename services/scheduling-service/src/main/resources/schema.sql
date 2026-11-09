@@ -105,13 +105,20 @@ CREATE TABLE IF NOT EXISTS scheduling_assignment_command_inbox (
   request_hash CHAR(64) NOT NULL,
   payload JSONB NOT NULL,
   state VARCHAR(20) NOT NULL DEFAULT 'STAGED'
-    CHECK (state IN ('STAGED','COMMITTED','REJECTED','COMPENSATING')),
+    CHECK (state IN ('STAGED','PENDING_REFERENCE','COMMITTED','REJECTED','COMPENSATING')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY(actor_username,operation,request_key)
 );
 CREATE INDEX IF NOT EXISTS idx_scheduling_command_inbox_state
   ON scheduling_assignment_command_inbox(state,created_at);
+-- Existing persistent Docker volumes may have the narrower pre-outbox CHECK.
+-- Apply the state-machine expansion idempotently without deleting commands.
+ALTER TABLE scheduling_assignment_command_inbox
+  DROP CONSTRAINT IF EXISTS scheduling_assignment_command_inbox_state_check;
+ALTER TABLE scheduling_assignment_command_inbox
+  ADD CONSTRAINT scheduling_assignment_command_inbox_state_check
+  CHECK (state IN ('STAGED','PENDING_REFERENCE','COMMITTED','REJECTED','COMPENSATING'));
 
 -- Phase 8d: durable, replayable outbound change stream for the FUTURE
 -- Scheduling assignment writer. Local domain mutations must insert their
