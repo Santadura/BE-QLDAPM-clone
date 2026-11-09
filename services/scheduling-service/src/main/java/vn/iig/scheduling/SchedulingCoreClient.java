@@ -78,6 +78,22 @@ public class SchedulingCoreClient {
         }
     }
 
+    public void relayAudit(AvailabilityRepository.AuditEvent event) {
+        try {
+            client.post().uri("/internal/scheduling/availability/audit")
+                .header("X-Internal-Key",key)
+                .body(new AuditMessage(event.eventId(),event.username(),
+                    event.action(),event.entityId()))
+                .retrieve().toBodilessEntity();
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core audit relay unavailable");
+        }
+    }
+
+    private record AuditMessage(String eventId,String username,
+                                String action,String entityId) {}
+
     public void project(Slot slot) {
         try {
             client.post().uri("/internal/scheduling/availability/project")
