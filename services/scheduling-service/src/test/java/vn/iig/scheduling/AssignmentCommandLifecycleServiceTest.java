@@ -94,6 +94,33 @@ class AssignmentCommandLifecycleServiceTest {
         verify(db,never()).update(contains("delivered_at=NOW()"),any(Object[].class));
     }
 
+    @Test void unresolvedEventRequiresManualReconciliationWithoutAutomaticCompensation() {
+        state("PENDING_REFERENCE");
+        when(db.queryForObject(contains("AND event_id=? AND delivered_at IS NULL"),
+            eq(Long.class),eq("cm001"),eq("ASSIGN_SUPPORT_BATCH"),
+            eq("batch-01"),eq("event-1"))).thenReturn(1L);
+        when(db.update(contains("state='COMPENSATING'"),
+            eq("cm001"),eq("ASSIGN_SUPPORT_BATCH"),eq("batch-01"))).thenReturn(1);
+        service.flagForReconciliation("cm001","ASSIGN_SUPPORT_BATCH",
+            "batch-01","event-1");
+        verify(db).update(contains("state='COMPENSATING'"),
+            eq("cm001"),eq("ASSIGN_SUPPORT_BATCH"),eq("batch-01"));
+        verify(db,never()).update(contains("staff_schedules"),any(Object[].class));
+    }
+
+    @Test void deliveredEventCannotBeFlaggedForRollback() {
+        state("PENDING_REFERENCE");
+        when(db.queryForObject(contains("AND event_id=? AND delivered_at IS NULL"),
+            eq(Long.class),eq("cm001"),eq("ASSIGN_SUPPORT_BATCH"),
+            eq("batch-01"),eq("event-1"))).thenReturn(0L);
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->service.flagForReconciliation("cm001","ASSIGN_SUPPORT_BATCH",
+                    "batch-01","event-1")).getStatusCode());
+        verify(db,never()).update(contains("state='COMPENSATING'"),
+            any(Object[].class));
+    }
+
     @Test void rejectedCommandCanNeverBeMarkedAsCommitted() {
         state("REJECTED");
         assertEquals(HttpStatus.CONFLICT,
