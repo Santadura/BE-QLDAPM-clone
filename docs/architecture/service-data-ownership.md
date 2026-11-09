@@ -139,6 +139,10 @@ service-key-protected projection API after bootstrap.
 - [x] Build a normalized, versioned, tombstone-safe Scheduling write-shadow,
   backfilled from existing projection and maintained in its local DB transaction.
   It remains a Core-backed mirror until explicit ownership transfer.
+- [x] Build a transaction-scoped worker/class conflict guard on this normalized
+  shadow with expiry-checked availability leases and PostgreSQL advisory locks.
+  It is **not** enabled as authoritative writes until Academic and attendance
+  coordination are fully migrated.
 - [x] Persist private, actor-scoped **STAGED-only** command identities and
   normalized hashes in the Scheduling database; reject reused keys with
   different input. These commands currently have NO executable handler.
