@@ -794,6 +794,22 @@ test "$staged_count" = "1" || { echo "Staged command inbox was not idempotent"; 
 public_staging="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/scheduling/assignments/commands/stage")"
 test "$public_staging" = "404" || { echo "Private command stage API was publicly routed"; exit 1; }
 echo "PASS: private Scheduling inbox stages repeated commands without business writes"
+
+# The independent standalone writer is deliberately not registered in the
+# default Compose stack. Normal operations still use Core assignment writes.
+core_writer_mode="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" \
+  "http://backend:8081/internal/scheduling/assignments/writer-state")"
+printf '%s' "$core_writer_mode" | python3 -c 'import sys,json; assert json.load(sys.stdin)["mode"]=="CORE"'
+standalone_executor_url="http://scheduling-service:8098/internal/scheduling/assignments/commands/standalone/${stage_key}/execute"
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" \
+  --header "Authorization: Bearer ${cm_token}" \
+  --post-data '' "$standalone_executor_url" >/dev/null 2>&1; then
+  echo "Standalone Scheduling executor became active without a cutover"; exit 1
+fi
+echo "PASS: Core remains writer and private standalone executor is disabled by default"
+
 # A staged command is unfinished migration work: even if source/JSON/shadow
 # parity holds, cutover verification must return 409 rather than READY.
 if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
