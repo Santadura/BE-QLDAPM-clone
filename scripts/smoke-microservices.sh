@@ -866,8 +866,13 @@ claim_response="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
   --header "X-Internal-Key: ${scheduling_key}" \
   --header "Content-Type: application/json" \
   --post-data "$claim_json" "$claim_url" 2>&1 || true)"
-if ! printf '%s' "$claim_response" | grep -Eq 'HTTP/[0-9.]+ 409'; then
-  echo "Core did not explicitly reject an independent Scheduling claim while in CORE mode"; exit 1
+if ! printf '%s' "$claim_response" | grep -Eq 'HTTP/[0-9.]+[[:space:]]+409'; then
+  current_mode="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db \
+    -tAc "SELECT writer_mode FROM scheduling_assignment_writer_control WHERE singleton=TRUE;" | tr -d '[:space:]')"
+  echo "Core writer claim must return HTTP 409 while mode=CORE; actual mode=${current_mode}"
+  echo "Internal test response (no bearer token included):"
+  printf '%s\n' "$claim_response" | tail -25
+  exit 1
 fi
 echo "PASS: Core handback is fenced by durable command claims; CORE mode cannot admit claims"
 
