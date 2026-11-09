@@ -11,6 +11,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.server.ResponseStatusException;
@@ -81,6 +82,11 @@ public class SchedulingReservationClient {
                 }
             });
             return true;
+        } catch(HttpClientErrorException.Conflict ex) {
+            // A concurrent worker/time intent is a business conflict, not a
+            // scheduling outage. Preserve 409 for existing CM/TC clients.
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "ASSIGNMENT_IN_PROGRESS: Overlapping staff assignment is being committed",ex);
         } catch(RestClientException ex) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Scheduling availability validation unavailable",ex);
