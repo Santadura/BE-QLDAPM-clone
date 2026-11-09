@@ -552,3 +552,60 @@ for i in $(seq 1 60); do
 done
 test "$audit_events_delivered" = "1" || { echo "Independent Audit Service did not receive scheduling history ($result/4)"; exit 1; }
 echo "PASS: all four Scheduling mutations reached the independent Audit database"
+
+# Phase 8a: Core still owns assignment writes, while Scheduling serves the
+# browser GETs from its versioned independent database.
+for i in $(seq 1 70); do
+  imported="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_metadata WHERE key='assignments-imported'" 2>/dev/null | tr -d '[:space:]' || true)"
+  test "$imported" = "1" && break
+  sleep 2
+done
+test "$imported" = "1" || { echo "Assignment read-model bootstrap failed"; exit 1; }
+legacy_count="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc "SELECT count(*) FROM teaching_schedules" | tr -d '[:space:]')"
+projected_count="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_assignment_read_model WHERE source_type='TEACHING' AND deleted=FALSE" | tr -d '[:space:]')"
+test "$legacy_count" = "$projected_count" || { echo "Initial teacher schedule count mismatch"; exit 1; }
+
+# Disposable CI data only: insert through SQL to prove the trigger catches
+# every Core write path, including ClassStaffingRangeService bulk SQL.
+fixture="ms-assign-${GITHUB_RUN_ID:-local}"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "INSERT INTO teaching_schedules(teaching_schedule_id,teacher_id,class_id,date,start_time,end_time,status) VALUES('${fixture}-t','teacher-001','${one}','2027-02-11','09:00','11:00','ASSIGNED')"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "INSERT INTO staff_schedules(staff_schedule_id,employee_id,class_id,date,start_time,end_time,work_type,status) VALUES('${fixture}-s','cs-001','${one}','2027-02-11','09:00','11:00','CLASS_SUPPORT','ASSIGNED')"
+for i in $(seq 1 70); do
+  projected="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_assignment_read_model WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND version=1 AND deleted=FALSE" | tr -d '[:space:]')"
+  test "$projected" = "2" && break
+  sleep 2
+done
+test "$projected" = "2" || { echo "Teacher/CS assignment projection did not arrive"; exit 1; }
+teacher_view="$(curl -fsS "${BASE}/api/teaching-schedules?weekStart=2027-02-08" -H "Authorization: Bearer ${tc_token}")"
+printf '%s' "$teacher_view" | FIXTURE_ID="${fixture}-t" python3 -c 'import os,sys,json; assert any(x.get("id")==os.environ["FIXTURE_ID"] and x.get("teacherId")=="teacher-001" and x.get("status")=="ASSIGNED" for x in json.load(sys.stdin))'
+cm_login="$(curl -fsS -X POST "${BASE}/api/auth/login" -H 'Content-Type: application/json' -d '{"username":"cm001","password":"123456"}')"
+cm_token="$(printf '%s' "$cm_login" | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')"
+staff_view="$(curl -fsS "${BASE}/api/staff-schedules?weekStart=2027-02-08&role=CS" -H "Authorization: Bearer ${cm_token}")"
+printf '%s' "$staff_view" | FIXTURE_ID="${fixture}-s" python3 -c 'import os,sys,json; assert any(x.get("id")==os.environ["FIXTURE_ID"] and x.get("employeeId")=="cs-001" and x.get("staffRole")=="CS" for x in json.load(sys.stdin))'
+forbidden="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/staff-schedules?weekStart=2027-02-08" -H "Authorization: Bearer ${teacher_avail_token}")"
+test "$forbidden" = "403" || { echo "Worker bypassed assignment read role scope: $forbidden"; exit 1; }
+echo "PASS: Scheduling read model preserves FE GET shapes and current role boundaries"
+
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "UPDATE teaching_schedules SET status='CANCELLED' WHERE teaching_schedule_id='${fixture}-t'"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "UPDATE staff_schedules SET status='CANCELLED' WHERE staff_schedule_id='${fixture}-s'"
+for i in $(seq 1 70); do
+  changed="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_assignment_read_model WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND status='CANCELLED' AND version=2" | tr -d '[:space:]')"
+  test "$changed" = "2" && break
+  sleep 2
+done
+test "$changed" = "2" || { echo "Cancelled assignment version didn't sync"; exit 1; }
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "DELETE FROM teaching_schedules WHERE teaching_schedule_id='${fixture}-t'"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "DELETE FROM staff_schedules WHERE staff_schedule_id='${fixture}-s'"
+for i in $(seq 1 70); do
+  deleted="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_assignment_read_model WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND deleted=TRUE AND version=3" | tr -d '[:space:]')"
+  test "$deleted" = "2" && break
+  sleep 2
+done
+test "$deleted" = "2" || { echo "Hard delete tombstones missing"; exit 1; }
+for i in $(seq 1 40); do
+  acked="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc "SELECT count(*) FROM scheduling_assignment_outbox WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND version=3 AND delivered_at IS NOT NULL" | tr -d '[:space:]')"
+  test "$acked" = "2" && break
+  sleep 2
+done
+test "$acked" = "2" || { echo "Exact-version Core acknowledgements missing"; exit 1; }
+echo "PASS: all Core assignment writes relay idempotently, including deletion tombstones"
