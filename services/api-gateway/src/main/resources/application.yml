@@ -13,6 +13,11 @@ spring:
         connect-timeout: 3000
         response-timeout: 45s
       routes:
+        # Only certificate read/write API is migrated to HR at this stage.
+        - id: hr-certificates
+          uri: ${HR_SERVICE_URI:http://localhost:8096}
+          predicates:
+            - Path=/api/employee-management/*/certificates,/api/employee-management/*/certificates/**
         # Admin statistics are now served from an independent read-model DB.
         - id: reporting-dashboard
           uri: ${REPORTING_SERVICE_URI:http://localhost:8095}
