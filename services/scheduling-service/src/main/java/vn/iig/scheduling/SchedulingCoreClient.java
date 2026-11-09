@@ -71,6 +71,32 @@ public class SchedulingCoreClient {
         }
     }
 
+    public record AssignmentReferenceReceipt(String eventId,long revision,String outcome) {}
+
+    /**
+     * Private, feature-gated Core reference receiver. This must return only
+     * after the Core projection and receipt have committed together. It can
+     * currently consume standalone STAFF UPSERT events ONLY; teaching and
+     * class-linked schedules still require a separate Academic/attendance saga.
+     */
+    public AssignmentReferenceReceipt applyAssignmentReference(
+            AssignmentDomainOutboxRepository.Event event) {
+        try {
+            AssignmentReferenceReceipt result=client.post()
+                .uri("/internal/scheduling/assignments/reference")
+                .header("X-Internal-Key",key)
+                .body(event)
+                .retrieve().body(AssignmentReferenceReceipt.class);
+            if(result==null || result.eventId()==null)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Core reference receiver returned no acknowledgement");
+            return result;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core assignment reference receiver unavailable",ex);
+        }
+    }
+
     public record AcademicSessionFacts(String classId,long classVersion,String classStatus,
             LocalDate classStart,LocalDate classEnd,String sessionId,
             long sessionVersion,String sessionStatus,LocalDate date,
