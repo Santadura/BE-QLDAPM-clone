@@ -159,15 +159,17 @@ public class SchedulingAssignmentReferenceBridge {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Reference revision cannot be reused for another event");
             }
-        } else {
-            Long existing=db.queryForObject(
-                "SELECT COALESCE(max(version),0) FROM scheduling_assignment_outbox " +
-                "WHERE source_type=? AND schedule_id=?",
-                Long.class,event.sourceType(),event.scheduleId());
-            if(existing!=null && event.revision()<=existing)
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Event revision must exceed the existing Core assignment version");
         }
+        // Metadata changes in Core may also advance its reference outbox.
+        // Never lower that version just because a later Scheduling event
+        // arrived with an older independent revision.
+        Long existing=db.queryForObject(
+            "SELECT COALESCE(max(version),0) FROM scheduling_assignment_outbox " +
+            "WHERE source_type=? AND schedule_id=?",
+            Long.class,event.sourceType(),event.scheduleId());
+        if(existing!=null && event.revision()<=existing)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Event revision must exceed the existing Core assignment version");
 
         // Transaction-local only. DB triggers guard this exact exceptional
         // reference path and skip Core->Scheduling feedback.
