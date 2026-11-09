@@ -24,6 +24,15 @@ class SchedulingAssignmentReferenceBridgeTest {
     private final SchedulingAssignmentReferenceBridge bridge=
         new SchedulingAssignmentReferenceBridge(db,json,"trusted-core-key");
 
+    @org.junit.jupiter.api.BeforeEach
+    void admittedCoreWriterClaim() {
+        when(db.query(startsWith("SELECT status FROM scheduling_assignment_writer_claims"),
+            any(RowMapper.class),eq("cm001"),eq("cm-001"),
+            anyString(),anyString())).thenReturn(List.of("PENDING"));
+        when(db.update(startsWith("UPDATE scheduling_assignment_writer_claims"),
+            eq("cm001"),eq("cm-001"),anyString(),anyString())).thenReturn(1);
+    }
+
     private SchedulingAssignmentReferenceBridge.Event event(String payload,
                                                               long revision)
             throws Exception {
@@ -84,6 +93,19 @@ class SchedulingAssignmentReferenceBridgeTest {
             assertThrows(ResponseStatusException.class,
                 ()->bridge.apply("trusted-core-key",corrupted)).getStatusCode());
         verifyNoInteractions(db);
+    }
+
+    @Test void independentCoreReferenceIsRejectedWithoutAWriterClaim() throws Exception {
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        when(db.query(startsWith("SELECT status FROM scheduling_assignment_writer_claims"),
+            any(RowMapper.class),eq("cm001"),eq("cm-001"),
+            anyString(),anyString())).thenReturn(List.of());
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->bridge.apply("trusted-core-key",valid())).getStatusCode());
+        verify(db,never()).update(startsWith("INSERT INTO staff_schedules"),
+            any(Object[].class));
     }
 
     @Test void cannotProjectWhileCoreIsStillAuthoritative() throws Exception {
