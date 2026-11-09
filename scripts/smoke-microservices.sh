@@ -943,6 +943,74 @@ reference_receipts="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm
 test "$reference_receipts" = "0" || { echo "Disabled Core receiver unexpectedly applied assignment events"; exit 1; }
 echo "PASS: event outbox and Core reference consumer are idle before independent write cutover"
 
+# Immutable history must be enforced by each owning PostgreSQL database,
+# not just by repository Java methods. Both fixtures are transactionally
+# rolled back so the normal smoke environment stays unchanged.
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+DO \$\$
+BEGIN
+  INSERT INTO scheduling_assignment_command_inbox
+    (actor_username,operation,request_key,request_hash,payload,state)
+  VALUES('cm001','ASSIGN_STAFF','${fixture}-immut',repeat('a',64),
+         '{}'::jsonb,'STAGED');
+  INSERT INTO scheduling_assignment_domain_outbox
+    (event_id,actor_username,operation,request_key,source_type,schedule_id,
+     revision,event_kind,payload,payload_hash)
+  VALUES('${fixture}-immut-event','cm001','ASSIGN_STAFF','${fixture}-immut',
+         'STAFF','${fixture}-immut-shift',1,'UPSERT','{}'::jsonb,repeat('b',64));
+  UPDATE scheduling_assignment_command_inbox SET state='PENDING_REFERENCE'
+    WHERE actor_username='cm001' AND operation='ASSIGN_STAFF'
+      AND request_key='${fixture}-immut';
+  BEGIN
+    UPDATE scheduling_assignment_domain_outbox
+      SET payload='{"unexpected":true}'::jsonb
+      WHERE event_id='${fixture}-immut-event';
+    RAISE EXCEPTION 'Outbox event payload was overwritten';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM scheduling_assignment_domain_outbox
+      WHERE event_id='${fixture}-immut-event';
+    RAISE EXCEPTION 'An already committed outbox event was deleted';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  UPDATE scheduling_assignment_domain_outbox
+    SET attempt_count=attempt_count+1,last_error='test retry'
+    WHERE event_id='${fixture}-immut-event';
+END
+\$\$;
+ROLLBACK;
+SQL
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+DO \$\$
+BEGIN
+  INSERT INTO scheduling_assignment_reference_event_receipts
+    (event_id,source_type,schedule_id,revision,payload_hash,actor_username,
+     operation,request_key)
+  VALUES('${fixture}-core-immut','STAFF','${fixture}-core-shift',1,
+         repeat('c',64),'cm001','ASSIGN_STAFF','${fixture}-command');
+  BEGIN
+    UPDATE scheduling_assignment_reference_event_receipts
+      SET payload_hash=repeat('d',64)
+      WHERE event_id='${fixture}-core-immut';
+    RAISE EXCEPTION 'Core historical receipt digest was rewritten';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM scheduling_assignment_reference_event_receipts
+      WHERE event_id='${fixture}-core-immut';
+    RAISE EXCEPTION 'Core historical receipt was removed';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END
+\$\$;
+ROLLBACK;
+SQL
+echo "PASS: both Scheduling outbox and Core receipt history reject SQL tampering"
+
+
 # The PostgreSQL state guard is the final safety net: an HTTP/controller
 # bug cannot mark an unexecuted command COMMITTED or pretend that a domain
 # outbox event exists. Test inside the isolated smoke database and clean up.
