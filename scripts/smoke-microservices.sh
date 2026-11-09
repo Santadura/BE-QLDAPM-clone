@@ -179,3 +179,44 @@ identity_internal_code="$(curl -sS -o /dev/null -w '%{http_code}' \
   "${BASE}/internal/identity/users/admin")"
 test "$identity_internal_code" = "404"
 echo "PASS: Identity credential bridge is private"
+
+# Reporting is served by a separate Spring Boot process with its own database.
+# It must preserve the existing statistics JSON contract and fail closed.
+stats_file="/tmp/iig-stats.json"
+stats_status="$(curl -sS -o "$stats_file" -w '%{http_code}' \
+  "${BASE}/api/statistics?period=YEAR&year=2026" -H "Authorization: Bearer ${TOKEN}")"
+test "$stats_status" = "200" || { cat "$stats_file"; echo "Statistics returned $stats_status"; exit 1; }
+python3 - "$stats_file" <<'PYTHON'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    value = json.load(stream)
+assert value["period"] == "YEAR", value
+assert "overview" in value and "employees" in value and "monthly" in value, value
+PYTHON
+snapshots="$("${COMPOSE[@]}" exec -T reporting-postgres psql -U iig_reporting -d iig_reporting -tAc \
+  "SELECT COUNT(*) FROM statistics_snapshots WHERE snapshot_key='YEAR:2026'" | tr -d '[:space:]')"
+test "$snapshots" = "1" || { echo "Reporting did not store the snapshot in its own DB"; exit 1; }
+refresh_before="$("${COMPOSE[@]}" exec -T reporting-postgres psql -U iig_reporting -d iig_reporting -tAc \
+  "SELECT refreshed_at FROM statistics_snapshots WHERE snapshot_key='YEAR:2026'" | tr -d '[:space:]')"
+curl --fail --silent --show-error \
+  "${BASE}/api/statistics?period=YEAR&year=2026" \
+  -H "Authorization: Bearer ${TOKEN}" >/dev/null
+refresh_after="$("${COMPOSE[@]}" exec -T reporting-postgres psql -U iig_reporting -d iig_reporting -tAc \
+  "SELECT refreshed_at FROM statistics_snapshots WHERE snapshot_key='YEAR:2026'" | tr -d '[:space:]')"
+test "$refresh_before" = "$refresh_after" || { echo "Fresh read-model snapshot was unnecessarily refreshed"; exit 1; }
+
+report_denied="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/api/statistics?period=YEAR&year=2026")"
+test "$report_denied" = "401"
+staff_json="$(curl --fail --silent --show-error -X POST "${BASE}/api/auth/login" \
+  -H 'Content-Type: application/json' -d '{"username":"teacher001","password":"123456"}')"
+staff_token="$(printf '%s' "$staff_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+staff_denied="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/api/statistics?period=YEAR&year=2026" -H "Authorization: Bearer ${staff_token}")"
+test "$staff_denied" = "403" || { echo "Non-Admin accessed reporting: $staff_denied"; exit 1; }
+invalid_period="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/api/statistics?period=WEEK&year=2026" -H "Authorization: Bearer ${TOKEN}")"
+test "$invalid_period" = "400"
+private_reporting="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/reporting/statistics")"
+test "$private_reporting" = "404"
+echo "PASS: Reporting snapshots stored independently with ADMIN-only authorization and stable API"
