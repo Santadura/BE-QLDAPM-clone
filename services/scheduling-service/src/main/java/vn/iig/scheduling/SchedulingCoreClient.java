@@ -2,6 +2,7 @@ package vn.iig.scheduling;
 
 import java.util.Arrays;
 import java.util.List;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 
@@ -94,6 +95,64 @@ public class SchedulingCoreClient {
         } catch(RestClientException ex) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Academic session version service unavailable",ex);
+        }
+    }
+
+    public record AcademicLease(String leaseId,String classId,String sessionId,
+                                long classVersion,long sessionVersion,Instant expiresAt) {}
+    private record AcademicLeaseRequest(String classId,String sessionId,
+                                        long classVersion,long sessionVersion) {}
+
+    /**
+     * PREPARATION ONLY. Core refuses to issue leases while Core is the live
+     * assignment writer. A future distributed command must renew and verify
+     * this lease and compensate partial writes before enabling public routes.
+     */
+    public AcademicLease reserveAcademicSession(String classId,String sessionId,
+                                                long classVersion,long sessionVersion) {
+        try {
+            AcademicLease lease=client.post().uri("/internal/scheduling/academic/leases")
+                .header("X-Internal-Key",key)
+                .body(new AcademicLeaseRequest(classId,sessionId,classVersion,sessionVersion))
+                .retrieve().body(AcademicLease.class);
+            if(lease==null || lease.leaseId()==null)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Empty Academic lease response");
+            return lease;
+        } catch(HttpClientErrorException.Conflict ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic session unavailable or Core writes not quiesced",ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic session lease service unavailable",ex);
+        }
+    }
+
+    public AcademicLease renewAcademicSession(String leaseId) {
+        try {
+            AcademicLease lease=client.post()
+                .uri("/internal/scheduling/academic/leases/{id}/renew",leaseId)
+                .header("X-Internal-Key",key).retrieve().body(AcademicLease.class);
+            if(lease==null || lease.leaseId()==null)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Academic lease renewal returned no data");
+            return lease;
+        } catch(HttpClientErrorException.Conflict ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic session lease expired or version changed",ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic session renewal unavailable",ex);
+        }
+    }
+
+    public void releaseAcademicSession(String leaseId) {
+        try {
+            client.delete().uri("/internal/scheduling/academic/leases/{id}",leaseId)
+                .header("X-Internal-Key",key).retrieve().toBodilessEntity();
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic session lease release unavailable",ex);
         }
     }
 
