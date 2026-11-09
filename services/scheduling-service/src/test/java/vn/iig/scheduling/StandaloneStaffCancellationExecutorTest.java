@@ -98,6 +98,8 @@ class StandaloneStaffCancellationExecutorTest {
         order.verify(outbox).append(anyString(),anyString(),anyString(),anyString(),
             anyString(),anyLong(),anyString(),any());
         order.verify(lifecycle).markLocallyApplied("cm001","CANCEL_STAFF","cancel-1");
+        verify(core).acquireAssignmentWriterClaim(
+            "cm001","cm-1","CANCEL_STAFF","cancel-1");
     }
 
     @Test void repeatedCancelDoesNotWriteAnotherRevision() throws Exception {
@@ -124,6 +126,21 @@ class StandaloneStaffCancellationExecutorTest {
         existingShift(null,"ASSIGNED");
         when(db.queryForObject(contains("FROM scheduling_assignment_domain_outbox o"),
             eq(Long.class),eq("shift-1"))).thenReturn(0L);
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->service.cancel("cm001","cm-1","CM","cancel-1")).getStatusCode());
+        verify(projection,never()).project(any());
+        verifyNoInteractions(outbox,lifecycle);
+    }
+
+    @Test void CoreWriterResumeRejectsCancelBeforeLocalProjection() throws Exception {
+        staged("STAGED");
+        existingShift(null,"ASSIGNED");
+        when(db.queryForObject(contains("FROM scheduling_assignment_domain_outbox o"),
+            eq(Long.class),eq("shift-1"))).thenReturn(1L);
+        doThrow(new ResponseStatusException(HttpStatus.CONFLICT,"Core writer resumed"))
+            .when(core).acquireAssignmentWriterClaim(
+                "cm001","cm-1","CANCEL_STAFF","cancel-1");
         assertEquals(HttpStatus.CONFLICT,
             assertThrows(ResponseStatusException.class,
                 ()->service.cancel("cm001","cm-1","CM","cancel-1")).getStatusCode());
