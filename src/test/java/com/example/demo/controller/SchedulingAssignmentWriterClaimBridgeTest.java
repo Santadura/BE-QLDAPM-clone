@@ -24,7 +24,7 @@ class SchedulingAssignmentWriterClaimBridgeTest {
     private void allowed() {
         when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
             .thenReturn("QUIESCED");
-        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+        when(db.queryForObject(contains("AND u.role_id='CM'"),
             eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
     }
 
@@ -60,7 +60,7 @@ class SchedulingAssignmentWriterClaimBridgeTest {
     @Test void InactiveManagerCanNeverReserveIndependentWriterSlot() {
         when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
             .thenReturn("QUIESCED");
-        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+        when(db.queryForObject(contains("AND u.role_id='CM'"),
             eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(0L);
         assertEquals(HttpStatus.FORBIDDEN,
             assertThrows(ResponseStatusException.class,
@@ -79,7 +79,7 @@ class SchedulingAssignmentWriterClaimBridgeTest {
         order.verify(db).queryForObject(
             contains("FOR UPDATE"),eq(String.class));
         order.verify(db).queryForObject(
-            contains("AND upper(r.role_name)='CM'"),
+            contains("AND u.role_id='CM'"),
             eq(Long.class),eq("cm-001"),eq("cm001"));
         order.verify(db).update(
             startsWith("INSERT INTO scheduling_assignment_writer_claims"),
