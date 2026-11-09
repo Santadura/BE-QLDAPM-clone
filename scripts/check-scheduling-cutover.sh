@@ -28,9 +28,9 @@ fi
 
 # This UPDATE waits for all currently active teacher/staff SQL transaction
 # triggers holding FOR SHARE on the control row to finish.
+resume_required=1
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c \
   "UPDATE scheduling_assignment_writer_control SET writer_mode='QUIESCED',changed_at=NOW() WHERE singleton=TRUE"
-resume_required=1
 
 service_id="$("${COMPOSE[@]}" ps -q scheduling-service)"
 key="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$service_id" | sed -n 's/^SCHEDULING_INTERNAL_API_KEY=//p')"
