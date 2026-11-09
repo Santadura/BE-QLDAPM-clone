@@ -332,8 +332,12 @@ the JSON key shapes that React already expects.
   by Core, but each authorized Scheduling GET first pulls pending committed
   changes from Core over private HTTP, applies them transactionally to the
   independent read database, then acknowledges the exact versions as a batch.
-  This provides a read-after-write barrier for the UI rather than briefly
-  showing stale cards immediately after assigning/cancelling a shift.
+  It repeats the feed check even after a short nonempty batch, since a second
+  Core transaction may commit during synchronization. A GET only serves the
+  projection after observing an empty pending feed. This reduces stale cards
+  immediately after assigning/cancelling a shift; it does **not** make reads
+  linearizable with writes committed after that final empty observation.
+  A backlog that cannot be drained within the bounded loop returns 503.
   Reads fail with 503 if Core cannot supply pending changes. This transitional
   Core dependency is intentional until assignment writes and attendance
   invariants move together; the projection is **never** used to authorize
