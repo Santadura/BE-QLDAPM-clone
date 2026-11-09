@@ -232,6 +232,10 @@ public class StandaloneStaffEditExecutor {
         else event.put("workplaceId",workplace);
         event.put("assignedBy",managerId);
 
+        // Prevent QUIESCED -> CORE during an independent edit commit,
+        // including the interval before the new event reaches Core.
+        core.acquireAssignmentWriterClaim(username,managerId,
+            "EDIT_STAFF",requestKey);
         projection.project(snapshot);
         outbox.append(username,"EDIT_STAFF",requestKey,
             "STAFF",scheduleId,revision,"UPSERT",event);
