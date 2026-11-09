@@ -501,6 +501,22 @@ model SchedulingAssignmentWriterControl {
   @@map("scheduling_assignment_writer_control")
 }
 
+// Durable Core admission is acquired before the independent Scheduling
+// transaction and blocks an unsafe QUIESCED -> CORE handback. Claims persist
+// until a separately reviewed disaster-recovery/handback reconciliation.
+model SchedulingAssignmentWriterClaim {
+  actorUsername String @map("actor_username") @db.VarChar(100)
+  operation String @db.VarChar(40)
+  requestKey String @map("request_key") @db.VarChar(128)
+  managerEmployeeId String @map("manager_employee_id") @db.VarChar(50)
+  claimedAt DateTime @default(now()) @map("claimed_at") @db.Timestamptz(6)
+  status String @default("PENDING") @db.VarChar(20)
+  confirmedAt DateTime? @map("confirmed_at") @db.Timestamptz(6)
+
+  @@id([actorUsername,operation,requestKey])
+  @@map("scheduling_assignment_writer_claims")
+}
+
 // Core-local idempotent reference receipts for a FUTURE Scheduling writer.
 // Not used by legacy monolith assignment commands or by public FE routes.
 model SchedulingAssignmentReferenceReceipt {
