@@ -83,9 +83,8 @@ public class SchedulingAssignmentWriterClaimBridge {
 
         Long activeManager=db.queryForObject(
             "SELECT count(*) FROM employees e JOIN users u ON u.username=e.username " +
-            "JOIN roles r ON r.role_id=u.role_id " +
             "WHERE e.employee_id=? AND e.username=? AND e.status='ACTIVE' " +
-            "AND u.status='ACTIVE' AND upper(r.role_name)='CM'",
+            "AND u.status='ACTIVE' AND u.role_id='CM'",
             Long.class,request.managerEmployeeId(),request.actorUsername());
         if(activeManager==null || activeManager!=1)
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
