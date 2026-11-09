@@ -774,6 +774,33 @@ END
 SQL
 echo "PASS: database write fence blocks direct Core assignment SQL in QUIESCED mode"
 
+# Core may only resume after a verified handback. The disposable fixture below
+# simulates a committed independent assignment reference and clears it first.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  UPDATE scheduling_assignment_writer_control
+    SET writer_mode='QUIESCED',changed_at=NOW() WHERE singleton=TRUE;
+  INSERT INTO scheduling_assignment_reference_receipts
+    (source_type,schedule_id,last_revision,last_event_id,payload_hash,actor_username)
+  VALUES ('STAFF','${fixture}-handback',1,'${fixture}-handback-event',
+          repeat('a',64),'cm001');
+  BEGIN
+    UPDATE scheduling_assignment_writer_control
+      SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE;
+    RAISE EXCEPTION 'Core resumed without verified Scheduling handback';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  DELETE FROM scheduling_assignment_reference_receipts
+    WHERE source_type='STAFF' AND schedule_id='${fixture}-handback';
+  UPDATE scheduling_assignment_writer_control
+    SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE;
+END
+\$\$;
+SQL
+echo "PASS: Core blocks unsafe writer handback after Scheduling reference events"
+
+
 # Phase 8b-3b: future Scheduling commands may only be staged through a private
 # service key AND a live Core JWT. Repeating a command never inserts an actual
 # teacher/CS/Sale shift or invokes a Core assignment transaction.
