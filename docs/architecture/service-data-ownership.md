@@ -1,17 +1,18 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 2**. Do not claim full migration before every
+> Architecture status: **Phase 3 (authentication extraction in progress)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
 
 | Domain | Owned entities / tables | State |
 | --- | --- | --- |
-| Identity & Access | `roles`, `app_functions`, `permissions`, `users` | Legacy core, **not extracted** |
+| Identity & Access | `roles`, `app_functions`, `permissions`, `users` | Legacy core remains **write owner**; standalone Authentication Service authenticates and holds an isolated `identity_users` projection, **not full Identity extraction** |
 | HR & People | `employees`, `certificates`, `salary_ranks` | Legacy core |
 | Academic | `classes`, `lessons`, `students`, `student_targets`, `class_target_requirements`, `class_students`, `class_access_scopes`, `assignments`, `exams`, `student_results`, `class_sessions` | Legacy core |
 | Scheduling | `availabilities`, `teaching_schedules`, `staff_schedules`, `teacher_session_attendance` | Legacy core |
 | Payroll | `employee_salaries`, `employee_salary_details`, `staff_salaries` | Legacy core |
+| Authentication projection | **`identity_users`, `identity_revocations`** | **Isolated Identity database; live credentials still originate from core** |
 | Course Catalog | **`catalog_courses`, `catalog_outbox`, `catalog_meta`** | **Isolated Catalog database (extracted)** |
 | Course FK projection | `courses` | Legacy academic read/reference copy; Catalog is authoritative |
 | Audit | **`audit_events`** | **Isolated Audit database (extracted)** |
@@ -28,6 +29,8 @@ joins make direct table-by-table migration unsafe.
 React
   |
 Spring Cloud Gateway (:8080 public)
+  |-- POST /api/auth/login, /api/auth/logout --> Auth (:8094) --> identity-postgres
+  |     (live credential lookup & logout revocation --> Core private API)
   |-- /api/classes/courses, /api/catalog/** --> Catalog (:8093) --> catalog-postgres
   |-- /api/** -------------------------------> Core (:8081) --> core-postgres
                                                 |   |
@@ -73,9 +76,16 @@ service-key-protected projection API after bootstrap.
 
 ## Extraction order (must satisfy every exit gate)
 
-### A. Identity/Access
+### A. Identity/Access (partial authentication extraction already implemented)
 
-- Separate user credentials, roles, account status and session revocation.
+- [x] Standalone authentication process with JWT issuance using the exact
+  legacy-compatible claims, a private credential-lookup API and an exclusive
+  credential snapshot/revocation database.
+- [x] Gateway routes login/logout to that process; revocation must be accepted
+  by the authoritative core before logout reports success. CI verifies core
+  rejects the revoked token and the browser remains compatible.
+- [ ] Separate user credentials, roles, account status and session revocation
+  **ownership**. The current `users` table is still owned by core.
 - Migrate legacy users **once**, preserving BCrypt hashes and unique usernames.
 - Replace core's direct `users` lookups with authenticated identity contracts or
   explicit subscribed read models; eliminate writes from core to identity data.
