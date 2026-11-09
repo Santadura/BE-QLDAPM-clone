@@ -20,7 +20,7 @@
 | Course FK projection | `courses` | Legacy academic read/reference copy; Catalog is authoritative |
 | Audit | **`audit_events`** | **Isolated Audit database (extracted)** |
 | Audit relay source | `audit_logs`, `audit_outbox_deliveries` | Transactional source in legacy core |
-| Dashboard / Statistics | `statistics_snapshots` read model | **Reporting owns role-scoped dashboard and statistics snapshots**; source calculations remain in core (transitional) |
+| Dashboard / Statistics | `statistics_snapshots` read model | **Reporting owns role-scoped snapshots**; Academic/Scheduling metrics still come from Core, while salary costs and payroll counts are read from Payroll over private HTTP |
 
 The above is the **target ownership design** for remaining entities, not a
 claim that the corresponding services already exist. Legacy FK links and SQL

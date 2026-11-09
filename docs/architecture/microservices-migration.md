@@ -228,6 +228,17 @@ and HR Salary Ranks are two bounded contexts in the same HR deployment.
   Independent Academic/Scheduling and HR/Identity ownership will allow
   a future versioned event stream with finalized attendance and rate snapshots.
 
+**Reporting financial consistency:** Payroll now serves
+`GET /internal/payroll/financial?from=YYYY-MM&to=YYYY-MM`, protected by
+`PAYROLL_INTERNAL_API_KEY`. Reporting requests monthly salary totals and
+record counts from Payroll's authoritative ledger and overlays those
+fields on the legacy Core statistics snapshot. It stores the completed
+JSON in its own read-model database with the existing 30-second TTL.
+The monthly salary-cost series and summary no longer read Core's stale
+`employee_salaries` tables. If Payroll is unavailable, refresh returns
+503 instead of inventing or silently retaining old financial amounts.
+Revenue remains unavailable as in the existing contract.
+
 CI uses seven isolated PostgreSQL instances, tests first-time import,
 calculation in Payroll's own database, role restrictions, finalized-payroll
 protection and the existing FE Playwright suite.

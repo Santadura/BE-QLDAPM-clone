@@ -414,3 +414,26 @@ frozen_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
   -H "Authorization: Bearer ${TOKEN}")"
 test "$frozen_code" = "409" || { echo "Finalized ledger could be recalculated: $frozen_code"; exit 1; }
 echo "PASS: Payroll authorization and finalized-ledger immutability"
+
+# Reporting's financial figures must now come from the authoritative Payroll
+# ledger, not the legacy Core employee_salaries or staff_salaries tables.
+source_sum="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT COALESCE(SUM(total_amount),0) FROM payroll_ledgers WHERE period='2026-10'" | tr -d '[:space:]')"
+source_records="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT COUNT(*) FROM payroll_ledgers WHERE period='2026-10'" | tr -d '[:space:]')"
+reported="$(curl -fsS "${BASE}/api/statistics?period=MONTH&year=2026&month=10" \
+  -H "Authorization: Bearer ${TOKEN}")"
+printf '%s' "$reported" | COST_SUM="$source_sum" COST_COUNT="$source_records" python3 -c '
+import json,os,sys
+from decimal import Decimal
+p=json.load(sys.stdin,parse_float=Decimal)
+cost=Decimal(os.environ["COST_SUM"])
+assert Decimal(str(p["financial"]["salaryCost"]))==cost, "Reporting salary total differs from Payroll"
+assert int(p["financial"]["payrollRecords"])==int(os.environ["COST_COUNT"])
+october=next(m for m in p["monthly"] if m["month"]==10)
+assert Decimal(str(october["salaryCost"]))==cost, "Monthly salary chart uses stale core data"
+'
+private_payroll_financial="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/internal/payroll/financial?from=2026-01&to=2026-12")"
+test "$private_payroll_financial" = "404"
+echo "PASS: Reporting financial statistics use the independent Payroll ledger"
