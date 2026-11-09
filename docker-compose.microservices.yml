@@ -40,6 +40,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-key-at-least-256-bits-please}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
       SCHEDULING_BRIDGE_ENABLED: "true"
+      SCHEDULING_ASSIGNMENT_RELAY_ENABLED: "true"
       SCHEDULING_AVAILABILITY_EXTERNAL: "true"
       SCHEDULING_INTERNAL_API_KEY: ${SCHEDULING_INTERNAL_API_KEY:-local-dev-scheduling-key-change-before-deployment}
       SCHEDULING_SERVICE_URL: http://scheduling-service:8098
