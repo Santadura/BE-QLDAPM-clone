@@ -817,6 +817,19 @@ recovered="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
 printf '%s' "$recovered" | python3 -c 'import sys,json; assert json.load(sys.stdin)["ready"]'
 echo "PASS: actor-scoped staged rejection is idempotent and restores cutover readiness"
 
+# Phase 8d: outbox tables and the future Core receipt table exist, but
+# staging or rejecting a command must never produce an assignment event.
+# Core reference writes and the Scheduling->Core relay are both opt-in/off
+# in the normal microservices stack.
+shadow_events="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc \
+  "SELECT count(*) FROM scheduling_assignment_domain_outbox WHERE actor_username='cm001' AND request_key='${stage_key}'" | tr -d '[:space:]')"
+test "$shadow_events" = "0" || { echo "Unexecuted command generated an outbound assignment event"; exit 1; }
+reference_receipts="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM scheduling_assignment_reference_receipts WHERE actor_username='cm001'" | tr -d '[:space:]')"
+test "$reference_receipts" = "0" || { echo "Disabled Core receiver unexpectedly applied assignment events"; exit 1; }
+echo "PASS: event outbox and Core reference consumer are idle before independent write cutover"
+
+
 
 
 # Versioned Academic session facts are private, too. They are a read
