@@ -36,6 +36,11 @@ logging:
 
 # Disabled in the legacy monolith deployment. Enabled by the microservices stack.
 iig:
+  scheduling:
+    bridge-enabled: ${SCHEDULING_BRIDGE_ENABLED:false}
+    external-availability: ${SCHEDULING_AVAILABILITY_EXTERNAL:false}
+    url: ${SCHEDULING_SERVICE_URL:http://localhost:8098}
+    internal-key: ${SCHEDULING_INTERNAL_API_KEY:}
   payroll:
     bridge-enabled: ${PAYROLL_BRIDGE_ENABLED:false}
     internal-key: ${PAYROLL_INTERNAL_API_KEY:}
