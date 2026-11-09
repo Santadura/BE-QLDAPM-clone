@@ -49,8 +49,8 @@ CREATE TRIGGER trg_iig_staff_read_model
 -- Existing production records (created before the trigger) also need a
 -- snapshot and durable outbox entry. Do not mutate existing versions.
 INSERT INTO scheduling_assignment_outbox(source_type,schedule_id)
-SELECT 'TEACHING',teaching_schedule_id FROM teaching_schedules
+SELECT 'TEACHING',teaching_schedule_id FROM teaching_schedules WHERE TRUE
 ON CONFLICT(source_type,schedule_id) DO NOTHING;
 INSERT INTO scheduling_assignment_outbox(source_type,schedule_id)
-SELECT 'STAFF',staff_schedule_id FROM staff_schedules
+SELECT 'STAFF',staff_schedule_id FROM staff_schedules WHERE TRUE
 ON CONFLICT(source_type,schedule_id) DO NOTHING;
