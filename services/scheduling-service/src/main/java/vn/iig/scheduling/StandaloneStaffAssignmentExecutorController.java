@@ -11,7 +11,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Operator-controlled migration-only endpoint. NOT routed by Gateway.
- * Does not support class support, teacher schedules, edits or cancellation.
+ * Supports create, edit and cancel of standalone CS/Sale shifts only.
+ * Teacher, class support, bulk staffing and public FE mutations remain Core-owned.
  * When disabled (normal operation), this controller is not registered at all.
  */
 @RestController
