@@ -2,10 +2,10 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 2**, not a claim that the entire IIG system
+This branch is **migration phase 3 (authentication extraction)**, not a claim that the entire IIG system
 has become independently deployable microservices. The existing monolith
 still owns Auth, HR, Classes, Students, Scheduling, Payroll and Statistics.
-**Audit and Course Catalog** now run as independent Spring Boot services
+**Audit, Course Catalog, and Authentication** now run as independent Spring Boot services
 with different processes and exclusive PostgreSQL databases.
 
 The legacy `docker-compose.yml` and FE `/api/**` contract are unchanged.
@@ -66,8 +66,38 @@ The Course Catalog bounded context has been extracted into
   from the legacy core. The future Identity service will remove this dependency.
 
 Deployment topology now contains **Gateway + Core + Audit + Catalog**,
-and **three distinct PostgreSQL instances**. Catalog listens on the Compose
+and **four distinct PostgreSQL instances** in the phase 3 stack. Catalog listens on the Compose
 network only (`catalog-service:8093`). The legacy Compose stack is unchanged.
+
+## Phase 3: Authentication (not yet full Identity ownership)
+
+The opt-in architecture adds `services/identity-service` and a fourth
+PostgreSQL instance. Gateway routes **only** `POST /api/auth/login` and
+`POST /api/auth/logout` to this new Spring Boot service, preserving the
+existing React contract.
+
+- Login verifies the user password and status using a **current** private
+  credential snapshot from core, then persists a projection and issues JWT
+  with exactly the claims accepted by the existing Spring Security filter.
+  The internal snapshot includes a BCrypt hash and requires a confidential
+  service key, with no public Gateway route for `/internal/identity/**`.
+- Logout waits for core to revoke the session before returning 204. Core's
+  existing request filter still validates live role, account status, password
+  stamp and revocation.
+- CI verifies independently deployed login/logout, cross-service JWT
+  compatibility, revocation after logout, private API isolation, and the
+  existing React browser E2E suite.
+- **Not yet extracted:** user/role/permission write ownership and
+  registration/profile/password change. Those remain in core, so this is
+  *authentication-service extraction* rather than an autonomous Identity
+  bounded context. This is intentional until the credential migration,
+  profile writes and session invalidation contracts can be proven.
+- The direct core dependency on every login makes login unavailable if core
+  is offline. Do not misrepresent this as an independently resilient
+  identity authority.
+
+See `docs/architecture/service-data-ownership.md` for subsequent extraction
+gates and distributed business invariants.
 
 ## Architecture decisions
 
@@ -125,6 +155,7 @@ mvn -B -ntp test
 mvn -B -ntp -f services/api-gateway/pom.xml test
 mvn -B -ntp -f services/audit-service/pom.xml test
 mvn -B -ntp -f services/catalog-service/pom.xml test
+mvn -B -ntp -f services/identity-service/pom.xml test
 npm ci && npx prisma validate
 docker compose -f docker-compose.microservices.yml config --quiet
 docker compose -f docker-compose.microservices.yml up --build -d
