@@ -126,7 +126,7 @@ public class SchedulingAssignmentReferenceBridge {
         String workplace=text(p,"workplaceId");
         String assignedBy=text(p,"assignedBy");
         if((workplace!=null && workplace.length()>50) ||
-                (assignedBy!=null && assignedBy.length()>50))
+                assignedBy==null || assignedBy.isBlank() || assignedBy.length()>50)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Assignment reference identifiers too long");
 
