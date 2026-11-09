@@ -793,6 +793,49 @@ academic_facts="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
 printf '%s' "$academic_facts" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["sessionStatus"]=="PLANNED" and d["classVersion"]>=1 and d["sessionVersion"]>=1'
 echo "PASS: Scheduling can read a versioned Academic planned-session contract over private HTTP"
 
+# Phase 8b-3c: exercise the Academic lease mutation fences entirely inside
+# one disposable Core DB transaction, so even an assertion failure rolls the
+# QUIESCED state back automatically. The API has separate private-key tests.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+DECLARE
+  lesson_id VARCHAR(50);
+BEGIN
+  SELECT class_session_id INTO lesson_id FROM class_sessions
+    WHERE class_id='${one}' AND date='2027-02-11' LIMIT 1;
+  IF lesson_id IS NULL THEN
+    RAISE EXCEPTION 'Academic lease smoke requires a planned session';
+  END IF;
+  UPDATE scheduling_assignment_writer_control
+     SET writer_mode='QUIESCED',changed_at=NOW() WHERE singleton=TRUE;
+  INSERT INTO scheduling_academic_session_leases(
+    lease_id,class_id,class_session_id,expected_class_version,
+    expected_session_version,expires_at)
+  SELECT '${fixture}-acad','${one}',lesson_id,
+         c.scheduling_version,s.scheduling_version,NOW()+interval '5 minutes'
+  FROM classes c JOIN class_sessions s ON s.class_id=c.class_id
+  WHERE c.class_id='${one}' AND s.class_session_id=lesson_id;
+  BEGIN
+    UPDATE class_sessions SET status=status WHERE class_session_id=lesson_id;
+    RAISE EXCEPTION 'Active Academic lease failed to block timetable mutation';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    UPDATE scheduling_assignment_writer_control SET writer_mode='CORE'
+      WHERE singleton=TRUE;
+    RAISE EXCEPTION 'Core write mode resumed while Academic lease active';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  DELETE FROM scheduling_academic_session_leases
+   WHERE lease_id='${fixture}-acad';
+  UPDATE scheduling_assignment_writer_control
+    SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE;
+END
+\$\$;
+SQL
+echo "PASS: leased Academic sessions block timetable edits and premature Core writer resume"
+
+
 
 
 
