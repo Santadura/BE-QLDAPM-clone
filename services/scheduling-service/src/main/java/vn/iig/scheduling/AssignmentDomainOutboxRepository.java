@@ -22,11 +22,10 @@ import org.springframework.web.server.ResponseStatusException;
 /**
  * Transactional outbox for a FUTURE independent Scheduling assignment writer.
  *
- * There is deliberately no active producer or public delivery endpoint.
- * A later writer must change a schedule AND enqueue the immutable event in
- * the same Scheduling database transaction. Core's projection/attendance
- * reference consumer does not exist yet: activating delivery before that is
- * unsafe. Unique source/revision and an immutable payload digest make retries
+ * The private, opt-in standalone CS/Sale executor is the only enabled
+ * producer when explicitly configured. Its local schedule mutation, inbox
+ * transition and event must commit in the SAME transaction. Teaching,
+ * class-support, attendance and public write endpoints are still Core-owned. Unique source/revision and an immutable payload digest make retries
  * detectable rather than silently replacing an event.
  */
 @Repository
