@@ -53,6 +53,33 @@ class AssignmentIntentReservationTest {
             eq(LocalTime.of(12,0)),eq(LocalTime.of(11,0)));
     }
 
+    @Test void approvedReservationPersistsAnIntentInTheSameTransaction() {
+        var req=request(LocalTime.of(9,0),LocalTime.of(11,0));
+        when(db.query(contains("SELECT availability_id FROM scheduling_availabilities"),
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<String>>any(),
+                any(),any(),any(),any(),any(),any(),any()))
+            .thenReturn(java.util.List.of("approved-slot"));
+        when(db.queryForObject(
+            contains("FROM scheduling_assignment_intent_reservations"),
+            eq(Long.class),eq("teacher-001"),eq(date),
+            eq(LocalTime.of(11,0)),eq(LocalTime.of(9,0))))
+            .thenReturn(0L);
+
+        var lease=repository.reserve(req);
+        assertTrue(lease.approved());
+        assertNotNull(lease.reservationId());
+        verify(db).update(startsWith("INSERT INTO scheduling_availability_reservations"),
+            eq(lease.reservationId()),eq("approved-slot"),eq("teacher-001"));
+        verify(db).update(startsWith("INSERT INTO scheduling_assignment_intent_reservations"),
+            eq(lease.reservationId()),eq("teacher-001"),eq(date),
+            eq(LocalTime.of(9,0)),eq(LocalTime.of(11,0)));
+
+        // The FK ON DELETE CASCADE removes this intent with its parent lease.
+        repository.release(lease.reservationId());
+        verify(db).update(startsWith("DELETE FROM scheduling_availability_reservations"),
+            eq(lease.reservationId()));
+    }
+
     @Test void aDifferentWorkerIsLockedAndCheckedByTheirOwnEmployeeId() {
         var request=new ReservationRequest("cs-001",date,
             LocalTime.of(9,0),LocalTime.of(11,0),null);
