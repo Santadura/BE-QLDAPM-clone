@@ -1,0 +1,22 @@
+server:
+  port: ${SERVER_PORT:8098}
+spring:
+  application:
+    name: iig-scheduling-service
+  datasource:
+    url: ${SCHEDULING_DB_URL:jdbc:postgresql://localhost:5439/iig_scheduling}
+    username: ${SCHEDULING_DB_USERNAME:iig_scheduling}
+    password: ${SCHEDULING_DB_PASSWORD}
+  sql:
+    init:
+      mode: always
+      continue-on-error: false
+iig:
+  core:
+    url: ${CORE_INTERNAL_URL:http://localhost:8081}
+    internal-key: ${SCHEDULING_INTERNAL_API_KEY}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
