@@ -76,6 +76,8 @@ class StandaloneStaffCancellationExecutorTest {
             throws Exception {
         staged("STAGED");
         existingShift(null,"ASSIGNED");
+        when(db.queryForObject(contains("FROM scheduling_assignment_domain_outbox o"),
+            eq(Long.class),eq("shift-1"))).thenReturn(1L);
         var result=service.cancel("cm001","cm-1","CM","cancel-1");
         assertEquals("shift-1",result.scheduleId());
         assertEquals(2,result.revision());
@@ -114,6 +116,19 @@ class StandaloneStaffCancellationExecutorTest {
         assertEquals("COMMITTED",result.state());
         verifyNoInteractions(outbox,lifecycle);
         verify(projection,never()).project(any());
+    }
+
+    @Test void copiedLegacyCoreStandaloneShiftCannotBeCancelledByNewWriter()
+            throws Exception {
+        staged("STAGED");
+        existingShift(null,"ASSIGNED");
+        when(db.queryForObject(contains("FROM scheduling_assignment_domain_outbox o"),
+            eq(Long.class),eq("shift-1"))).thenReturn(0L);
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->service.cancel("cm001","cm-1","CM","cancel-1")).getStatusCode());
+        verify(projection,never()).project(any());
+        verifyNoInteractions(outbox,lifecycle);
     }
 
     @Test void cannotCancelClassSupportShift() throws Exception {
