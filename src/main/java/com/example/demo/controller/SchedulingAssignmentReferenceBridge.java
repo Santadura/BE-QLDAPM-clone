@@ -159,6 +159,22 @@ public class SchedulingAssignmentReferenceBridge {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Reference revision cannot be reused for another event");
             }
+            if(event.revision()!=old.revision()+1)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Missing intermediate Scheduling assignment reference revision");
+        } else {
+            // Never allow a Scheduling event to overwrite an existing legacy
+            // Core-owned row that has not been explicitly migrated. Creating
+            // a brand-new standalone shift must start with source revision 1.
+            if(event.revision()!=1)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "New Scheduling assignment reference must begin at revision 1");
+            Long legacy=db.queryForObject(
+                "SELECT count(*) FROM staff_schedules WHERE staff_schedule_id=?",
+                Long.class,event.scheduleId());
+            if(legacy!=null && legacy>0)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Scheduling cannot overwrite a legacy Core-owned staff assignment");
         }
         // Metadata changes in Core may also advance its reference outbox.
         // Never lower that version just because a later Scheduling event
