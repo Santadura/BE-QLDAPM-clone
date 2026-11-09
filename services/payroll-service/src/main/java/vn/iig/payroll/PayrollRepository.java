@@ -149,6 +149,14 @@ public class PayrollRepository {
         return db.query(SELECT+" WHERE employee_id=? AND period=? ORDER BY source,id",
             (rs,i)->map(rs),employeeId,period);
     }
+    public record MonthCost(String period,BigDecimal salaryCost,long payrollRecords) {}
+    public List<MonthCost> monthlyCosts(String from,String to) {
+        return db.query("SELECT period,COALESCE(SUM(total_amount),0),COUNT(*) " +
+            "FROM payroll_ledgers WHERE period BETWEEN ? AND ? GROUP BY period ORDER BY period",
+            (rs,i)->new MonthCost(rs.getString(1),rs.getBigDecimal(2),rs.getLong(3)),
+            from,to);
+    }
+
     public List<PayrollItem> items(String payrollId) {
         return db.query("SELECT id,work_date,source_type,work_name,hours,rate,amount " +
             "FROM payroll_items WHERE payroll_id=? ORDER BY work_date,id",
