@@ -26,6 +26,7 @@ import vn.iig.scheduling.SchedulingModels.*;
 @Repository
 public class AvailabilityRepository {
     public record Pending(Slot slot,long version) {}
+    public record AuditEvent(String eventId,String username,String action,String entityId) {}
     private final JdbcTemplate db;
     private static final String SELECT =
         "SELECT availability_id,employee_id,full_name,role_id,available_date," +
@@ -149,6 +150,7 @@ public class AvailabilityRepository {
             id,actor.employeeId(),actor.fullName(),actor.role(),body.availableDate(),
             day,body.shift(),body.startTime(),body.endTime(),kind,body.campus(),body.note());
         enqueue(id,1);
+        appendAudit(actor,"REGISTER_AVAILABILITY",id);
         return get(id);
     }
 
@@ -171,6 +173,7 @@ public class AvailabilityRepository {
             body.availableDate(),day,body.shift(),body.startTime(),body.endTime(),
             kind,body.campus(),body.note(),v,id);
         enqueue(id,v);
+        appendAudit(actor,"UPDATE_AVAILABILITY",id);
         return get(id);
     }
 
@@ -187,6 +190,7 @@ public class AvailabilityRepository {
         db.update("UPDATE scheduling_availabilities SET deleted=TRUE,version=? " +
             "WHERE availability_id=?",v,id);
         enqueue(id,v);
+        appendAudit(actor,"DELETE_AVAILABILITY",id);
     }
 
     @Transactional
@@ -205,6 +209,7 @@ public class AvailabilityRepository {
             "reviewed_by=?,version=? WHERE availability_id=?",
             status,actor.employeeId(),v,id);
         enqueue(id,v);
+        appendAudit(actor,"REVIEW_AVAILABILITY",id);
         return get(id);
     }
 
@@ -216,6 +221,25 @@ public class AvailabilityRepository {
         if(active!=null && active>0)
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Availability is reserved by an in-flight assignment");
+    }
+
+    private void appendAudit(Actor actor,String action,String id) {
+        db.update("INSERT INTO scheduling_availability_audit_outbox " +
+            "(event_id,username,action,availability_id) VALUES(?,?,?,?)",
+            UUID.randomUUID().toString(),actor.username(),action,id);
+    }
+
+    public List<AuditEvent> pendingAudits(int limit) {
+        return db.query("SELECT event_id,username,action,availability_id " +
+            "FROM scheduling_availability_audit_outbox WHERE delivered_at IS NULL " +
+            "ORDER BY created_at,event_id LIMIT ?",
+            (rs,i)->new AuditEvent(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getString(4)),limit);
+    }
+
+    public void acknowledgeAudit(String id) {
+        db.update("UPDATE scheduling_availability_audit_outbox " +
+            "SET delivered_at=NOW() WHERE event_id=? AND delivered_at IS NULL",id);
     }
 
     private void enqueue(String id,long version) {
