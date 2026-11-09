@@ -123,6 +123,15 @@ model Certificate {
   @@map("certificates")
 }
 
+// Temporary core-side HR certificate projection version gates.
+model HrCertificateProjectionVersion {
+  certificateId String @id @map("certificate_id") @db.VarChar(50)
+  version BigInt @default(0)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("hr_certificate_versions")
+}
+
 model Course {
   courseId    String   @id @default(cuid()) @map("course_id") @db.VarChar(50)
   name        String   @db.VarChar(150)
