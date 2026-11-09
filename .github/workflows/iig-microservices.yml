@@ -11,6 +11,8 @@ on:
       - 'src/main/java/com/example/demo/controller/SchedulingAcademicLeaseBridge.java'
       - 'src/main/java/com/example/demo/controller/SchedulingAssignmentReferenceBridge.java'
       - 'src/main/java/com/example/demo/controller/SchedulingAssignmentReferenceReceiptController.java'
+      - 'src/main/java/com/example/demo/controller/SchedulingAssignmentWriterClaimBridge.java'
+      - 'src/test/java/com/example/demo/controller/SchedulingAssignmentWriterClaimBridgeTest.java'
       - 'src/test/java/com/example/demo/controller/SchedulingAssignmentReferenceReceiptControllerTest.java'
       - 'src/test/java/com/example/demo/controller/SchedulingAssignmentReferenceBridgeTest.java'
       - 'src/test/java/com/example/demo/controller/SchedulingAcademicLeaseBridgeTest.java'
