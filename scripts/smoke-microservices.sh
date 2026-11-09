@@ -663,3 +663,31 @@ orphan_count="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduli
   "SELECT count(*) FROM scheduling_assignment_intent_reservations WHERE reservation_id='${intent_id}'" | tr -d '[:space:]')"
 test "$orphan_count" = "0" || { echo "Assignment intent survived lease release"; exit 1; }
 echo "PASS: Scheduling-owned worker/time intents reject overlap and follow lease lifecycle"
+
+# Phase 8b-2: true API-level command retry through Gateway. The disposable class
+# is DRAFT, so the CS support cancellation is allowed; its previous assignment
+# is injected with SQL only to avoid changing the project's business fixtures.
+# Both DELETE requests must be 204, with exactly one audit and one persisted
+# successful command receipt. No extra schedule mutation is permitted.
+idem_shift="${fixture}-idem-s"
+idem_key="smoke-${GITHUB_RUN_ID:-local}-cancel"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c \
+  "INSERT INTO staff_schedules(staff_schedule_id,employee_id,class_id,date,start_time,end_time,work_type,status) VALUES ('${idem_shift}','cs-001','${one}','2027-02-11','09:00','11:00','CLASS_SUPPORT','ASSIGNED')"
+for i in 1 2; do
+  code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+    "${BASE}/api/staff-schedules/${idem_shift}" \
+    -H "Authorization: Bearer ${cm_token}" \
+    -H "Idempotency-Key: ${idem_key}")"
+  test "$code" = "204" || { echo "Idempotent cancel request $i returned $code"; exit 1; }
+done
+state="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT status FROM staff_schedules WHERE staff_schedule_id='${idem_shift}'" | tr -d '[:space:]')"
+test "$state" = "CANCELLED" || { echo "Idempotent cancel was not persisted"; exit 1; }
+audit_count_idem="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM audit_logs WHERE action='CANCEL_STAFF_SHIFT' AND entity_id='${idem_shift}'" | tr -d '[:space:]')"
+test "$audit_count_idem" = "1" || { echo "Retry duplicated cancellation audit ($audit_count_idem)"; exit 1; }
+receipt_count="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM scheduling_command_receipts WHERE actor_username='cm001' AND command_type='DELETE /api/staff-schedules/${idem_shift}' AND request_key='${idem_key}' AND completed_at IS NOT NULL AND response_payload='null'::jsonb" | tr -d '[:space:]')"
+test "$receipt_count" = "1" || { echo "Command receipt not atomically persisted ($receipt_count)"; exit 1; }
+echo "PASS: Gateway assignment cancellation retries return 204 with one write, audit, and receipt"
+
