@@ -12,7 +12,7 @@ with different processes and exclusive PostgreSQL databases.
 The legacy `docker-compose.yml` and FE `/api/**` contract are unchanged.
 The opt-in `docker-compose.microservices.yml` runs the new stack:
 
-\`\`\`text
+```text
 React -> Spring Cloud Gateway :8080
   |-- /api/auth/login, /api/auth/logout -> Identity :8094 -> identity-postgres
   |-- /api/classes/courses, /api/catalog/** -> Catalog :8093 -> catalog-postgres
@@ -21,7 +21,7 @@ React -> Spring Cloud Gateway :8080
   |-- /api/payroll/ranks/** -> HR :8096 -> hr-postgres
   +-- remaining /api/** -> Core :8081 -> core-postgres
                                    +-- audit events -> Audit :8092 -> audit-postgres
-\`\`\`
+```
 
 Core, Audit, Catalog, Identity, Reporting and HR use **different PostgreSQL instances**, not just two schemas in
 the same logical database. The API gateway is a separately started Spring
