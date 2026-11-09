@@ -30,18 +30,32 @@ public class AssignmentCommandInboxController {
         this.key=sharedKey.getBytes(StandardCharsets.UTF_8);
     }
 
-    @PostMapping("/stage")
-    @ResponseStatus(HttpStatus.ACCEPTED)
-    public AssignmentCommandInboxService.Receipt stage(
-            @RequestHeader(value="X-Internal-Key",required=false) String supplied,
-            @RequestHeader(value="Authorization",required=false) String bearer,
-            @RequestBody AssignmentCommandInboxService.Request request) {
+    private SchedulingCoreClient.Viewer authenticated(String supplied,String bearer) {
         byte[] actual=supplied==null?new byte[0]:supplied.getBytes(StandardCharsets.UTF_8);
         if(!MessageDigest.isEqual(key,actual))
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Invalid Scheduling service key");
         var actor=core.currentViewer(bearer);
         if(actor.employeeId()==null || actor.username()==null || actor.role()==null)
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Active staff profile required");
+        return actor;
+    }
+
+    @PostMapping("/stage")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public AssignmentCommandInboxService.Receipt stage(
+            @RequestHeader(value="X-Internal-Key",required=false) String supplied,
+            @RequestHeader(value="Authorization",required=false) String bearer,
+            @RequestBody AssignmentCommandInboxService.Request request) {
+        var actor=authenticated(supplied,bearer);
         return inbox.stage(actor.username(),actor.role(),request);
+    }
+
+    @PostMapping("/{operation}/{requestKey}/reject")
+    public AssignmentCommandInboxService.Receipt rejectStaged(
+            @RequestHeader(value="X-Internal-Key",required=false) String supplied,
+            @RequestHeader(value="Authorization",required=false) String bearer,
+            @PathVariable String operation,@PathVariable String requestKey) {
+        var actor=authenticated(supplied,bearer);
+        return inbox.rejectStaged(actor.username(),actor.role(),operation,requestKey);
     }
 }
