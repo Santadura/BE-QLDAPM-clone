@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8d-2 (opt-in standalone staff command execution)**, not
+This branch is **migration phase 8d-3 (private standalone CS/Sale create/edit/cancel)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,47 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8d-3: worker-preserving staff edits and handback protection
+
+A third PRIVATE executor handles `EDIT_STAFF` for standalone CS/Sale
+assignments originally created by Scheduling. It requires the same opt-in
+`SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED` flag, Core `QUIESCED` mode,
+service key, **live CM token**, an actor-scoped staged command, and a newly
+approved worker/time reservation.
+
+The edit payload must provide `{date,startTime,endTime,workType,reservationId,
+workplaceId?}` and the staging envelope must contain `targetId`. Employee,
+role, class, status and assigning manager cannot be altered by the request.
+The executor verifies that the original Scheduling revision-1 event was
+acknowledged by Core, that the *current* shift revision was also delivered,
+and that the shift is still active and not linked to a class. It locks the
+row and employee, checks against committed and in-flight overlapping shifts,
+and advances the read projection, write shadow, immutable event outbox and
+`PENDING_REFERENCE` receipt inside one Scheduling transaction. Retry of
+the same command key returns its original shift ID and revision.
+
+The Core private reference receiver accepts `EDIT_STAFF` only as the next
+contiguous revision of a previously committed reference. It validates the
+currently active worker/CM again, forbids employee changes and class-linked
+rows, and updates only the new time/date, work type, workplace and assigning
+CM. Cancellation now also checks the exact Core row before touching its
+status; it cannot silently rewrite the original assignment's identity or
+time using stale cancellation content.
+
+**Explicit handback fence:** as soon as even one Scheduling-origin
+reference receipt exists, the Core database denies an ordinary
+`QUIESCED -> CORE` mode change (PostgreSQL SQLSTATE 55000). Academic lease
+fencing continues independently. An operator must first perform a reviewed
+bidirectional reconciliation and a dedicated handback/rollback migration;
+simply resetting the database writer-mode flag is unsafe. This guard is
+covered by a disposable Docker smoke test and does not affect the normal
+initial `CORE` mode when there are no independent reference receipts.
+
+The third executor does **not** imply that Scheduling is already the public
+write owner. The three cutover flags remain off in default Compose. Teacher,
+CS class-support, bulk staffing, attendance/Payroll, independent Academic
+ownership, cross-service recovery and verified E2E tests are outstanding.
 
 ## Phase 8d-2: scoped standalone CS/Sale command execution (PRIVATE, OFF)
 
