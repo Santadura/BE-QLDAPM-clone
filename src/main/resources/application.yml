@@ -36,6 +36,9 @@ logging:
 
 # Disabled in the legacy monolith deployment. Enabled by the microservices stack.
 iig:
+  payroll:
+    bridge-enabled: ${PAYROLL_BRIDGE_ENABLED:false}
+    internal-key: ${PAYROLL_INTERNAL_API_KEY:}
   hr:
     certificate-bridge-enabled: ${HR_CERTIFICATE_BRIDGE_ENABLED:false}
     external-certificates: ${HR_CERTIFICATES_EXTERNAL:false}
