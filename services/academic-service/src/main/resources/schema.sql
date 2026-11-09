@@ -12,3 +12,13 @@ CREATE TABLE IF NOT EXISTS academic_read_snapshots (
 );
 CREATE INDEX IF NOT EXISTS academic_read_snapshots_actor
   ON academic_read_snapshots (username,role_id,synchronized_at DESC);
+
+-- This is the actual Academic-owned class-planning read source. Core holds
+-- the monotonic revision clock; Academic keeps a validated local snapshot,
+-- refreshing only when Core has transactionally advanced that revision.
+CREATE TABLE IF NOT EXISTS academic_planning_projection (
+  name VARCHAR(20) PRIMARY KEY CHECK(name='planning'),
+  source_revision BIGINT NOT NULL CHECK(source_revision>=1),
+  payload JSONB NOT NULL CHECK(jsonb_typeof(payload)='array'),
+  synchronized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

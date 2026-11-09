@@ -8,6 +8,8 @@ on:
       - 'src/main/java/com/example/demo/service/AuditOutboxRelay.java'
       - 'src/main/java/com/example/demo/controller/SchedulingAssignmentReadBridge.java'
       - 'src/main/java/com/example/demo/controller/SchedulingAcademicFactsBridge.java'
+      - 'src/main/java/com/example/demo/controller/AcademicPlanningSnapshotBridge.java'
+      - 'src/test/java/com/example/demo/controller/AcademicPlanningSnapshotBridgeTest.java'
       - 'src/main/java/com/example/demo/controller/SchedulingAcademicLeaseBridge.java'
       - 'src/main/java/com/example/demo/controller/SchedulingAssignmentReferenceBridge.java'
       - 'src/main/java/com/example/demo/controller/SchedulingAssignmentReferenceReceiptController.java'

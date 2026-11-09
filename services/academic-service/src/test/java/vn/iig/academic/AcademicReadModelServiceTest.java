@@ -16,22 +16,37 @@ class AcademicReadModelServiceTest {
     private final AcademicReadModelService model=
         new AcademicReadModelService(core,repo,new ObjectMapper());
 
-    @Test void authorizedManagerReadsLivePlanningAndMaterializesOwnSnapshot() {
+    @Test void authorizedManagerMaterializesIndependentVersionedPlanning() {
         when(core.currentPrincipal("bearer")).thenReturn(
             new AcademicCoreClient.Principal("cm001","ROLE_CM"));
-        when(core.planning("bearer")).thenReturn(
-            "[{\"classId\":\"class-1\",\"classCode\":\"A-10\"}]");
-        when(repo.save(anyString(),eq("cm001"),eq("ROLE_CM"),
-            eq("CLASS_PLANNING"),contains("class-1")))
-            .thenReturn(Instant.parse("2026-11-10T08:00:00Z"));
+        when(core.planningVersion()).thenReturn(
+            new AcademicCoreClient.PlanningRevision(7L));
+        when(core.planningExport()).thenReturn(new AcademicCoreClient.PlanningExport(
+            7L,new ObjectMapper().createArrayNode().add(
+                new ObjectMapper().createObjectNode().put("classId","class-1"))));
+        when(repo.savePlanning(eq(7L),contains("class-1")))
+            .thenReturn(new AcademicSnapshotRepository.PlanningSnapshot(
+                7L,"[{\"classId\":\"class-1\"}]",
+                Instant.parse("2026-11-10T08:00:00Z")));
         var result=model.planning("bearer");
         assertTrue(result.payload().isArray());
         assertEquals("class-1",result.payload().get(0).path("classId").asText());
-        assertEquals(Instant.parse("2026-11-10T08:00:00Z"),
-            result.synchronizedAt());
-        verify(core).planning("bearer");
-        verify(repo).save(argThat(s->s.length()==64),eq("cm001"),eq("ROLE_CM"),
-            eq("CLASS_PLANNING"),anyString());
+        verify(core).planningExport();
+        verify(repo).savePlanning(eq(7L),anyString());
+    }
+
+    @Test void unchangedSourceRevisionIsServedFromAcademicDatabaseWithoutExport() {
+        when(core.currentPrincipal("bearer")).thenReturn(
+            new AcademicCoreClient.Principal("tc001","ROLE_TC"));
+        when(core.planningVersion()).thenReturn(
+            new AcademicCoreClient.PlanningRevision(7L));
+        when(repo.loadPlanning()).thenReturn(new AcademicSnapshotRepository.PlanningSnapshot(
+            7L,"[{\"classId\":\"class-1\"}]",
+            Instant.parse("2026-11-10T08:00:00Z")));
+        assertEquals("class-1",model.planning("bearer")
+            .payload().get(0).path("classId").asText());
+        verify(core,never()).planningExport();
+        verify(repo,never()).savePlanning(anyLong(),anyString());
     }
 
     @Test void workerCannotReadEveryClassPlanningDocument() {
@@ -40,7 +55,7 @@ class AcademicReadModelServiceTest {
         assertEquals(HttpStatus.FORBIDDEN,
             assertThrows(ResponseStatusException.class,()->model.planning("bearer"))
                 .getStatusCode());
-        verify(core,never()).planning(anyString());
+        verify(core,never()).planningExport();
         verifyNoInteractions(repo);
     }
 
@@ -60,7 +75,7 @@ class AcademicReadModelServiceTest {
     @Test void sourceOutageNeverServesCachedStudentOrClassData() {
         when(core.currentPrincipal("bearer")).thenReturn(
             new AcademicCoreClient.Principal("cm001","ROLE_CM"));
-        when(core.planning("bearer")).thenThrow(
+        when(core.planningVersion()).thenThrow(
             new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Core disconnected"));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE,
@@ -72,7 +87,11 @@ class AcademicReadModelServiceTest {
     @Test void malformedSourceArrayNeverPoisonsAcademicReadDatabase() {
         when(core.currentPrincipal("bearer")).thenReturn(
             new AcademicCoreClient.Principal("cm001","ROLE_CM"));
-        when(core.planning("bearer")).thenReturn("{\"unexpected\":true}");
+        when(core.planningVersion()).thenReturn(
+            new AcademicCoreClient.PlanningRevision(3L));
+        when(core.planningExport()).thenReturn(
+            new AcademicCoreClient.PlanningExport(3L,
+                new ObjectMapper().createObjectNode().put("unexpected",true)));
         assertEquals(HttpStatus.BAD_GATEWAY,
             assertThrows(ResponseStatusException.class,()->model.planning("bearer"))
                 .getStatusCode());

@@ -504,6 +504,14 @@ model SchedulingAssignmentWriterControl {
 // Durable Core admission is acquired before the independent Scheduling
 // transaction and blocks an unsafe QUIESCED -> CORE handback. Claims persist
 // until a separately reviewed disaster-recovery/handback reconciliation.
+model AcademicPlanningRevision {
+  singleton Boolean @id @default(true)
+  revision BigInt @default(1)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("academic_planning_revision")
+}
+
 model SchedulingAssignmentWriterClaim {
   actorUsername String @map("actor_username") @db.VarChar(100)
   operation String @db.VarChar(40)

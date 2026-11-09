@@ -10,10 +10,41 @@ import org.springframework.transaction.annotation.Transactional;
 /** Scoped durable Academic GET materialization in its OWN PostgreSQL. */
 @Repository
 public class AcademicSnapshotRepository {
+    public record PlanningSnapshot(long sourceRevision,String payload,Instant synchronizedAt) {}
     private final JdbcTemplate db;
 
     public AcademicSnapshotRepository(JdbcTemplate db) {
         this.db=db;
+    }
+
+    public PlanningSnapshot loadPlanning() {
+        var rows=db.query(
+            "SELECT source_revision,payload::text,synchronized_at " +
+            "FROM academic_planning_projection WHERE name='planning'",
+            (rs,i)->new PlanningSnapshot(rs.getLong(1),rs.getString(2),
+                rs.getTimestamp(3).toInstant()));
+        return rows.isEmpty()?null:rows.get(0);
+    }
+
+    @Transactional
+    public PlanningSnapshot savePlanning(long revision,String payload) {
+        if(revision<1 || payload==null || payload.isBlank())
+            throw new IllegalArgumentException("Invalid Academic revision");
+        // Concurrent GETs cannot overwrite a newer snapshot with an older
+        // Core source version. Both branches return the committed local row.
+        db.update(
+            "INSERT INTO academic_planning_projection " +
+            "(name,source_revision,payload,synchronized_at) " +
+            "VALUES('planning',?,CAST(? AS jsonb),NOW()) " +
+            "ON CONFLICT(name) DO UPDATE SET " +
+            "source_revision=EXCLUDED.source_revision,payload=EXCLUDED.payload," +
+            "synchronized_at=NOW() WHERE " +
+            "academic_planning_projection.source_revision<EXCLUDED.source_revision",
+            revision,payload);
+        PlanningSnapshot saved=loadPlanning();
+        if(saved==null || saved.sourceRevision()<revision)
+            throw new IllegalStateException("Academic planning projection not advanced");
+        return saved;
     }
 
     @Transactional

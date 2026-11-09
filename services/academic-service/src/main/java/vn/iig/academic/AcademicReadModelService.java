@@ -35,7 +35,26 @@ public class AcademicReadModelService {
         if(!Set.of("ROLE_TC","ROLE_CM","ROLE_ADMIN").contains(actor.role()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                 "Planning list available only to TC, CM and ADMIN");
-        return refresh(actor,"CLASS_PLANNING","all",core.planning(bearer));
+        // Academic PostgreSQL is now the class-planning READ source. Core
+        // only provides a cheap transactionally updated source revision; the
+        // full JSON is fetched when that revision has actually changed.
+        for(int attempt=0;attempt<3;attempt++) {
+            long revision=core.planningVersion().revision();
+            var cached=repo.loadPlanning();
+            if(cached!=null && cached.sourceRevision()==revision) {
+                if(core.planningVersion().revision()==revision)
+                    return new Result(parseArray(cached.payload()),cached.synchronizedAt());
+                continue;
+            }
+            var source=core.planningExport();
+            if(source.revision()<revision || !source.rows().isArray())
+                continue;
+            var saved=repo.savePlanning(source.revision(),source.rows().toString());
+            if(saved.sourceRevision()==core.planningVersion().revision())
+                return new Result(parseArray(saved.payload()),saved.synchronizedAt());
+        }
+        throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+            "Academic planning changed during source reconciliation");
     }
 
     public Result sessions(String classId,String bearer) {
@@ -47,6 +66,18 @@ public class AcademicReadModelService {
         // ACL on the source endpoint, not merely the role listed in JWT.
         return refresh(actor,"PLANNED_SESSIONS",classId,
             core.plannedSessions(classId,bearer));
+    }
+
+    private JsonNode parseArray(String source) {
+        try {
+            JsonNode data=json.readTree(source);
+            if(data!=null && data.isArray()) return data;
+        } catch(Exception ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                "Malformed Academic planning read model",ex);
+        }
+        throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+            "Academic planning snapshot must be an array");
     }
 
     private Result refresh(AcademicCoreClient.Principal actor,String kind,

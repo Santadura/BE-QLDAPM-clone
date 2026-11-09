@@ -36,6 +36,9 @@ logging:
 
 # Disabled in the legacy monolith deployment. Enabled by the microservices stack.
 iig:
+  academic:
+    bridge-enabled: ${ACADEMIC_BRIDGE_ENABLED:false}
+    internal-key: ${ACADEMIC_INTERNAL_API_KEY:}
   scheduling:
     bridge-enabled: ${SCHEDULING_BRIDGE_ENABLED:false}
     assignment-relay-enabled: ${SCHEDULING_ASSIGNMENT_RELAY_ENABLED:false}

@@ -21,8 +21,13 @@ import org.springframework.web.server.ResponseStatusException;
 public class AcademicCoreClient {
     public record Principal(String username,String role) {}
     private final RestClient client;
+    private final String internalKey;
 
-    public AcademicCoreClient(@Value("${iig.core.url}") String coreUrl) {
+    public AcademicCoreClient(@Value("${iig.core.url}") String coreUrl,
+                              @Value("${iig.core.internal-key}") String internalKey) {
+        if(internalKey==null || internalKey.isBlank())
+            throw new IllegalArgumentException("ACADEMIC_INTERNAL_API_KEY required");
+        this.internalKey=internalKey;
         SimpleClientHttpRequestFactory factory=new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2500);
         factory.setReadTimeout(8000);
@@ -56,6 +61,43 @@ public class AcademicCoreClient {
         if(role==null)
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Role missing");
         return new Principal(username,role);
+    }
+
+    public record PlanningRevision(long revision) {}
+    public record PlanningExport(long revision,
+        com.fasterxml.jackson.databind.JsonNode rows) {}
+
+    public PlanningRevision planningVersion() {
+        try {
+            PlanningRevision value=client.get()
+                .uri("/internal/academic/planning/version")
+                .header("X-Internal-Key",internalKey)
+                .retrieve().body(PlanningRevision.class);
+            if(value==null || value.revision()<1)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Academic planning source revision missing");
+            return value;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic planning revision source unavailable",ex);
+        }
+    }
+
+    public PlanningExport planningExport() {
+        try {
+            PlanningExport value=client.get()
+                .uri("/internal/academic/planning/snapshot")
+                .header("X-Internal-Key",internalKey)
+                .retrieve().body(PlanningExport.class);
+            if(value==null || value.revision()<1 || value.rows()==null ||
+                    !value.rows().isArray())
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "Academic planning source snapshot malformed");
+            return value;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic planning source snapshot unavailable",ex);
+        }
     }
 
     public String planning(String bearer) {

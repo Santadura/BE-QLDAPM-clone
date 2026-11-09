@@ -109,10 +109,15 @@ CORE_LESSONS_JSON="$core_planned" ACADEMIC_LESSONS_JSON="$new_planned" python3 -
   'import json,os; a=json.loads(os.environ["ACADEMIC_LESSONS_JSON"]); b=json.loads(os.environ["CORE_LESSONS_JSON"]); assert isinstance(a,list) and a==b'
 academic_rows="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
   -d iig_academic -tAc "SELECT count(*) FROM academic_read_snapshots;" | tr -d '[:space:]')"
-if ! [[ "$academic_rows" =~ ^[0-9]+$ ]] || [ "$academic_rows" -lt 2 ]; then
-  echo "Academic independent database did not persist both authorized read snapshots"; exit 1
+planning_revision="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
+  -d iig_academic -tAc "SELECT source_revision FROM academic_planning_projection WHERE name='planning';" | tr -d '[:space:]')"
+core_planning_revision="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
+  -d qlapm_db -tAc "SELECT revision FROM academic_planning_revision WHERE singleton=TRUE;" | tr -d '[:space:]')"
+if ! [[ "$academic_rows" =~ ^[0-9]+$ ]] || [ "$academic_rows" -lt 1 ] \
+  || [ "$planning_revision" != "$core_planning_revision" ]; then
+  echo "Academic planning revision is not synchronized or session snapshots were not stored"; exit 1
 fi
-echo "PASS: Academic planning/session GETs match Core, reject missing JWT, persist private snapshots"
+echo "PASS: Academic owned planning projection matches Core source revision and live ACL"
 
 
 # Course Catalog is a separate Spring service with independent storage.
