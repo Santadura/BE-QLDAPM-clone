@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8d-5 (durable Core writer claims before Scheduling standalone writes; no public cutover)**. Do not claim full migration before every
+> Architecture status: **Phase 8e (immutable Core reference event receipts; no public write cutover)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -162,6 +162,15 @@ service-key-protected projection API after bootstrap.
 - [x] Provide a **disabled-by-default** Core reference consumer for standalone,
   non-class STAFF UPSERTs with a receipt, exact version, hash checks and
   an audited Core write-fence bypass confined to the reference transaction.
+- [x] Phase 8e: persist immutable per-event Core reference receipts
+  (source/revision/event ID/actor/command/digest), enabling exact
+  acknowledgement of an older event even after later revisions.
+- [x] Add read-only per-event receipt lookup for ADMIN recovery,
+  Scheduling outbox and Core receipt immutability triggers, and
+  transactional smoke tests to prove SQL tampering is rejected.
+- [ ] Verify the full event replay/recovery flow against real PostgreSQL,
+  then finish independent Academic/Attendance and class-support mutation
+  ownership before public API cutover.
 - [x] Phase 8d-5: reserve a durable, actor-scoped claim in Core before
   independently committing a standalone Scheduling create/edit/cancel command.
   Claims serialize with Core writer-mode changes and prevent a race between
