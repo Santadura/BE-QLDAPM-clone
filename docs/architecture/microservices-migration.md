@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8b-3c (Academic session leases; no assignment write cutover)**, not
+This branch is **migration phase 8d-1 (disabled-by-default assignment outbox/reference relay)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -589,6 +589,59 @@ routing cutover and passing Core/Scheduling/Gateway/FE concurrency and
 integrity regressions. Existing Academic lease primitives are available
 but not integrated into an executable distributed saga. Do not mark Phase 8
 or the full migration complete on a shadow-data parity report alone.
+
+## Phase 8d-1: durable assignment events and Core reference acknowledgements
+
+The Scheduling service now has a durable
+`scheduling_assignment_domain_outbox` table. A future write transaction must
+change its local authoritative schedule, append immutable source/revision/JSON
+events and move the matching command inbox from `STAGED` to
+`PENDING_REFERENCE` **in the SAME Scheduling PostgreSQL transaction**.
+The outbox repository enforces an outer transaction for insertion, checks the
+staged command and refuses duplicate source/version events with different
+hashes. A `COMMITTED` receipt is not issued until **every** event of a batch
+has a Core acknowledgement. Outbox delivery only selects command rows already
+in `PENDING_REFERENCE` and retains failed messages for at-least-once retries.
+
+The new private Core endpoint
+`POST /internal/scheduling/assignments/reference` is explicitly
+**disabled by default**. When deliberately enabled AND Core assignment writes
+are `QUIESCED`, it can idempotently mirror only **standalone STAFF UPSERT**
+events (CS operations/front desk or Sale shifts that are **not** linked to
+classes). A single Core transaction:
+- validates the authenticated service key, immutable canonical JSON digest,
+  source revision and allowed work type;
+- checks the Core writer fence and serializes the target assignment;
+- updates Core `staff_schedules`, its independent
+  `scheduling_assignment_reference_receipts` and the Core assignment
+  reference outbox with an exact matching version;
+- suppresses Core's legacy assignment-change trigger only for this
+  transaction-local reference projection, preventing feedback loops;
+- returns `APPLIED` or `ALREADY_APPLIED` for idempotent HTTP retries, or
+  fails closed on hash/version conflicts.
+
+Scheduling's `AssignmentReferenceRelay` retries the immutable event over
+private HTTP. It marks an event delivered and advances its command to
+`COMMITTED` **only after** Core responds with matching event ID/revision,
+and never compensates blindly for a timeout (Core may already have committed).
+A Core DB rollback leaves the Scheduling event outstanding.
+
+Both sides remain explicitly opt-in, **OFF** in normal Compose:
+
+```text
+SCHEDULING_REFERENCE_WRITES_ENABLED=false  # Core internal consumer
+SCHEDULING_REFERENCE_RELAY_ENABLED=false   # Scheduling event delivery
+```
+
+**This is not a live write migration.** No public assignment POST/PUT/DELETE
+routes have moved from Core; the independent Scheduling command executor
+does not yet produce real assignment events. The reference receiver does NOT
+support teaching schedules, CS CLASS_SUPPORT, bulk staffing, attendance
+writes, tombstone deletion or multi-service compensation. Enabling only
+these two flags is NOT sufficient or safe: a controlled cutover needs an
+independent producer, full Academic/session and worker lease integration,
+payroll/attendance reconciliation, split-brain fencing and green regression
+suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
 **Still required for full Scheduling extraction:** move the assignment and
 teacher attendance write model together with its worker-conflict
