@@ -121,6 +121,69 @@ class AssignmentCommandLifecycleServiceTest {
             any(Object[].class));
     }
 
+    private AssignmentDomainOutboxRepository.Event unresolved() {
+        return new AssignmentDomainOutboxRepository.Event(
+            "event-1","cm001","ASSIGN_SUPPORT_BATCH","batch-01",
+            "STAFF","shift-1",2,"UPSERT","{}","a".repeat(64),10);
+    }
+
+    private SchedulingCoreClient.DurableAssignmentReferenceReceipt proof() {
+        return new SchedulingCoreClient.DurableAssignmentReferenceReceipt(
+            "event-1",2,"a".repeat(64));
+    }
+
+    @Test void verifiedFailedEventCanCompleteExhaustedCommandAtomically() {
+        state("COMPENSATING");
+        when(db.queryForObject(contains("AND source_type=?"),
+            eq(Long.class),eq("event-1"),eq("a".repeat(64)),
+            eq("STAFF"),eq("shift-1"),eq(2L),eq("cm001"),
+            eq("ASSIGN_SUPPORT_BATCH"),eq("batch-01"))).thenReturn(1L);
+        when(db.update(startsWith("UPDATE scheduling_assignment_domain_outbox SET delivered_at"),
+            eq("event-1"),eq("a".repeat(64)))).thenReturn(1);
+        when(db.queryForObject(contains("WHERE actor_username=? AND operation=?"),
+            eq(Long.class),eq("cm001"),eq("ASSIGN_SUPPORT_BATCH"),eq("batch-01")))
+            .thenReturn(0L);
+        when(db.update(startsWith("UPDATE scheduling_assignment_command_inbox SET state='COMMITTED'"),
+            eq("cm001"),eq("ASSIGN_SUPPORT_BATCH"),eq("batch-01")))
+            .thenReturn(1);
+        assertTrue(service.reconcileVerified(unresolved(),proof()));
+        verify(db).update(startsWith("UPDATE scheduling_assignment_command_inbox SET state='COMMITTED'"),
+            eq("cm001"),eq("ASSIGN_SUPPORT_BATCH"),eq("batch-01"));
+    }
+
+    @Test void exactReceiptButMorePendingBatchEventsKeepsCompensating() {
+        state("COMPENSATING");
+        when(db.queryForObject(contains("AND source_type=?"),
+            eq(Long.class),eq("event-1"),eq("a".repeat(64)),
+            eq("STAFF"),eq("shift-1"),eq(2L),eq("cm001"),
+            eq("ASSIGN_SUPPORT_BATCH"),eq("batch-01"))).thenReturn(1L);
+        when(db.update(startsWith("UPDATE scheduling_assignment_domain_outbox SET delivered_at"),
+            eq("event-1"),eq("a".repeat(64)))).thenReturn(1);
+        when(db.queryForObject(contains("WHERE actor_username=? AND operation=?"),
+            eq(Long.class),eq("cm001"),eq("ASSIGN_SUPPORT_BATCH"),eq("batch-01")))
+            .thenReturn(1L);
+        assertFalse(service.reconcileVerified(unresolved(),proof()));
+        verify(db,never()).update(contains("SET state='COMMITTED'"),
+            any(Object[].class));
+    }
+
+    @Test void wrongCoreHashCannotBeUsedToRecoverACommand() {
+        var bogus=new SchedulingCoreClient.DurableAssignmentReferenceReceipt(
+            "event-1",2,"f".repeat(64));
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->service.reconcileVerified(unresolved(),bogus)).getStatusCode());
+        verifyNoInteractions(db);
+    }
+
+    @Test void unexhaustedCommandCannotUseManualReconciliationToSkipRelay() {
+        state("PENDING_REFERENCE");
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->service.reconcileVerified(unresolved(),proof())).getStatusCode());
+        verify(db,never()).update(anyString(),any(Object[].class));
+    }
+
     @Test void rejectedCommandCanNeverBeMarkedAsCommitted() {
         state("REJECTED");
         assertEquals(HttpStatus.CONFLICT,
