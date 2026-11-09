@@ -60,6 +60,9 @@ jobs:
         run: docker compose -f docker-compose.microservices.yml up --build -d
       - name: Gateway / business / audit outage regression
         run: bash scripts/smoke-microservices.sh
+      - name: Print service logs when smoke fails
+        if: failure()
+        run: docker compose -f docker-compose.microservices.yml logs --no-color --tail=160 backend api-gateway audit-service
       - name: Logs for diagnosis
         if: always()
         run: |
