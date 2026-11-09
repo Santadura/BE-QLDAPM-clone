@@ -160,6 +160,7 @@ model Class {
   startDate         DateTime @map("start_date") @db.Date
   endDate           DateTime @map("end_date") @db.Date
   status            String   @default("DRAFT") @db.VarChar(20)
+  schedulingVersion BigInt @default(1) @map("scheduling_version")
   createdByUsername String?  @map("created_by") @db.VarChar(50)
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
@@ -628,6 +629,7 @@ model ClassSession {
   startTime      DateTime @map("start_time") @db.Time(0)
   endTime        DateTime @map("end_time") @db.Time(0)
   status         String   @default("PLANNED") @db.VarChar(20)
+  schedulingVersion BigInt @default(1) @map("scheduling_version")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   class          Class    @relation(fields: [classId], references: [classId], onDelete: Restrict)
 
