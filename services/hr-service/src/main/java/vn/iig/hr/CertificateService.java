@@ -68,7 +68,7 @@ public class CertificateService {
     private void validate(CertificateRequest request) {
         if (request.certificateType()==null || request.certificateType().isBlank()
                 || request.certificateType().length()>30
-                || !List.of("ACTIVE","INACTIVE").contains(request.status())
+                || request.status()==null || !List.of("ACTIVE","INACTIVE").contains(request.status())
                 || (request.score()!=null && (!Double.isFinite(request.score()) || request.score()<0))
                 || (request.scoreSW()!=null && (!Double.isFinite(request.scoreSW()) || request.scoreSW()<0))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid certificate data");
