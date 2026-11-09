@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.net.URI;
@@ -18,6 +19,9 @@ import java.util.*;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class EmployeeManagementService {
+    @Value("${iig.hr.external-certificates:false}")
+    private boolean externalCertificates;
+
     private final JdbcTemplate jdbc;
     private static final Set<String> STAFF = Set.of("ADMIN", "TC", "CM", "TEACHER", "SALE", "CS");
     private static final Set<String> EMPLOYMENT_STATUSES = Set.of("ACTIVE", "INACTIVE", "ON_LEAVE");
@@ -231,6 +235,9 @@ public class EmployeeManagementService {
 
     @Transactional
     public Map<String, Object> saveCertificate(String id, String certificateId, CertificateRequest request, Authentication actor) {
+        if (externalCertificates) {
+            fail(HttpStatus.CONFLICT, "Certificates are now owned by HR Service.");
+        }
         lockWrites();
         detail(id, actor);
         if ((request.score() != null && !Double.isFinite(request.score()))
