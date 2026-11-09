@@ -464,6 +464,18 @@ model StaffSalary {
 // These records will move to the Payroll service as part of ledger extraction.
 // Versions of Scheduling-owned availability reference copies in Core.
 // Deletion tombstones persist here so stale relay retries cannot resurrect rows.
+// Core-side transactional relay source for the Scheduling assignment READ model.
+model SchedulingAssignmentOutbox {
+  sourceType String @map("source_type") @db.VarChar(12)
+  scheduleId String @map("schedule_id") @db.VarChar(50)
+  version BigInt @default(1)
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([sourceType,scheduleId])
+  @@map("scheduling_assignment_outbox")
+}
+
 model SchedulingAvailabilityVersion {
   availabilityId String @id @map("availability_id") @db.VarChar(50)
   version BigInt
