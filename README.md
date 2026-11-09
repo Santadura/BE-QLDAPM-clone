@@ -15,7 +15,7 @@ docker compose -f docker-compose.microservices.yml up --build -d
 Tài liệu triển khai, kiến trúc và giới hạn giai đoạn đầu:
 [docs/architecture/microservices-migration.md](docs/architecture/microservices-migration.md).
 
-**Lưu ý:** Đây là giai đoạn 8d-2: Scheduling sở hữu lịch rảnh, bản đọc độc lập của lịch phân công và các reservation tạm thời theo nhân sự/ngày/giờ để chặn những giao dịch phân công đang chạy bị trùng lịch. Các API GET `/api/teaching-schedules`, `/api/staff-schedules`, `/api/schedules/me` đọc từ Scheduling PostgreSQL. Core vẫn là nơi DUY NHẤT tạo/sửa/hủy phân công và ghi điểm danh để giữ giao dịch lớp học và bảo vệ ca CS cuối cùng. Reservation chỉ chặn các thao tác đang thực hiện đồng thời, không thay thế bước kiểm tra lịch đã ghi thành công trong Core. Core gửi thay đổi qua transactional outbox. Khi FE đọc lịch qua Gateway, Scheduling kiểm tra và áp dụng các thay đổi đã commit còn chờ trước khi trả danh sách; nếu không thể đồng bộ thì trả 503 thay vì âm thầm trả dữ liệu cũ. Đây là read-after-write barrier theo từng request, chưa phải giao dịch phân tán tuyến tính hóa khi có ghi đồng thời. Chưa hoàn thiện 100% Microservices; không dùng bí mật demo cho production.
+**Lưu ý:** Đây là giai đoạn 8d-3: Scheduling sở hữu lịch rảnh, bản đọc độc lập của lịch phân công và các reservation tạm thời theo nhân sự/ngày/giờ để chặn những giao dịch phân công đang chạy bị trùng lịch. Các API GET `/api/teaching-schedules`, `/api/staff-schedules`, `/api/schedules/me` đọc từ Scheduling PostgreSQL. Core vẫn là nơi DUY NHẤT tạo/sửa/hủy phân công và ghi điểm danh để giữ giao dịch lớp học và bảo vệ ca CS cuối cùng. Reservation chỉ chặn các thao tác đang thực hiện đồng thời, không thay thế bước kiểm tra lịch đã ghi thành công trong Core. Core gửi thay đổi qua transactional outbox. Khi FE đọc lịch qua Gateway, Scheduling kiểm tra và áp dụng các thay đổi đã commit còn chờ trước khi trả danh sách; nếu không thể đồng bộ thì trả 503 thay vì âm thầm trả dữ liệu cũ. Đây là read-after-write barrier theo từng request, chưa phải giao dịch phân tán tuyến tính hóa khi có ghi đồng thời. Chưa hoàn thiện 100% Microservices; không dùng bí mật demo cho production.
 Đối với lệnh phân công Teacher/CS/Sale theo một ca, theo lô, toàn khóa,
 sửa hoặc hủy phân công, client có thể truyền header
 `Idempotency-Key: <mã-yêu-cầu-duy-nhất>`. Nếu mất kết nối sau khi ghi thành công,
@@ -67,7 +67,7 @@ phân công độc lập, chưa chuyển route POST/PUT/DELETE sang Scheduling.
 Không bật các cờ này nếu chưa làm cutover/compensation và kiểm thử đầy đủ.
 
 **Ghi phân công độc lập trong Scheduling (Phase 8d-2):** Đã có
-executor nội bộ để **tạo/hủy ca CS hoặc Sale không gắn lớp học** từ command
+executor nội bộ để **tạo/chỉnh sửa/hủy ca CS hoặc Sale không gắn lớp học** từ command
 inbox đã STAGED. Khi Core đang QUIESCED, lệnh kiểm tra quyền CM hiện hành,
 lease lịch rảnh đã duyệt, lịch nhân sự đang trùng, rồi ghi bản đọc, dữ liệu
 chuẩn hóa, outbox và trạng thái PENDING_REFERENCE trong một transaction
@@ -81,6 +81,17 @@ Payroll. Cờ `SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED=false` vẫn là mặc
 định, cùng với hai cờ relay/reference đã tắt. **Không tự bật ba cờ này
 trong hệ thống đang sử dụng**, và không chạy script dry-run cutover nếu
 đã bật executor: script sẽ từ chối để tránh mở lại Core gây hai nơi ghi.
+
+**Lưu ý chỉnh sửa ca và hoàn nguyên:** Chỉ được sửa những ca độc lập
+do Scheduling tạo, đã được Core xác nhận; không đổi nhân viên/role/lớp.
+Khi sửa ngày/giờ, hệ thống đòi reservation mới còn hiệu lực và ghi
+event `EDIT_STAFF` có phiên bản tăng dần. Core chỉ áp dụng chỉnh sửa
+nếu ca vẫn đang hoạt động và không gắn lớp. Một event cũ không thể tự
+được xác nhận nếu Core không còn bằng chứng nó từng được commit.
+Kể từ khi Core nhận được sự kiện phân công đầu tiên từ Scheduling,
+PostgreSQL sẽ chặn đổi đơn giản `QUIESCED -> CORE`; hoàn nguyên lúc đó
+phải qua quy trình đối soát/rollback được kiểm duyệt, không reset cờ
+tùy ý. Mọi API này vẫn riêng tư, mặc định **không bật** trên Compose.
 
 Dừng stack bằng `docker compose -f docker-compose.microservices.yml down` để giữ dữ liệu.
 
