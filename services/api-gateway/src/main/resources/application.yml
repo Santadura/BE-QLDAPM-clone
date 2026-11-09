@@ -13,6 +13,16 @@ spring:
         connect-timeout: 3000
         response-timeout: 45s
       routes:
+        # Only login/logout migrate in this stage. Registration and other
+        # account/role writes remain in legacy core until Identity owns them.
+        - id: identity-login
+          uri: ${IDENTITY_SERVICE_URI:http://localhost:8094}
+          predicates:
+            - Path=/api/auth/login
+        - id: identity-logout
+          uri: ${IDENTITY_SERVICE_URI:http://localhost:8094}
+          predicates:
+            - Path=/api/auth/logout
         # Most-specific catalog route must precede the core /api/** fallback.
         # This retains FE contracts while using catalog-owned persistence.
         - id: course-catalog-options

@@ -36,6 +36,9 @@ logging:
 
 # Disabled in the legacy monolith deployment. Enabled by the microservices stack.
 iig:
+  identity:
+    bridge-enabled: ${IDENTITY_BRIDGE_ENABLED:false}
+    internal-key: ${IDENTITY_INTERNAL_API_KEY:}
   catalog:
     enabled: ${CATALOG_PROJECTION_ENABLED:false}
     internal-key: ${CATALOG_INTERNAL_API_KEY:}
