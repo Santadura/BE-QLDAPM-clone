@@ -21,18 +21,21 @@ import org.springframework.web.server.ResponseStatusException;
 public class StandaloneStaffAssignmentExecutorController {
     private final StandaloneStaffAssignmentExecutor executor;
     private final StandaloneStaffCancellationExecutor cancellation;
+    private final StandaloneStaffEditExecutor editing;
     private final SchedulingCoreClient core;
     private final byte[] sharedKey;
 
     public StandaloneStaffAssignmentExecutorController(
             StandaloneStaffAssignmentExecutor executor,
             StandaloneStaffCancellationExecutor cancellation,
+            StandaloneStaffEditExecutor editing,
             SchedulingCoreClient core,
             @Value("${iig.core.internal-key}") String key) {
         if(key==null || key.isBlank())
             throw new IllegalArgumentException("SCHEDULING_INTERNAL_API_KEY required");
         this.executor=executor;
         this.cancellation=cancellation;
+        this.editing=editing;
         this.core=core;
         this.sharedKey=key.getBytes(StandardCharsets.UTF_8);
     }
@@ -69,5 +72,22 @@ public class StandaloneStaffAssignmentExecutorController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                 "Active CM required to cancel standalone staff assignment");
         return cancellation.cancel(actor.username(),actor.employeeId(),actor.role(),requestKey);
+    }
+
+    @PostMapping("/{requestKey}/edit")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public StandaloneStaffAssignmentExecutor.Result edit(
+            @RequestHeader(value="X-Internal-Key",required=false) String supplied,
+            @RequestHeader(value="Authorization",required=false) String authorization,
+            @PathVariable String requestKey) {
+        byte[] candidate=supplied==null?new byte[0]:supplied.getBytes(StandardCharsets.UTF_8);
+        if(!MessageDigest.isEqual(sharedKey,candidate))
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                "Invalid Scheduling service key");
+        var actor=core.currentViewer(authorization);
+        if(actor.employeeId()==null || actor.username()==null || !"CM".equals(actor.role()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Active CM required to edit standalone staff assignment");
+        return editing.edit(actor.username(),actor.employeeId(),actor.role(),requestKey);
     }
 }
