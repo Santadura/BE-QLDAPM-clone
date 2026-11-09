@@ -74,6 +74,66 @@ class AssignmentDomainOutboxRepositoryTest {
                 .getStatusCode());
     }
 
+    @SuppressWarnings({"rawtypes","unchecked"})
+    private void existingRevision(String actor,String operation,String key,
+                                  String source,String scheduleId,long revision,
+                                  String hash,String kind,String eventId) throws Exception {
+        when(db.query(startsWith("SELECT event_id,actor_username,operation,request_key"),
+                any(RowMapper.class),eq(source),eq(scheduleId),eq(revision)))
+            .thenAnswer(invocation -> {
+                RowMapper mapper=invocation.getArgument(1);
+                var rs=mock(java.sql.ResultSet.class);
+                when(rs.getString(1)).thenReturn(eventId);
+                when(rs.getString(2)).thenReturn(actor);
+                when(rs.getString(3)).thenReturn(operation);
+                when(rs.getString(4)).thenReturn(key);
+                when(rs.getString(5)).thenReturn(kind);
+                when(rs.getString(6)).thenReturn(hash);
+                return List.of(mapper.mapRow(rs,0));
+            });
+    }
+
+    @Test void duplicateRevisionWithSameDigestReturnsOriginalEventId()
+            throws Exception {
+        stagedReceipt("cm001","ASSIGN_STAFF","cmd-retry");
+        var body=payload("{\"employeeId\":\"cs-001\",\"status\":\"ASSIGNED\"}");
+        when(db.update(startsWith("INSERT INTO scheduling_assignment_domain_outbox"),
+            anyString(),eq("cm001"),eq("ASSIGN_STAFF"),eq("cmd-retry"),
+            eq("STAFF"),eq("shift-11"),eq(2L),eq("UPSERT"),anyString(),anyString()))
+            .thenReturn(1,0);
+        String first=outbox.append("cm001","ASSIGN_STAFF","cmd-retry",
+            "STAFF","shift-11",2,"UPSERT",body);
+        // Read the hash from the original persisted insert arguments.
+        var captor=org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(db).update(startsWith("INSERT INTO scheduling_assignment_domain_outbox"),
+            eq(first),eq("cm001"),eq("ASSIGN_STAFF"),eq("cmd-retry"),
+            eq("STAFF"),eq("shift-11"),eq(2L),eq("UPSERT"),
+            anyString(),captor.capture());
+        existingRevision("cm001","ASSIGN_STAFF","cmd-retry",
+            "STAFF","shift-11",2,captor.getValue(),"UPSERT",first);
+        String retry=outbox.append("cm001","ASSIGN_STAFF","cmd-retry",
+            "STAFF","shift-11",2,"UPSERT",
+            payload("{\"status\":\"ASSIGNED\",\"employeeId\":\"cs-001\"}"));
+        assertEquals(first,retry);
+    }
+
+    @Test void duplicateRevisionWithDifferentDigestNeverOverwritesPreviousEvent()
+            throws Exception {
+        stagedReceipt("cm001","ASSIGN_STAFF","cmd-change");
+        when(db.update(startsWith("INSERT INTO scheduling_assignment_domain_outbox"),
+            anyString(),eq("cm001"),eq("ASSIGN_STAFF"),eq("cmd-change"),
+            eq("STAFF"),eq("shift-12"),eq(2L),eq("UPSERT"),anyString(),anyString()))
+            .thenReturn(0);
+        existingRevision("cm001","ASSIGN_STAFF","cmd-change",
+            "STAFF","shift-12",2,"f".repeat(64),"UPSERT","event-prior");
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->outbox.append("cm001","ASSIGN_STAFF","cmd-change",
+                    "STAFF","shift-12",2,"UPSERT",
+                    payload("{\"status\":\"CANCELLED\"}")))
+                .getStatusCode());
+    }
+
     @Test void exactDigestAckCannotMarkWrongRevisionDelivered() {
         String hash="a".repeat(64);
         when(db.update(startsWith("UPDATE scheduling_assignment_domain_outbox SET delivered_at"),
