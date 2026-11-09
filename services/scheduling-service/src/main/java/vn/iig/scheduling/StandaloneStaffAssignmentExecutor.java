@@ -193,6 +193,11 @@ public class StandaloneStaffAssignmentExecutor {
         event.putNull("classId");
         event.put("assignedBy",actorEmployeeId);
 
+        // Core records the handoff claim BEFORE the local Scheduling
+        // transaction writes. A crash after this point intentionally keeps
+        // Core writer handback fenced pending explicit reconciliation.
+        core.acquireAssignmentWriterClaim(actorUsername,actorEmployeeId,
+            "ASSIGN_STAFF",requestKey);
         projection.project(snapshot);
         outbox.append(actorUsername,"ASSIGN_STAFF",requestKey,
             "STAFF",scheduleId,1,"UPSERT",event);
