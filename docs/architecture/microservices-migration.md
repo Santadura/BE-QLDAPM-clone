@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8b-1 (independent assignment intent reservations)**, not
+This branch is **migration phase 8b-2 (transactional idempotent assignment commands in Core)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -382,6 +382,43 @@ Next gates: define durable idempotent assignment commands and a
 versioned Academic session/coverage contract; then migrate ownership of
 teaching/CS/Sale assignment **and** attendance writes only with replay,
 compensation, reference projection and verified FE regression.
+
+## Phase 8b-2: transactional retry-safe assignment commands (Core write boundary)
+
+A new Core PostgreSQL `scheduling_command_receipts` table records optional
+`Idempotency-Key` results for the existing POST/PUT/DELETE assignment APIs:
+single Teacher / CS-Sale shifts, 50-session batches, and the
+`/api/class-planning/{classId}/staffing` 400-session range operation.
+No FE JSON contract, role permission or routing path is changed.
+
+- If a client omits the header, existing operations behave as before.
+- A provided key (1-128 safe ASCII chars) is scoped to the authenticated
+  **username plus HTTP operation/path**. On every attempt the current TC/CM
+  role is rechecked *before* querying a stored receipt; a revoked/disabled
+  user cannot bypass current authorization with a stale key.
+- PostgreSQL's primary-key conflict serializes overlapping retries. The
+  SHA-256 request-body fingerprint must match, otherwise the server returns
+  HTTP 409 without running the domain command. A committed matching receipt
+  returns the original JSON result (or JSON null for a successful HTTP 204).
+- The receipt INSERT, existing class/employee locks, scheduling writes,
+  attendance/CS coverage guards and audit rows participate in **one Core
+  transaction**. An exception rolls back both the receipt and the domain
+  write, allowing a later retry to execute normally. There is no pending
+  receipt visible after a rollback, and no need for a cross-database commit.
+- This allows a safe command replay after a client timeout or lost HTTP
+  response, but clients must **reuse the original key only for retries of the
+  same logical operation**. To issue another intentional operation, use a
+  different key. Already-created schedules continue to be protected by Core
+  conflict checks.
+- Schema and the real two-request cancellation/replay test are included in
+  Prisma migrations and the disposable Docker/Gateway smoke suite.
+
+**This is deliberately a transition gate, not assignment write extraction:**
+authoritative assignment tables, attendance data and the command receipt
+still live in Core. Scheduling owns only approved availability, in-flight
+worker intents and the assignment query projection. Do not route any write
+endpoint to Scheduling until its authoritative write store, idempotent command
+inbox, Academic session versions and compensation/reconciliation are ready.
 
 **Still required for full Scheduling extraction:** move the assignment and
 teacher attendance write model together with its worker-conflict
