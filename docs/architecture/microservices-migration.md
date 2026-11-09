@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8b-2 (transactional idempotent assignment commands in Core)**, not
+This branch is **migration phase 8b-3a (strict pre-cutover assignment reconciliation)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -419,6 +419,50 @@ still live in Core. Scheduling owns only approved availability, in-flight
 worker intents and the assignment query projection. Do not route any write
 endpoint to Scheduling until its authoritative write store, idempotent command
 inbox, Academic session versions and compensation/reconciliation are ready.
+
+## Phase 8b-3a: verified assignment projection before future write cutover
+
+This phase adds an explicit **fail-closed cutover guard**; it does **not** move
+assignment writes away from Core.
+
+- Core now exposes private, service-key-protected
+  `/internal/scheduling/assignments/manifest` with stable keyset pagination
+  and `/manifest/summary`. Unlike the incremental `/changes` outbox feed,
+  the manifest includes **already acknowledged assignment versions**, so a
+  missing Scheduling row cannot be hidden by an empty pending queue.
+- Core's summary includes counts of the actual `teaching_schedules` and
+  `staff_schedules` tables *and* how many live rows have an outbox entry.
+  This detects missing triggers/incomplete backfills before transferring write
+  ownership, even when two outbox-based projections superficially agree.
+- Scheduling compares every Core assignment and tombstone against its own
+  PostgreSQL read model: composite key, version, deletion flag, indexed
+  metadata, and the **complete FE-visible JSON payload** (including names,
+  class codes, dates, attendance-relevant status and work type).
+- The private `GET /internal/scheduling/assignments/verify` responds with
+  `200 {ready:true,state:"READY",...}` only when the Core source manifest is
+  unchanged throughout the scan, there are no pending outbox updates, the
+  actual source tables are fully tracked, every row matches and there are no
+  orphaned Scheduling rows. Otherwise it returns `409` with a bounded list
+  of mismatched keys. Core unavailability and oversized scans fail closed
+  with `503`, not an optimistic success.
+- The endpoint is private on the Docker Compose network, requires
+  `SCHEDULING_INTERNAL_API_KEY` and has **no Gateway /api routing**. It is
+  read-only: it never blindly overwrites same-version divergent data.
+  The keyset scan is currently capped at 25,000 records (100 pages × 250);
+  larger deployments need a background incremental verification job.
+- Unit tests cover missing/tampered/stale rows, ghost tombstones, concurrent
+  changes, pending events, source outbox incompleteness and internal-key
+  authorization. Disposable Docker smoke checks a healthy manifest, injects
+  a ghost projection, verifies the rejection, then removes the ghost and
+  confirms recovery.
+
+**Remaining before actual Phase 8b write cutover:** move Academic class/session
+authority behind versioned private contracts, independently own assignment
+and attendance writes, implement an idempotent Scheduling command inbox with
+transactional events and compensation/reconciliation, verify employee/time
+conflicts with committed data (not only in-flight leases), quiesce old Core
+writers, and run full-stack browser and concurrency regressions. A passing
+snapshot report alone never authorizes the switch.
 
 **Still required for full Scheduling extraction:** move the assignment and
 teacher attendance write model together with its worker-conflict
