@@ -47,7 +47,10 @@ public class AcademicReadModelService {
                 continue;
             }
             var source=core.planningExport();
-            if(source.revision()<revision || !source.rows().isArray())
+            if(source==null || source.rows()==null || !source.rows().isArray())
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "Academic planning source must return a JSON array");
+            if(source.revision()<revision)
                 continue;
             var saved=repo.savePlanning(source.revision(),source.rows().toString());
             if(saved.sourceRevision()==core.planningVersion().revision())
