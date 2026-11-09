@@ -37,7 +37,13 @@ public class SchedulingAssignmentReadService {
         final int limit=500;
         for(int i=0;i<20;i++) {
             var changed=core.pendingAssignments(limit);
-            if(changed.isEmpty()) return;
+            if(changed.isEmpty()) {
+                // Local independent assignment writes may have committed
+                // before Core's durable reference projection. Avoid exposing
+                // those rows as final while a command is unresolved.
+                repo.requireReferenceSettledForReads();
+                return;
+            }
             // Local DB commit must succeed before Core acknowledgement.
             repo.applyBatch(changed);
             core.acknowledgeAssignments(changed);
