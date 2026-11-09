@@ -691,3 +691,43 @@ receipt_count="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -
 test "$receipt_count" = "1" || { echo "Command receipt not atomically persisted ($receipt_count)"; exit 1; }
 echo "PASS: Gateway assignment cancellation retries return 204 with one write, audit, and receipt"
 
+# Phase 8b-3a: only the private network can invoke the strict cutover gate.
+# Use the existing postgres-alpine BusyBox wget as a Compose-network client.
+# Obtain the configured key from the running container without logging it.
+scheduling_id="$("${COMPOSE[@]}" ps -q scheduling-service)"
+scheduling_key="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$scheduling_id" | sed -n 's/^SCHEDULING_INTERNAL_API_KEY=//p')"
+test -n "$scheduling_key" || { echo "Scheduling internal key unavailable"; exit 1; }
+verification_url="http://scheduling-service:8098/internal/scheduling/assignments/verify"
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- "$verification_url" >/dev/null 2>&1; then
+  echo "Private assignment cutover check accepted missing key"; exit 1
+fi
+verified=0
+for i in $(seq 1 50); do
+  report="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    --header "X-Internal-Key: ${scheduling_key}" "$verification_url" 2>/dev/null || true)"
+  if printf '%s' "$report" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["ready"] and d["state"]=="READY" and d["sourceRows"]==d["localRows"]' >/dev/null 2>&1; then
+    verified=1
+    break
+  fi
+  sleep 2
+done
+test "$verified" = "1" || { echo "Scheduling cutover manifest failed strict parity after projection drained"; exit 1; }
+echo "PASS: complete private Core-vs-Scheduling assignment manifest is consistent"
+
+# Inject a Scheduling-only extra tombstone with no corresponding Core outbox key:
+# the readiness gate must fail closed and recover after fixing the local drift.
+ghost_id="${fixture}-ghost"
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 -c \
+  "INSERT INTO scheduling_assignment_read_model(source_type,schedule_id,version,deleted,payload) VALUES('STAFF','${ghost_id}',1,TRUE,'{}'::jsonb)"
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" "$verification_url" >/dev/null 2>&1; then
+  echo "Scheduling cutover accepted orphaned projection"; exit 1
+fi
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 -c \
+  "DELETE FROM scheduling_assignment_read_model WHERE source_type='STAFF' AND schedule_id='${ghost_id}'"
+report="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" "$verification_url")"
+printf '%s' "$report" | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
+echo "PASS: cutover gate detects divergent projection and confirms recovery"
+
+
