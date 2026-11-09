@@ -108,6 +108,30 @@ public class SchedulingAssignmentReadBridge {
             ack.sourceType(),ack.id(),ack.version());
     }
 
+    @PostMapping("/ack/batch")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    public void acknowledgeBatch(
+            @RequestHeader(value="X-Internal-Key",required=false) String key,
+            @RequestBody List<Acknowledgement> acks) {
+        authorize(key);
+        if(acks==null || acks.isEmpty() || acks.size()>500)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid acknowledgement batch");
+        for(var ack:acks) {
+            if(ack==null || !List.of("TEACHING","STAFF").contains(ack.sourceType())
+                    || ack.id()==null || ack.id().isBlank() || ack.id().length()>50
+                    || ack.version()<1)
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Invalid assignment acknowledgement");
+        }
+        // All-or-none and exact-version to avoid hiding newer unrelayed writes.
+        String sql="UPDATE scheduling_assignment_outbox SET delivered_at=NOW() " +
+            "WHERE source_type=? AND schedule_id=? AND version=? AND delivered_at IS NULL";
+        List<Object[]> args=acks.stream()
+            .map(a->new Object[]{a.sourceType(),a.id(),a.version()}).toList();
+        db.batchUpdate(sql,args);
+    }
+
     private List<AssignmentSnapshot> snapshots(List<Pending> changes) {
         List<AssignmentSnapshot> result=new ArrayList<>(changes.size());
         for(Pending p:changes) {

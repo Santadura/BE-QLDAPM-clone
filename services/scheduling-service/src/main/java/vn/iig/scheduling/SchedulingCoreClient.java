@@ -68,6 +68,39 @@ public class SchedulingCoreClient {
         }
     }
 
+    public List<AssignmentProjectionRepository.AssignmentSnapshot> pendingAssignments(int limit) {
+        try {
+            AssignmentProjectionRepository.AssignmentSnapshot[] entries=client.get()
+                .uri(uri->uri.path("/internal/scheduling/assignments/changes")
+                    .queryParam("limit",limit).build())
+                .header("X-Internal-Key",key).retrieve()
+                .body(AssignmentProjectionRepository.AssignmentSnapshot[].class);
+            if(entries==null)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Empty Core assignment changes response");
+            return Arrays.asList(entries);
+        } catch(RestClientException e) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core assignment changes unavailable");
+        }
+    }
+
+    public void acknowledgeAssignments(
+            List<AssignmentProjectionRepository.AssignmentSnapshot> entries) {
+        if(entries==null || entries.isEmpty()) return;
+        record Ack(String sourceType,String id,long version) {}
+        List<Ack> acknowledgements=entries.stream()
+            .map(e->new Ack(e.sourceType(),e.id(),e.version())).toList();
+        try {
+            client.post().uri("/internal/scheduling/assignments/ack/batch")
+                .header("X-Internal-Key",key).body(acknowledgements)
+                .retrieve().toBodilessEntity();
+        } catch(RestClientException e) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core assignment change acknowledgement unavailable");
+        }
+    }
+
     public Actor currentActor(String authorization) {
         if(authorization==null || !authorization.startsWith("Bearer "))
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Bearer token required");

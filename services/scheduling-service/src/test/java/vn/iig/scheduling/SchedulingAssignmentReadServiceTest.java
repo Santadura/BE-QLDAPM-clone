@@ -38,6 +38,32 @@ class SchedulingAssignmentReadServiceTest {
         assertThrows(ResponseStatusException.class,()->service.teaching("cm",monday));
     }
 
+    @Test void readsNewlyCommittedAssignmentBeforeReturningToBrowser() {
+        var changed=new AssignmentProjectionRepository.AssignmentSnapshot(
+            "STAFF","cs-new","cs-001","CS Name","CS","class-1",
+            "C001","My class","center-01",monday,java.time.LocalTime.of(9,0),
+            java.time.LocalTime.of(11,0),"CLASS_SUPPORT","ASSIGNED","cm-1",7,false);
+        var entries=List.of(changed);
+        when(core.currentViewer("cm")).thenReturn(
+            new SchedulingCoreClient.Viewer("cm-1","cm001","CM"));
+        when(core.pendingAssignments(500)).thenReturn(entries);
+        service.staff("cm",monday,"CS");
+        var order=inOrder(repo,core);
+        order.verify(core).pendingAssignments(500);
+        order.verify(repo).applyBatch(entries);
+        order.verify(core).acknowledgeAssignments(entries);
+        order.verify(repo).list("STAFF",null,"CS",monday,false);
+    }
+
+    @Test void unavailableCoreChangesNeverReturnStaleAssignments() {
+        when(core.currentViewer("tc")).thenReturn(
+            new SchedulingCoreClient.Viewer("tc-1","tc001","TC"));
+        when(core.pendingAssignments(500)).thenThrow(
+            new ResponseStatusException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE));
+        assertThrows(ResponseStatusException.class,()->service.teaching("tc",monday));
+        verify(repo,never()).list(anyString(),any(),any(),any(),anyBoolean());
+    }
+
     @Test void bootstrapReadsOnceAndDoesNotDiscardRowsOnRetry() {
         when(repo.initialized()).thenReturn(false);
         when(core.exportAssignments()).thenReturn(List.of());

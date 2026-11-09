@@ -26,6 +26,27 @@ public class SchedulingAssignmentReadService {
         this.repo=repo;this.core=core;
     }
 
+    /**
+     * Read barrier: don't return the asynchronously cached copy while a
+     * committed Core assignment change is still waiting in the outbox.
+     * This preserves read-after-write through Gateway with no shared SQL.
+     * Core remains the authoritative write source in this migration phase.
+     */
+    private void synchronizeCommittedChanges() {
+        repo.requireReady();
+        final int limit=500;
+        for(int i=0;i<20;i++) {
+            var changed=core.pendingAssignments(limit);
+            if(changed.isEmpty()) return;
+            // Local DB commit must succeed before Core acknowledgement.
+            repo.applyBatch(changed);
+            core.acknowledgeAssignments(changed);
+            if(changed.size()<limit) return;
+        }
+        throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+            "Scheduling assignment synchronization backlog too large");
+    }
+
     private LocalDate monday(LocalDate d) {
         return (d==null?LocalDate.now(ZoneId.of("Asia/Ho_Chi_Minh")):d).with(DayOfWeek.MONDAY);
     }
@@ -34,6 +55,7 @@ public class SchedulingAssignmentReadService {
         var actor=core.currentViewer(authorization);
         if(!Set.of("TC","ADMIN").contains(actor.role()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Teacher schedule management forbidden");
+        synchronizeCommittedChanges();
         return repo.list("TEACHING",null,null,monday(week),false);
     }
 
@@ -44,6 +66,7 @@ public class SchedulingAssignmentReadService {
         String requested=role==null?null:role.trim().toUpperCase(Locale.ROOT);
         if(requested!=null && !Set.of("CS","SALE").contains(requested))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"role must be CS or SALE");
+        synchronizeCommittedChanges();
         return repo.list("STAFF",null,requested,monday(week),false);
     }
 
@@ -53,6 +76,7 @@ public class SchedulingAssignmentReadService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Worker role required");
         if(actor.employeeId()==null)
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Active worker profile required");
+        synchronizeCommittedChanges();
         return "TEACHER".equals(actor.role()) ?
             repo.list("TEACHING",actor.employeeId(),null,monday(week),true):
             repo.list("STAFF",actor.employeeId(),null,monday(week),true);

@@ -328,11 +328,16 @@ the JSON key shapes that React already expects.
 - Queries **must not join Core DB**. Scheduling stores the projection with
   JSONB response payload and typed indexed date, employee, source and role
   columns in `scheduling_assignment_read_model`.
-- **Consistency limit:** this read model is asynchronous (normally one
-  polling interval). Immediately after an assignment write, the React list
-  can briefly reflect the prior state; don't claim read-your-writes or use
-  this projection to authorize new assignments, enrollment, attendance or
-  cancellation. Those authoritative safety checks still run in Core.
+- **Consistency boundary (phase 8a):** the outbox is delivered asynchronously
+  by Core, but each authorized Scheduling GET first pulls pending committed
+  changes from Core over private HTTP, applies them transactionally to the
+  independent read database, then acknowledges the exact versions as a batch.
+  This provides a read-after-write barrier for the UI rather than briefly
+  showing stale cards immediately after assigning/cancelling a shift.
+  Reads fail with 503 if Core cannot supply pending changes. This transitional
+  Core dependency is intentional until assignment writes and attendance
+  invariants move together; the projection is **never** used to authorize
+  assignments or academic operations.
 - CI checks bootstrap of existing schedules, GET field/role compatibility,
   Core-side inserts, status transitions, class-name invalidation, tombstones,
   exact-version outbox acknowledgement, and all existing FE Playwright tests.

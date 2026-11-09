@@ -62,6 +62,15 @@ public class AssignmentProjectionRepository {
         put(item);
     }
 
+    /** Commit the full incoming change batch before acknowledging Core. */
+    @Transactional
+    public void applyBatch(List<AssignmentSnapshot> entries) {
+        requireReady();
+        if(entries==null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+            "Assignment changes missing");
+        for(var entry:entries) put(entry);
+    }
+
     private void put(AssignmentSnapshot item) {
         if(item==null || !List.of("TEACHING","STAFF").contains(item.sourceType()) ||
             item.id()==null || item.id().isBlank() || item.id().length()>50 || item.version()<1)
