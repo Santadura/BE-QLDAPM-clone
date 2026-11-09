@@ -25,7 +25,7 @@ class AssignmentCutoverVerificationControllerTest {
 
     @Test void refusesWriteCutoverWhenProjectionDrifts() {
         var failed=new AssignmentCutoverVerificationService.Report(
-            false,"PROJECTION_DRIFT",2,1,1,2,1,0,2,2,12,List.of("STAFF:s-1"));
+            false,"PROJECTION_DRIFT",2,1,1,2,1,0,0,2,2,12,List.of("STAFF:s-1"));
         when(verifier.verify()).thenReturn(failed);
         var reply=controller.verify("private-scheduling-key");
         assertEquals(HttpStatus.CONFLICT,reply.getStatusCode());
@@ -34,7 +34,7 @@ class AssignmentCutoverVerificationControllerTest {
 
     @Test void reports200OnlyForFreshCompleteManifest() {
         var ready=new AssignmentCutoverVerificationService.Report(
-            true,"READY",2,2,2,2,0,0,2,2,12,List.of());
+            true,"READY",2,2,2,2,0,0,0,2,2,12,List.of());
         when(verifier.verify()).thenReturn(ready);
         var reply=controller.verify("private-scheduling-key");
         assertEquals(HttpStatus.OK,reply.getStatusCode());
