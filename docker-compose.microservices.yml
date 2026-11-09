@@ -123,6 +123,7 @@ services:
       CATALOG_INTERNAL_API_KEY: ${CATALOG_INTERNAL_API_KEY:-local-dev-catalog-key-change-before-deployment}
       CORE_INTERNAL_URL: http://backend:8081
       SCHEDULING_REFERENCE_RELAY_ENABLED: ${SCHEDULING_REFERENCE_RELAY_ENABLED:-false}
+      SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED: ${SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED:-false}
     expose:
       - "8093"
     depends_on:
