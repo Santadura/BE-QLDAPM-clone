@@ -826,12 +826,13 @@ END
 \$\$;
 SQL
 claim_url="http://backend:8081/internal/scheduling/assignments/claims"
-if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+claim_json="$(printf '{"actorUsername":"cm001","managerEmployeeId":"cm-001","operation":"ASSIGN_STAFF","requestKey":"%s-claim-denied"}' "$fixture")"
+claim_response="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
   --header "X-Internal-Key: ${scheduling_key}" \
   --header "Content-Type: application/json" \
-  --post-data '{"actorUsername":"cm001","managerEmployeeId":"cm-001","operation":"ASSIGN_STAFF","requestKey":"${fixture}-claim-denied"}' \
-  "$claim_url" >/dev/null 2>&1; then
-  echo "Core admitted a Scheduling writer claim while still in CORE mode"; exit 1
+  --post-data "$claim_json" "$claim_url" 2>&1 || true)"
+if ! printf '%s' "$claim_response" | grep -Eq 'HTTP/[0-9.]+ 409'; then
+  echo "Core did not explicitly reject an independent Scheduling claim while in CORE mode"; exit 1
 fi
 echo "PASS: Core handback is fenced by durable command claims; CORE mode cannot admit claims"
 
