@@ -112,6 +112,15 @@ public class SchedulingAssignmentReferenceBridge {
                 ("SALE".equals(role) && !Set.of("SALES_SHIFT","LEAD_FOLLOWUP","CONSULTATION").contains(workType)))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Class-linked and unsupported assignment reference events are forbidden");
+        // A standalone cancellation is a versioned UPSERT (status=CANCELLED)
+        // so the Core row and audit/reference receipt remain inspectable.
+        // Never let an unrelated command issue a fake status transition.
+        if(("ASSIGNED".equals(status) && !"ASSIGN_STAFF".equals(event.operation()))
+                || ("CANCELLED".equals(status) &&
+                    !"CANCEL_STAFF".equals(event.operation())))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Scheduling operation does not match the staff status transition");
+
         LocalDate date;
         LocalTime start,end;
         try {
@@ -197,7 +206,10 @@ public class SchedulingAssignmentReferenceBridge {
             "WHERE e.employee_id=? AND e.status='ACTIVE' AND u.status='ACTIVE' " +
             "AND upper(r.role_name)=?",
             Long.class,employee,role);
-        if(activeWorker==null || activeWorker!=1)
+        // Cancellation must remain possible after an employee is disabled.
+        // Prevent *new* assignments to inactive workers; the manager still
+        // has to be active for either operation.
+        if("ASSIGNED".equals(status) && (activeWorker==null || activeWorker!=1))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Scheduling reference worker is inactive or has changed role");
         Long activeAssigner=db.queryForObject(
