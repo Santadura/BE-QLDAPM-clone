@@ -467,6 +467,16 @@ model StaffSalary {
 // Core-side transactional relay source for the Scheduling assignment READ model.
 // Core-only transactional assignment command receipts. These are transitional
 // until Scheduling independently owns the authoritative assignment write model.
+// Core's database-wide cutover fence (never a shared Scheduling DB table).
+// Set QUIESCED only under an operator-controlled migration window.
+model SchedulingAssignmentWriterControl {
+  singleton Boolean @id @default(true)
+  writerMode String @default("CORE") @map("writer_mode") @db.VarChar(20)
+  changedAt DateTime @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  @@map("scheduling_assignment_writer_control")
+}
+
 model SchedulingCommandReceipt {
   actorUsername   String    @map("actor_username") @db.VarChar(100)
   commandType     String    @map("command_type") @db.VarChar(160)
