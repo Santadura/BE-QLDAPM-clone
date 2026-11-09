@@ -187,6 +187,29 @@ public class SchedulingAssignmentReferenceBridge {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Event revision must exceed the existing Core assignment version");
 
+        // Core is still authoritative for identity and employee status.
+        // The Scheduling availability snapshot may be older than an account
+        // suspension or a CM reassignment; refuse new reference commits in
+        // that case instead of accepting a stale worker/assigner.
+        Long activeWorker=db.queryForObject(
+            "SELECT count(*) FROM employees e JOIN users u ON u.username=e.username " +
+            "JOIN roles r ON r.role_id=u.role_id " +
+            "WHERE e.employee_id=? AND e.status='ACTIVE' AND u.status='ACTIVE' " +
+            "AND upper(r.role_name)=?",
+            Long.class,employee,role);
+        if(activeWorker==null || activeWorker!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Scheduling reference worker is inactive or has changed role");
+        Long activeAssigner=db.queryForObject(
+            "SELECT count(*) FROM employees e JOIN users u ON u.username=e.username " +
+            "JOIN roles r ON r.role_id=u.role_id " +
+            "WHERE e.employee_id=? AND e.username=? AND e.status='ACTIVE' " +
+            "AND u.status='ACTIVE' AND upper(r.role_name)='CM'",
+            Long.class,assignedBy,event.actorUsername());
+        if(activeAssigner==null || activeAssigner!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Scheduling reference manager is inactive or unauthorized");
+
         // Transaction-local only. DB triggers guard this exact exceptional
         // reference path and skip Core->Scheduling feedback.
         db.queryForObject(
