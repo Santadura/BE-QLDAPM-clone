@@ -157,6 +157,23 @@ class AssignmentDomainOutboxRepositoryTest {
             any(RowMapper.class),eq(50));
     }
 
+    @Test void recoveryCannotReadEventsAlreadyAcknowledgedOrMissing() {
+        when(db.query(contains("WHERE event_id=? AND delivered_at IS NULL"),
+            any(RowMapper.class),eq("event-unknown"))).thenReturn(List.of());
+        assertEquals(HttpStatus.NOT_FOUND,
+            assertThrows(ResponseStatusException.class,
+                ()->outbox.unresolvedEvent("event-unknown")).getStatusCode());
+        verify(db).query(contains("delivered_at IS NULL"),
+            any(RowMapper.class),eq("event-unknown"));
+    }
+
+    @Test void invalidRecoveryIdDoesNotQueryTheAssignmentDatabase() {
+        assertEquals(HttpStatus.BAD_REQUEST,
+            assertThrows(ResponseStatusException.class,
+                ()->outbox.unresolvedEvent("")).getStatusCode());
+        verifyNoInteractions(db);
+    }
+
     @Test void rejectsUnboundedOutboxBatch() {
         assertEquals(HttpStatus.BAD_REQUEST,
             assertThrows(ResponseStatusException.class,()->outbox.pending(501))
