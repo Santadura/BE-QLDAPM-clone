@@ -95,7 +95,11 @@ class AcademicReadModelServiceTest {
         assertEquals(HttpStatus.BAD_GATEWAY,
             assertThrows(ResponseStatusException.class,()->model.planning("bearer"))
                 .getStatusCode());
-        verifyNoInteractions(repo);
+        // A preflight lookup is harmless. A malformed Core source must NOT
+        // create or overwrite Academic's durable projection.
+        verify(repo,never()).savePlanning(anyLong(),anyString());
+        verify(repo,never()).save(anyString(),anyString(),anyString(),
+            anyString(),anyString());
     }
 
     @Test void invalidClassIdIsRejectedBeforeRemoteIdentityLookup() {
