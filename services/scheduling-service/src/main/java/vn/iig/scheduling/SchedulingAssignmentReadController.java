@@ -11,8 +11,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 /**
- * GET routes moved out of Core; mutations remain in Core so atomic class/CS
- * staffing and attendance constraints continue to hold.
+ * GET routes moved out of Core. Public writes still use Core; an explicitly
+ * gated PRIVATE executor may create/cancel standalone CS/Sale shifts only
+ * under Core QUIESCED mode, without class or attendance side effects.
  */
 @RestController
 public class SchedulingAssignmentReadController {
