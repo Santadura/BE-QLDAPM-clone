@@ -13,6 +13,11 @@ spring:
         connect-timeout: 3000
         response-timeout: 45s
       routes:
+        # HR owns salary-rank writes; core only retains a versioned FK copy.
+        - id: hr-salary-ranks
+          uri: ${HR_SERVICE_URI:http://localhost:8096}
+          predicates:
+            - Path=/api/payroll/ranks,/api/payroll/ranks/**
         # Only certificate read/write API is migrated to HR at this stage.
         - id: hr-certificates
           uri: ${HR_SERVICE_URI:http://localhost:8096}
