@@ -108,7 +108,9 @@ public class CertificateRepository {
     }
 
     public List<Pending> pending(int limit) {
-        return db.query("SELECT "+FIELDS+" FROM hr_certificate_outbox o " +
+        return db.query("SELECT c.certificate_id,c.employee_id,c.certificate_type," +
+            "c.score,c.score_sw,c.issue_date,c.expiry_date,c.issuer,c.certificate_url," +
+            "c.status,c.created_at,c.version FROM hr_certificate_outbox o " +
             "JOIN hr_certificates c ON c.certificate_id=o.certificate_id " +
             "WHERE o.delivered_at IS NULL ORDER BY c.certificate_id LIMIT ?",
             (rs,i)->new Pending(map(rs),rs.getLong(12)),limit);
