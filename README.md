@@ -9,13 +9,13 @@ Bản `docker-compose.yml` bên dưới vẫn chạy monolith như trước.
 # Thay các giá trị mẫu trong microservices.env.example bằng bí mật thật trong .env
 docker compose -f docker-compose.microservices.yml up --build -d
 # API qua Spring Cloud Gateway: http://localhost:8080/api/**
-# Audit microservice có PostgreSQL riêng và không mở cổng công khai
+# Audit và Course Catalog có PostgreSQL riêng (3 database tổng cộng), không mở cổng công khai
 ```
 
 Tài liệu triển khai, kiến trúc và giới hạn giai đoạn đầu:
 [docs/architecture/microservices-migration.md](docs/architecture/microservices-migration.md).
 
-**Lưu ý:** Đây là giai đoạn 1. Class, Student, Scheduling, HR và Auth chưa được tách thành
+**Lưu ý:** Đây là giai đoạn 2 (Gateway + Audit + Catalog). Class, Student, Scheduling, HR và Auth chưa được tách thành
 những microservice độc lập; không dùng cấu hình demo làm production.
 Dừng stack bằng `docker compose -f docker-compose.microservices.yml down` để giữ dữ liệu.
 
