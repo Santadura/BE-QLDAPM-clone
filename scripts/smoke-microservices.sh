@@ -153,3 +153,29 @@ denied="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE}/api/catalog/c
   -d '{"courseId":"ms-role-blocked","name":"Disallowed","status":"ACTIVE"}')"
 test "$denied" = "403" || { echo "Non-admin was not rejected: $denied"; exit 1; }
 echo "PASS: catalog rejects staff course changes without ADMIN role"
+
+# Login is now issued by an isolated Identity service. Core must accept the
+# exact JWT claims and enforce revocation after logout via the new route.
+identity_count="$("${COMPOSE[@]}" exec -T identity-postgres psql -U iig_identity -d iig_identity -tAc \
+  "SELECT COUNT(*) FROM identity_users WHERE username='admin' AND role_id='ADMIN'" | tr -d '[:space:]')"
+test "$identity_count" = "1" || { echo "Identity did not persist admin credential projection"; exit 1; }
+me_status="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/me" \
+  -H "Authorization: Bearer ${TOKEN}")"
+test "$me_status" = "200" || { echo "Core rejected Identity signed JWT ($me_status)"; exit 1; }
+
+logout_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  "${BASE}/api/auth/logout" -H "Authorization: Bearer ${teacher_token}")"
+test "$logout_code" = "204" || { echo "Identity logout failed: $logout_code"; exit 1; }
+revoked_count="$("${COMPOSE[@]}" exec -T identity-postgres psql -U iig_identity -d iig_identity -tAc \
+  "SELECT COUNT(*) FROM identity_revocations" | tr -d '[:space:]')"
+test "$revoked_count" -ge 1
+revoked_status="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/me" \
+  -H "Authorization: Bearer ${teacher_token}")"
+test "$revoked_status" = "401" || { echo "Revoked token was accepted by core: $revoked_status"; exit 1; }
+echo "PASS: Identity-issued JWT accepted and revoked by core"
+
+# Never expose the internal credential bridge via public Gateway.
+identity_internal_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/internal/identity/users/admin")"
+test "$identity_internal_code" = "404"
+echo "PASS: Identity credential bridge is private"
