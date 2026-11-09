@@ -1,0 +1,21 @@
+server:
+  port: ${SERVER_PORT:8099}
+spring:
+  application:
+    name: iig-academic-service
+  datasource:
+    url: ${ACADEMIC_DB_URL:jdbc:postgresql://localhost:5440/iig_academic}
+    username: ${ACADEMIC_DB_USERNAME:iig_academic}
+    password: ${ACADEMIC_DB_PASSWORD}
+  sql:
+    init:
+      mode: always
+      continue-on-error: false
+iig:
+  core:
+    url: ${CORE_INTERNAL_URL:http://localhost:8081}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
