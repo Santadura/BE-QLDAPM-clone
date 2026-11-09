@@ -113,6 +113,29 @@ public class AssignmentDomainOutboxRepository {
         return prior.eventId();
     }
 
+    /**
+     * Read a single still-undelivered immutable event for recovery. This
+     * does NOT acknowledge it and cannot rewrite its payload or hash.
+     */
+    public Event unresolvedEvent(String eventId) {
+        if(eventId==null || eventId.isBlank() || eventId.length()>50)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Invalid assignment reference event ID");
+        List<Event> rows=db.query(
+            "SELECT event_id,actor_username,operation,request_key,source_type," +
+            "schedule_id,revision,event_kind,payload::text,payload_hash,attempt_count " +
+            "FROM scheduling_assignment_domain_outbox " +
+            "WHERE event_id=? AND delivered_at IS NULL",
+            (rs,i)->new Event(rs.getString(1),rs.getString(2),rs.getString(3),
+                rs.getString(4),rs.getString(5),rs.getString(6),rs.getLong(7),
+                rs.getString(8),rs.getString(9),rs.getString(10),rs.getInt(11)),
+            eventId);
+        if(rows.size()!=1)
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "Unresolved assignment event does not exist");
+        return rows.get(0);
+    }
+
     public List<Event> pending(int limit) {
         if(limit<1 || limit>500)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
