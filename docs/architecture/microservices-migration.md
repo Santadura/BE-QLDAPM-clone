@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8d-4 (receipt-verified saga recovery; standalone commands private)**, not
+This branch is **migration phase 8d-5 (durable Core writer claims and split-brain fencing)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,53 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8d-5: durable Core writer claims before independent commits
+
+Previously an executor checked `Core.writer_mode=QUIESCED` via HTTP,
+then later committed a separate Scheduling database transaction. An operator
+could switch Core back to `CORE` **between those two steps**, even if
+Scheduling had not yet delivered any event or generated a reference receipt.
+The earlier receipt-only handback guard cannot fence that gap.
+
+Core now persists `scheduling_assignment_writer_claims`. Before any
+standalone `ASSIGN_STAFF`, `EDIT_STAFF` or `CANCEL_STAFF` mutation,
+Scheduling must successfully call the service-key-protected private endpoint
+
+```text
+POST /internal/scheduling/assignments/claims
+{actorUsername, managerEmployeeId, operation, requestKey}
+```
+
+Core serializes the claim transaction against writer handback with
+`SELECT ... FROM scheduling_assignment_writer_control FOR UPDATE`. It
+requires `QUIESCED`, validates the active CM identity and persists a stable
+actor/operation/key claim; a lost response can retry the same claim.
+Scheduling **must not write** its local assignment, read projection or domain
+outbox unless this claim was acknowledged.
+
+A new Core reference event must prove the matching claim belongs to the
+same CM/operation/command. Core updates the reference row, outbox receipt and
+the claim's `CONFIRMED` status atomically; exact event replays still return
+`ALREADY_APPLIED`. A confirmed claim cannot be reused to create another
+schedule or advance another revision.
+
+Both `PENDING` and `CONFIRMED` claims block an ordinary
+`QUIESCED -> CORE` handback, independently from Academic leases and
+reference receipts. Claims **have no automatic expiry**: even when a local
+Scheduling transaction fails after the Core claim was durably saved, it is
+unsafe to assume no Scheduling write happened. An operator must inspect the
+Core claims, Scheduling inbox/outbox and reference receipts, then use an
+explicitly audited, separately reviewed handback/cleanup migration. The
+normal dry-run script is unsuitable while claims exist. This conservative
+design can leave the writer quiesced after a crash; it intentionally prefers
+manual reconciliation over silent split-brain assignment writes.
+
+This milestone is **still not a general assignment cutover**. The three
+private executor/relay/reference flags remain disabled by default; Core
+public APIs continue to own classroom teaching, class-support and
+attendance mutations. A production-grade automatic claim cleanup/lease
+handoff protocol and E2E concurrency verification are still outstanding.
 
 ## Phase 8d-4: exact-proof recovery of exhausted reference deliveries
 
