@@ -829,6 +829,49 @@ reference_receipts="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm
 test "$reference_receipts" = "0" || { echo "Disabled Core receiver unexpectedly applied assignment events"; exit 1; }
 echo "PASS: event outbox and Core reference consumer are idle before independent write cutover"
 
+# The PostgreSQL state guard is the final safety net: an HTTP/controller
+# bug cannot mark an unexecuted command COMMITTED or pretend that a domain
+# outbox event exists. Test inside the isolated smoke database and clean up.
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  INSERT INTO scheduling_assignment_command_inbox
+    (actor_username,operation,request_key,request_hash,payload,state)
+  VALUES('cm001','ASSIGN_STAFF','${fixture}-state-fence',
+         repeat('a',64),'{}'::jsonb,'STAGED');
+  BEGIN
+    UPDATE scheduling_assignment_command_inbox SET state='COMMITTED'
+    WHERE actor_username='cm001' AND operation='ASSIGN_STAFF'
+      AND request_key='${fixture}-state-fence';
+    RAISE EXCEPTION 'Unexecuted command reached COMMITTED without outbox events';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    UPDATE scheduling_assignment_command_inbox SET state='PENDING_REFERENCE'
+    WHERE actor_username='cm001' AND operation='ASSIGN_STAFF'
+      AND request_key='${fixture}-state-fence';
+    RAISE EXCEPTION 'Command entered reference pending without domain events';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  UPDATE scheduling_assignment_command_inbox SET state='REJECTED'
+  WHERE actor_username='cm001' AND operation='ASSIGN_STAFF'
+    AND request_key='${fixture}-state-fence';
+  BEGIN
+    UPDATE scheduling_assignment_command_inbox SET state='STAGED'
+    WHERE actor_username='cm001' AND operation='ASSIGN_STAFF'
+      AND request_key='${fixture}-state-fence';
+    RAISE EXCEPTION 'Rejected command was reopened';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  DELETE FROM scheduling_assignment_command_inbox
+  WHERE actor_username='cm001' AND operation='ASSIGN_STAFF'
+    AND request_key='${fixture}-state-fence';
+END
+\$\$;
+SQL
+echo "PASS: database prevents false success and illegal command state regressions"
+
+
 
 
 
