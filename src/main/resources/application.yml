@@ -38,6 +38,7 @@ logging:
 iig:
   scheduling:
     bridge-enabled: ${SCHEDULING_BRIDGE_ENABLED:false}
+    assignment-relay-enabled: ${SCHEDULING_ASSIGNMENT_RELAY_ENABLED:false}
     external-availability: ${SCHEDULING_AVAILABILITY_EXTERNAL:false}
     url: ${SCHEDULING_SERVICE_URL:http://localhost:8098}
     internal-key: ${SCHEDULING_INTERNAL_API_KEY:}
