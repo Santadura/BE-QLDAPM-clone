@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8b-2 (Scheduling intents + Core assignment command receipts)**. Do not claim full migration before every
+> Architecture status: **Phase 8b-3a (cutover readiness verification, Core still owns writes)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -129,6 +129,11 @@ service-key-protected projection API after bootstrap.
   and the business mutation in the same transaction, including attendance
   and class-support rules. This prevents replaying successful writes; it
   does not make the Scheduling read model authoritative for mutation.
+- [x] Phase 8b-3a: add a private manifest and strict cross-service
+  reconciliation gate (source rows/outbox completeness, full paged assignment
+  metadata/JSON, tombstones, version parity, empty pending queue). A 200
+  readiness report is only a *precondition*, never permission by itself to
+  move writes while Academic and attendance still depend on Core.
 - [ ] Introduce idempotent, durable commands for staff/teacher assignment,
   attendance and Academic session reservation; remove direct Academic SQL.
 - [ ] Check existing committed assignment conflicts in the new authoritative
