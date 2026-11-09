@@ -802,6 +802,22 @@ if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
 fi
 echo "PASS: cutover gate rejects unresolved command inbox state"
 
+# Rejecting a STAGED-only request is an idempotent administrative/actor-safe
+# operation: nothing was executed so there is no distributed compensation.
+reject_url="http://scheduling-service:8098/internal/scheduling/assignments/commands/ASSIGN_STAFF/${stage_key}/reject"
+for i in 1 2; do
+  rejected="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    --header "X-Internal-Key: ${scheduling_key}" \
+    --header "Authorization: Bearer ${cm_token}" \
+    --post-data '' "$reject_url")"
+  printf '%s' "$rejected" | python3 -c 'import sys,json; assert json.load(sys.stdin)["state"]=="REJECTED"'
+done
+recovered="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" "$verification_url")"
+printf '%s' "$recovered" | python3 -c 'import sys,json; assert json.load(sys.stdin)["ready"]'
+echo "PASS: actor-scoped staged rejection is idempotent and restores cutover readiness"
+
+
 
 # Versioned Academic session facts are private, too. They are a read
 # contract only; a later write cutover needs a real version-checked lease.
