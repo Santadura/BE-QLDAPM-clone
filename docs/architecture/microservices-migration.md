@@ -625,6 +625,12 @@ private HTTP. It marks an event delivered and advances its command to
 `COMMITTED` **only after** Core responds with matching event ID/revision,
 and never compensates blindly for a timeout (Core may already have committed).
 A Core DB rollback leaves the Scheduling event outstanding.
+Only commands in `PENDING_REFERENCE` can be delivered. After the tenth
+failed delivery attempt, the relay flags the command `COMPENSATING` for
+explicit reconciliation, stops automatically re-sending its events, and
+keeps all immutable records for inspection. It does **not** assume a failed
+HTTP response means Core rolled back. The cutover verifier also blocks on
+`PENDING_REFERENCE`, not only `STAGED` / `COMPENSATING`.
 
 Both sides remain explicitly opt-in, **OFF** in normal Compose:
 
