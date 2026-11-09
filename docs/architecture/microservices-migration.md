@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8d-3 (private standalone CS/Sale create/edit/cancel)**, not
+This branch is **migration phase 8d-4 (receipt-verified saga recovery; standalone commands private)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,46 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8d-4: exact-proof recovery of exhausted reference deliveries
+
+A lost HTTP response is **not** evidence that Core rolled back. When repeated
+private relay attempts leave a Scheduling command in `COMPENSATING`,
+Scheduling now has a *separately opt-in* ADMIN-only verification endpoint:
+
+```text
+SCHEDULING_RECOVERY_ENABLED=false # remains OFF in normal Compose
+POST /internal/scheduling/assignments/reconciliation/{eventId}/verify
+X-Internal-Key: <private scheduling service key>
+Authorization: Bearer <currently active ADMIN token>
+```
+
+Recovery first confirms Core's assignment writer is still `QUIESCED`,
+then loads the immutable undelivered event from the independent Scheduling
+outbox. A read-only Core endpoint (available independently of the Core
+reference WRITE feature flag) returns the **last durable Core receipt**
+under service-key authorization:
+
+```text
+GET /internal/scheduling/assignments/reference/receipt?sourceType=STAFF&scheduleId=...
+X-Internal-Key: <private scheduling service key>
+```
+
+Only an **exact event ID + source revision + SHA-256 payload hash match** may
+advance the `COMPENSATING` command. The acknowledgement, outbox delivered
+marker and final command status are updated transactionally in Scheduling.
+A multi-event command remains `COMPENSATING` until every required event has
+a durable matching receipt. No public route is exposed, and there is **no**
+operator-controlled "force success" or blind rollback action.
+
+A missing receipt, a different hash, a later Core revision that has
+superseded the last visible receipt, stale identity, or an unavailable Core
+service **fails closed**. Such cases still need a human-reviewed
+reconciliation/compensation plan; the state is not silently cleared. The
+normal relay still never processes `COMPENSATING` commands automatically.
+A disposable smoke test checks that the new recovery endpoint is disabled
+by default and that private Core receipt reads refuse unauthenticated
+requests and missing receipts.
 
 ## Phase 8d-3: worker-preserving staff edits and handback protection
 
