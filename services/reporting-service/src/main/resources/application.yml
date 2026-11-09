@@ -15,6 +15,9 @@ iig:
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${REPORTING_INTERNAL_API_KEY}
+  payroll:
+    url: ${PAYROLL_SERVICE_URL:http://localhost:8097}
+    internal-key: ${PAYROLL_INTERNAL_API_KEY}
   snapshot:
     max-age-seconds: ${REPORTING_MAX_AGE_SECONDS:30}
   dashboard:
