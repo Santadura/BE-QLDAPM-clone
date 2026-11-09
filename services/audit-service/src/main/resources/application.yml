@@ -1,0 +1,21 @@
+server:
+  port: ${SERVER_PORT:8092}
+spring:
+  application:
+    name: iig-audit-service
+  datasource:
+    url: ${AUDIT_DB_URL:jdbc:postgresql://localhost:5433/iig_audit}
+    username: ${AUDIT_DB_USERNAME:iig_audit}
+    password: ${AUDIT_DB_PASSWORD}
+  sql:
+    init:
+      mode: always
+      continue-on-error: false
+iig:
+  internal:
+    api-key: ${AUDIT_INTERNAL_API_KEY}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
