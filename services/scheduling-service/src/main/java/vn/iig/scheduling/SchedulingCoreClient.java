@@ -93,6 +93,33 @@ public class SchedulingCoreClient {
         }
     }
 
+    public record DurableAssignmentReferenceReceipt(String eventId,
+                                                    long revision,String payloadHash) {}
+
+    /** Read-only exact Core receipt; never assume a 503/timeout means rollback. */
+    public DurableAssignmentReferenceReceipt committedAssignmentReceipt(
+            String sourceType,String scheduleId) {
+        try {
+            DurableAssignmentReferenceReceipt receipt=client.get()
+                .uri(builder->builder
+                    .path("/internal/scheduling/assignments/reference/receipt")
+                    .queryParam("sourceType",sourceType)
+                    .queryParam("scheduleId",scheduleId).build())
+                .header("X-Internal-Key",key)
+                .retrieve().body(DurableAssignmentReferenceReceipt.class);
+            if(receipt==null || receipt.eventId()==null || receipt.payloadHash()==null)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Core reference receipt response incomplete");
+            return receipt;
+        } catch(HttpClientErrorException.NotFound ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Core does not confirm this immutable reference event",ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core reference receipt lookup unavailable",ex);
+        }
+    }
+
     public record AssignmentReferenceReceipt(String eventId,long revision,String outcome) {}
     public record AssignmentReferenceEnvelope(
         String eventId,String actorUsername,String operation,String requestKey,
