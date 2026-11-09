@@ -64,6 +64,15 @@ public class AssignmentReferenceRelay {
                 try {
                     outbox.retryLater(event.eventId(),
                         ex.getClass().getSimpleName()+": reference delivery failed");
+                    if(event.attemptCount()>=9) {
+                        // Tenth failure: stop automatic delivery until both
+                        // Core and Scheduling receipts are reconciled.
+                        lifecycle.flagForReconciliation(
+                            event.actorUsername(),event.operation(),event.requestKey(),
+                            event.eventId());
+                        log.error("Assignment reference event {} requires manual reconciliation",
+                            event.eventId());
+                    }
                 } catch(Exception retryFailure) {
                     log.error("Cannot persist retry for assignment reference event {}",
                         event.eventId(),retryFailure);
