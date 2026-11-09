@@ -34,6 +34,7 @@ class AssignmentCutoverVerificationServiceTest {
         when(core.assignmentManifest("","",250)).thenReturn(List.of(row));
         when(repo.matchesManifest(row)).thenReturn(true);
         when(repo.countAllAssignments()).thenReturn(1L);
+        when(repo.countShadowAssignments()).thenReturn(1L);
 
         var report=service.verify();
         assertTrue(report.ready());
@@ -48,6 +49,7 @@ class AssignmentCutoverVerificationServiceTest {
         when(core.assignmentManifest("","",250)).thenReturn(List.of(row));
         when(repo.matchesManifest(row)).thenReturn(false);
         when(repo.countAllAssignments()).thenReturn(1L);
+        when(repo.countShadowAssignments()).thenReturn(1L);
 
         var report=service.verify();
         assertFalse(report.ready());
@@ -62,6 +64,7 @@ class AssignmentCutoverVerificationServiceTest {
         when(core.assignmentManifest("","",250)).thenReturn(List.of(row));
         when(repo.matchesManifest(row)).thenReturn(true);
         when(repo.countAllAssignments()).thenReturn(1L);
+        when(repo.countShadowAssignments()).thenReturn(1L);
 
         var report=service.verify();
         assertFalse(report.ready());
@@ -73,6 +76,7 @@ class AssignmentCutoverVerificationServiceTest {
         when(core.assignmentManifest("","",250)).thenReturn(List.of(row));
         when(repo.matchesManifest(row)).thenReturn(true);
         when(repo.countAllAssignments()).thenReturn(1L);
+        when(repo.countShadowAssignments()).thenReturn(1L);
 
         var report=service.verify();
         assertFalse(report.ready());
@@ -85,6 +89,7 @@ class AssignmentCutoverVerificationServiceTest {
         when(core.assignmentManifest("","",250)).thenReturn(List.of(row));
         when(repo.matchesManifest(row)).thenReturn(true);
         when(repo.countAllAssignments()).thenReturn(1L);
+        when(repo.countShadowAssignments()).thenReturn(1L);
 
         var report=service.verify();
         assertFalse(report.ready());
@@ -99,11 +104,24 @@ class AssignmentCutoverVerificationServiceTest {
         verify(repo,never()).countAllAssignments();
     }
 
+    @Test void shadowMissingRowBlocksCutoverEvenWhenReadCopyMatches() {
+        when(core.assignmentManifestSummary()).thenReturn(summary(1,8,0,1,1));
+        when(core.assignmentManifest("","",250)).thenReturn(List.of(row));
+        when(repo.matchesManifest(row)).thenReturn(true);
+        when(repo.countAllAssignments()).thenReturn(1L);
+        when(repo.countShadowAssignments()).thenReturn(0L);
+        var result=service.verify();
+        assertFalse(result.ready());
+        assertEquals("PROJECTION_DRIFT",result.state());
+        assertEquals(0,result.writeShadowRows());
+    }
+
     @Test void localGhostTombstoneCountPreventsCutover() {
         when(core.assignmentManifestSummary()).thenReturn(summary(1,8,0,1,1));
         when(core.assignmentManifest("","",250)).thenReturn(List.of(row));
         when(repo.matchesManifest(row)).thenReturn(true);
         when(repo.countAllAssignments()).thenReturn(2L);
+        when(repo.countShadowAssignments()).thenReturn(2L);
         var result=service.verify();
         assertFalse(result.ready());
         assertEquals("PROJECTION_DRIFT",result.state());
