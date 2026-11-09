@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8b-3b (shadow model, command staging and Core write fencing)**, not
+This branch is **migration phase 8b-3c (Academic session leases; no assignment write cutover)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -513,6 +513,40 @@ a cross-DB lease and not sufficient to authorize a write: between lookup and
 commit, Academic may change unless a later version-checked reservation locks
 the session. Existing Core class and attendance invariants remain intact.
 
+### Phase 8b-3c: versioned Academic session leases
+
+Academic (still in Core) has a private, service-key-protected
+`/internal/scheduling/academic/leases` endpoint for acquiring a short-lived
+lease against a specific planned class session and expected class/session
+versions. Core only issues one when its assignment writer control is
+`QUIESCED`, not in normal production `CORE` mode. To serialize competing
+requests, the Core transaction locks the control row, class and lesson.
+
+- `POST /internal/scheduling/academic/leases` requires
+  `{classId,sessionId,classVersion,sessionVersion,commandKey}`. The key
+  identifies retries of the **same logical command**, so a lost response can
+  be replayed without creating a duplicate lease. A reused key with different
+  expected versions is rejected.
+- `POST /{id}/renew` checks lease expiry, class/session versions and statuses
+  under SQL row locks before extending expiry. `DELETE /{id}` is an
+  idempotent release. Leases expire after five minutes unless renewed.
+- Core database triggers reject modification/deletion of a leased session,
+  overlapping new lessons and changes to the class dates/status while an
+  active lease exists. Restarting Core assignment writes from `QUIESCED`
+  to `CORE` is forbidden until all active Academic leases expire or are
+  released. This prevents replay/cutover races from silently invalidating
+  a protected Academic lesson.
+- A protected Scheduling HTTP client can acquire/renew/release these
+  leases, **but no public write route uses it yet**. It is not an end-to-end
+  distributed transaction. Future command execution must coordinate lease
+  renewal, worker reservations, Attendance and Payroll compensation safely.
+
+The dry-run script from 8b-3b must not be used while any active leases
+exist: its exit handler tries to restore Core but the database deliberately
+blocks that restoration. A maintenance operator must wait for lease expiry
+or release the correct command lease, and verify `writer_mode='CORE'`
+afterwards. See below for manual recovery instructions.
+
 ### Safe verification procedure
 
 A maintenance-window dry-run (NOT a live migration) can be invoked with:
@@ -533,14 +567,15 @@ docker compose -f docker-compose.microservices.yml exec -T postgres \
   psql -U postgres -d qlapm_db -c "UPDATE scheduling_assignment_writer_control SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE"
 ```
 
-**Not yet complete in milestone 8:** an Academic transactional session
-reservation/version-fencing command, scheduling-owned actual assignment
-writer/inbox state machine and transactional events, Core reference and
-payroll/attendance projection with at-least-once replay, compensation for
-partial distributed failures, employee + class coverage conflict constraints
-against **committed** Scheduling state, read/write routing switch, and passing
-Core/Scheduling/Gateway/FE concurrency and integrity regressions. Do not mark
-Phase 8 or the full migration complete on a shadow-data parity report alone.
+**Not yet complete in milestone 8:** Scheduling-owned *executed* assignment
+commands and atomic local outbox, Core/Academic idempotent reference projection
+and teacher attendance coordination, Payroll replay, robust cross-DB
+compensation/reconciliation, promotion of conflict checks from Core-backed
+shadow into independently authoritative writes, public Gateway mutation
+routing cutover and passing Core/Scheduling/Gateway/FE concurrency and
+integrity regressions. Existing Academic lease primitives are available
+but not integrated into an executable distributed saga. Do not mark Phase 8
+or the full migration complete on a shadow-data parity report alone.
 
 **Still required for full Scheduling extraction:** move the assignment and
 teacher attendance write model together with its worker-conflict
