@@ -71,6 +71,44 @@ public class SchedulingCoreClient {
         }
     }
 
+    public record WriterClaimRequest(String actorUsername,String managerEmployeeId,
+                                     String operation,String requestKey) {}
+    public record WriterClaimReceipt(String actorUsername,String operation,
+                                     String requestKey,String status) {}
+
+    /**
+     * This durable Core claim serializes with QUIESCED -> CORE handback.
+     * MUST succeed before Scheduling commits a separate assignment write.
+     * A lost response is safely retried with the same actor/operation/key.
+     * A claim never auto-expires: uncertain partial work requires audit.
+     */
+    public void acquireAssignmentWriterClaim(String actor,String managerEmployeeId,
+                                             String operation,String requestKey) {
+        try {
+            WriterClaimReceipt receipt=client.post()
+                .uri("/internal/scheduling/assignments/claims")
+                .header("X-Internal-Key",key)
+                .body(new WriterClaimRequest(actor,managerEmployeeId,
+                    operation,requestKey))
+                .retrieve().body(WriterClaimReceipt.class);
+            if(receipt==null || !actor.equals(receipt.actorUsername()) ||
+                    !operation.equals(receipt.operation()) ||
+                    !requestKey.equals(receipt.requestKey()) ||
+                    !"PENDING".equals(receipt.status()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Core returned an incompatible Scheduling writer claim");
+        } catch(HttpClientErrorException.Conflict ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Core no longer permits the independent Scheduling writer",ex);
+        } catch(HttpClientErrorException.Forbidden ex) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "CM assignment writer claim denied by Core",ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Durable Core writer claim unavailable",ex);
+        }
+    }
+
     public record AssignmentWriterState(String mode) {}
 
     /**
