@@ -15,6 +15,10 @@ on:
       - feature/spring-microservices-migration-20261109
   workflow_dispatch:
 
+concurrency:
+  group: microservices-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
