@@ -532,6 +532,24 @@ model SchedulingAssignmentReferenceReceipt {
   @@map("scheduling_assignment_reference_receipts")
 }
 
+// Immutable Core acknowledgement of every applied Scheduling revision.
+// Command identity is optional only for backfilled pre-8e last receipts.
+model SchedulingAssignmentReferenceEventReceipt {
+  eventId String @id @map("event_id") @db.VarChar(50)
+  sourceType String @map("source_type") @db.VarChar(12)
+  scheduleId String @map("schedule_id") @db.VarChar(50)
+  revision BigInt
+  payloadHash String @map("payload_hash") @db.Char(64)
+  actorUsername String @map("actor_username") @db.VarChar(100)
+  operation String? @db.VarChar(40)
+  requestKey String? @map("request_key") @db.VarChar(128)
+  appliedAt DateTime @default(now()) @map("applied_at") @db.Timestamptz(6)
+
+  @@unique([sourceType,scheduleId,revision])
+  @@index([sourceType,scheduleId,revision])
+  @@map("scheduling_assignment_reference_event_receipts")
+}
+
 model SchedulingCommandReceipt {
   actorUsername   String    @map("actor_username") @db.VarChar(100)
   commandType     String    @map("command_type") @db.VarChar(160)
