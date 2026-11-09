@@ -52,6 +52,37 @@ public class SchedulingAccess {
         return actor;
     }
 
+    /**
+     * Authorizes read-only management views from the active user account.
+     *
+     * An ADMIN account is allowed to supervise schedules even when it is not
+     * represented in {@code employees}.  Do not use this for operations that
+     * create, change, approve, or audit employee-owned data: those actions
+     * must continue to use {@link #requireRole(String...)} and therefore have
+     * an active employee profile.
+     */
+    public StaffIdentity requireActiveRole(String... roles) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || "anonymousUser".equals(authentication.getPrincipal())) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+
+        var users = jdbc.query(
+            "SELECT username, role_id FROM users WHERE username=? AND status='ACTIVE'",
+            (rs, row) -> new StaffIdentity(null, rs.getString(1), rs.getString(2)),
+            authentication.getName());
+        if (users.isEmpty()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "Active user account required");
+        }
+
+        StaffIdentity actor = users.get(0);
+        if (Arrays.stream(roles).noneMatch(role -> role.equalsIgnoreCase(actor.role()))) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "Role is not allowed for this action");
+        }
+        return actor;
+    }
+
     public void requireEmployeeRole(String employeeId, String role) {
         Integer count = jdbc.queryForObject(
             "SELECT count(*) FROM employees e JOIN users u ON u.username=e.username " +

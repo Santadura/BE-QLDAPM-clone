@@ -226,49 +226,6 @@ async function main() {
     },
   });
 
-  // The seeded RUNNING TOEFL class must have at least one assigned Teacher.
-  // These dates are historical sample data; new real assignments use approved availability.
-  await prisma.teachingSchedule.upsert({
-    where: { teachingScheduleId: "teaching-003" },
-    update: {},
-    create: {
-      teachingScheduleId: "teaching-003",
-      teacherId: "teacher-002",
-      classId: "class-0003",
-      date: new Date("2026-11-10"),
-      startTime: new Date("1970-01-01T18:00:00Z"),
-      endTime: new Date("1970-01-01T20:00:00Z"),
-      status: "ASSIGNED",
-      assignedById: "emp-tc-001",
-    },
-  });
-
-  // Planned sessions exist independently of staffing, including on a fresh DB
-  // where migrations run before the seed creates the teaching schedule.
-  const plannedSeed = [
-    ["seed-session-0001", "class-0001", "2026-10-06", "18:30", "20:30"],
-    ["seed-session-0002", "class-0002", "2026-11-02", "18:00", "20:00"],
-    ["seed-session-0003", "class-0003", "2026-11-10", "18:00", "20:00"],
-    ["seed-session-0006", "class-0006", "2026-11-03", "18:00", "20:00"],
-  ];
-  for (const [classSessionId, classId, date, start, end] of plannedSeed) {
-    const slotDate = new Date(date);
-    const slotStart = new Date(`1970-01-01T${start}:00Z`);
-    const slotEnd = new Date(`1970-01-01T${end}:00Z`);
-    await prisma.classSession.upsert({
-      where: {
-        classId_date_startTime_endTime: {
-          classId, date: slotDate, startTime: slotStart, endTime: slotEnd,
-        },
-      },
-      update: {},
-      create: {
-        classSessionId, classId, date: slotDate,
-        startTime: slotStart, endTime: slotEnd, status: "PLANNED",
-      },
-    });
-  }
-
   // --- PHẦN THÊM DỮ LIỆU TỰ ĐỘNG ---
 
   // 1. AppFunction
@@ -342,6 +299,23 @@ async function main() {
         score: 8.5,
         status: "ACTIVE",
       },
+    });
+  }
+
+  // Give most demo staff a realistic tenure of 1–3 years.  The salary-review
+  // rule remains six months, while the remaining demo employees still model
+  // newly hired staff that are not eligible yet.
+  const reviewEligibleEmployeeIds = [
+    "teacher-001", "teacher-002", "teacher-003",
+    "cs-001", "cs-002", "cs-003",
+    "sale-001", "sale-002", "sale-003",
+    ...Array.from({ length: 11 }, (_, index) => `auto-emp-${index + 1}`),
+  ];
+  for (const [index, employeeId] of reviewEligibleEmployeeIds.entries()) {
+    const yearsAgo = 1 + (index % 3);
+    await prisma.employee.update({
+      where: { employeeId },
+      data: { createdAt: new Date(`${2026 - yearsAgo}-0${(index % 9) + 1}-15T00:00:00.000Z`) },
     });
   }
 
@@ -493,8 +467,19 @@ async function main() {
     });
 
     await prisma.classSession.upsert({
-      where: { classSessionId: `auto-session-${i}` },
-      update: {},
+      // The class-session migration may already have created this slot from
+      // teaching_schedules with a legacy ID.  Its natural key is the slot,
+      // not our seed ID, so use the composite unique key to keep seeding
+      // repeatable.
+      where: {
+        classId_date_startTime_endTime: {
+          classId: autoClassId,
+          date: new Date("2026-10-20"),
+          startTime: new Date("1970-01-01T13:00:00Z"),
+          endTime: new Date("1970-01-01T15:00:00Z"),
+        },
+      },
+      update: { status: "PLANNED" },
       create: {
         classSessionId: `auto-session-${i}`,
         classId: autoClassId,
