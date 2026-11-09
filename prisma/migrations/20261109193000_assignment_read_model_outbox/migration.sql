@@ -19,13 +19,22 @@ DECLARE
   kind VARCHAR(12);
   identifier VARCHAR(50);
 BEGIN
-  kind := CASE WHEN TG_TABLE_NAME='teaching_schedules' THEN 'TEACHING' ELSE 'STAFF' END;
-  IF TG_OP='DELETE' THEN
-    identifier := CASE WHEN kind='TEACHING'
-      THEN OLD.teaching_schedule_id ELSE OLD.staff_schedule_id END;
+  -- PL/pgSQL record fields are resolved eagerly in CASE expressions.
+  -- Only reference the fields that actually exist in the current table.
+  IF TG_TABLE_NAME='teaching_schedules' THEN
+    kind := 'TEACHING';
+    IF TG_OP='DELETE' THEN
+      identifier := OLD.teaching_schedule_id;
+    ELSE
+      identifier := NEW.teaching_schedule_id;
+    END IF;
   ELSE
-    identifier := CASE WHEN kind='TEACHING'
-      THEN NEW.teaching_schedule_id ELSE NEW.staff_schedule_id END;
+    kind := 'STAFF';
+    IF TG_OP='DELETE' THEN
+      identifier := OLD.staff_schedule_id;
+    ELSE
+      identifier := NEW.staff_schedule_id;
+    END IF;
   END IF;
   INSERT INTO scheduling_assignment_outbox(source_type,schedule_id,version,delivered_at)
     VALUES (kind,identifier,1,NULL)

@@ -118,7 +118,7 @@ jobs:
         run: ./e2e/node_modules/.bin/playwright test --config=e2e/playwright.config.mjs
       - name: Print service logs when smoke fails
         if: failure()
-        run: docker compose -f docker-compose.microservices.yml logs --no-color --tail=160 backend api-gateway audit-service catalog-service identity-service reporting-service hr-service payroll-service scheduling-service
+        run: docker compose -f docker-compose.microservices.yml logs --no-color --tail=160 db-init postgres backend api-gateway audit-service catalog-service identity-service reporting-service hr-service payroll-service scheduling-service
       - name: Logs for diagnosis
         if: always()
         run: |
