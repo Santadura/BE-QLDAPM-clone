@@ -39,6 +39,9 @@ services:
       DB_PASSWORD: ${CORE_DB_PASSWORD:-postgres}
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-key-at-least-256-bits-please}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      HR_CERTIFICATE_BRIDGE_ENABLED: "true"
+      HR_CERTIFICATES_EXTERNAL: "true"
+      HR_INTERNAL_API_KEY: ${HR_INTERNAL_API_KEY:-local-dev-hr-key-change-before-deployment}
       REPORTING_BRIDGE_ENABLED: "true"
       REPORTING_INTERNAL_API_KEY: ${REPORTING_INTERNAL_API_KEY:-local-dev-reporting-key-change-before-deployment}
       IDENTITY_BRIDGE_ENABLED: "true"
@@ -190,6 +193,39 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  hr-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iig_hr
+      POSTGRES_USER: iig_hr
+      POSTGRES_PASSWORD: ${HR_DB_PASSWORD:-local-dev-hr-password}
+    volumes:
+      - hr_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iig_hr -d iig_hr"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  hr-service:
+    build:
+      context: ./services/hr-service
+    environment:
+      SERVER_PORT: "8096"
+      HR_DB_URL: jdbc:postgresql://hr-postgres:5432/iig_hr
+      HR_DB_USERNAME: iig_hr
+      HR_DB_PASSWORD: ${HR_DB_PASSWORD:-local-dev-hr-password}
+      HR_INTERNAL_API_KEY: ${HR_INTERNAL_API_KEY:-local-dev-hr-key-change-before-deployment}
+      CORE_INTERNAL_URL: http://backend:8081
+    expose:
+      - "8096"
+    depends_on:
+      hr-postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
   api-gateway:
     build:
       context: ./services/api-gateway
@@ -199,6 +235,7 @@ services:
       CATALOG_SERVICE_URI: http://catalog-service:8093
       IDENTITY_SERVICE_URI: http://identity-service:8094
       REPORTING_SERVICE_URI: http://reporting-service:8095
+      HR_SERVICE_URI: http://hr-service:8096
     ports:
       - "8080:8080"
     depends_on:
@@ -210,6 +247,8 @@ services:
         condition: service_started
       reporting-service:
         condition: service_started
+      hr-service:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
@@ -218,3 +257,4 @@ volumes:
   catalog_pgdata:
   identity_pgdata:
   reporting_pgdata:
+  hr_pgdata:
