@@ -91,6 +91,24 @@ public class AssignmentProjectionRepository {
             "WHERE scheduling_assignment_read_model.version<EXCLUDED.version",
             item.sourceType(),item.id(),item.version(),item.deleted(),item.employeeId(),
             item.staffRole(),item.date(),item.status(),document);
+        // The same local transaction maintains the independent normalized
+        // write-shadow and FE JSON projection. Until cutover, Core events
+        // remain the exclusive source of these revisions.
+        db.update("INSERT INTO scheduling_assignment_write_shadow " +
+            "(source_type,schedule_id,version,deleted,employee_id,staff_role," +
+            "class_id,workplace_id,work_date,start_time,end_time,work_type,status,assigned_by) " +
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) " +
+            "ON CONFLICT(source_type,schedule_id) DO UPDATE SET " +
+            "version=EXCLUDED.version,deleted=EXCLUDED.deleted," +
+            "employee_id=EXCLUDED.employee_id,staff_role=EXCLUDED.staff_role," +
+            "class_id=EXCLUDED.class_id,workplace_id=EXCLUDED.workplace_id," +
+            "work_date=EXCLUDED.work_date,start_time=EXCLUDED.start_time," +
+            "end_time=EXCLUDED.end_time,work_type=EXCLUDED.work_type," +
+            "status=EXCLUDED.status,assigned_by=EXCLUDED.assigned_by,updated_at=NOW() " +
+            "WHERE scheduling_assignment_write_shadow.version<EXCLUDED.version",
+            item.sourceType(),item.id(),item.version(),item.deleted(),item.employeeId(),
+            item.staffRole(),item.classId(),item.workplaceId(),item.date(),
+            item.startTime(),item.endTime(),item.workType(),item.status(),item.assignedBy());
     }
 
 
