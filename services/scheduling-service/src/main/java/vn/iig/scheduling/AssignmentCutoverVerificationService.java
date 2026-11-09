@@ -26,6 +26,7 @@ public class AssignmentCutoverVerificationService {
 
     public record Report(boolean ready,String state,long sourceRows,long localRows,
                          long writeShadowRows,long checkedRows,long mismatches,long pendingChanges,
+                         long unresolvedCommands,
                          long liveSchedules,long trackedLiveSchedules,
                          long sourceVersionSum,List<String> sampleMismatchKeys) {}
 
@@ -78,6 +79,7 @@ public class AssignmentCutoverVerificationService {
 
         long localRows=readModel.countAllAssignments();
         long shadowRows=readModel.countShadowAssignments();
+        long unresolved=readModel.pendingAssignmentCommands();
         var current=core.assignmentManifestSummary();
         boolean unchanged=before.rowCount()==current.rowCount() &&
             before.versionSum()==current.versionSum() &&
@@ -90,10 +92,11 @@ public class AssignmentCutoverVerificationService {
         String state=!unchanged ? "SOURCE_CHANGED_DURING_SCAN" :
             !completeOutbox ? "CORE_OUTBOX_INCOMPLETE" :
             !noPending ? "PENDING_PROJECTION_CHANGES" :
-            !matching ? "PROJECTION_DRIFT" : "READY";
+            !matching ? "PROJECTION_DRIFT" :
+            unresolved>0 ? "UNRESOLVED_ASSIGNMENT_COMMANDS" : "READY";
 
         return new Report("READY".equals(state),state,current.rowCount(),localRows,
-            shadowRows,checked,mismatched,current.pendingCount(),current.liveSchedules(),
+            shadowRows,checked,mismatched,current.pendingCount(),unresolved,current.liveSchedules(),
             current.trackedLiveSchedules(),current.versionSum(),List.copyOf(samples));
     }
 
