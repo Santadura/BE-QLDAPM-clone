@@ -90,7 +90,7 @@ CREATE TRIGGER trg_iig_leased_lesson_insert_guard
 -- is active. Mode switch is serialized with lease acquisition using the same
 -- singleton row lock; interrupted commands still expire automatically.
 CREATE OR REPLACE FUNCTION iig_block_assignment_resume_with_active_lease()
-RETURNS TRIGGER LANGUAGE plpgsql AS $
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
   IF OLD.writer_mode='QUIESCED' AND NEW.writer_mode='CORE' AND EXISTS (
     SELECT 1 FROM scheduling_academic_session_leases
@@ -101,7 +101,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$;
+$$;
 DROP TRIGGER IF EXISTS trg_iig_assignment_resume_guard ON scheduling_assignment_writer_control;
 CREATE TRIGGER trg_iig_assignment_resume_guard
   BEFORE UPDATE OF writer_mode ON scheduling_assignment_writer_control
