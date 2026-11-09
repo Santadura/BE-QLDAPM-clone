@@ -809,6 +809,15 @@ if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
   echo "Standalone Scheduling executor became active without a cutover"; exit 1
 fi
 echo "PASS: Core remains writer and private standalone executor is disabled by default"
+cancel_executor_url="http://scheduling-service:8098/internal/scheduling/assignments/commands/standalone/${stage_key}/cancel"
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" \
+  --header "Authorization: Bearer ${cm_token}" \
+  --post-data '' "$cancel_executor_url" >/dev/null 2>&1; then
+  echo "Standalone Scheduling cancellation unexpectedly active without a cutover"; exit 1
+fi
+echo "PASS: private standalone create/cancel mutation routes remain disabled"
+
 
 # A staged command is unfinished migration work: even if source/JSON/shadow
 # parity holds, cutover verification must return 409 rather than READY.
