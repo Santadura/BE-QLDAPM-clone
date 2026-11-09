@@ -177,12 +177,23 @@ public class SchedulingAssignmentReferenceBridge {
             event.sourceType(),event.scheduleId());
         if(!prior.isEmpty()) {
             Previous old=prior.get(0);
-            // Only the latest committed reference receipt is retained.
-            // We cannot prove that an older event with a different digest
-            // was EVER applied, so never silently acknowledge stale events.
-            if(event.revision()<old.revision())
+            // Historical receipts are append-only. An older source event is
+            // considered delivered only if Core can PROVE it was committed
+            // with the exact ID, digest, actor and command identity.
+            if(event.revision()<old.revision()) {
+                Long exact=db.queryForObject(
+                    "SELECT count(*) FROM scheduling_assignment_reference_event_receipts " +
+                    "WHERE source_type=? AND schedule_id=? AND revision=? " +
+                    "AND event_id=? AND payload_hash=? AND actor_username=? " +
+                    "AND operation=? AND request_key=?",
+                    Long.class,event.sourceType(),event.scheduleId(),
+                    event.revision(),event.eventId(),event.payloadHash(),
+                    event.actorUsername(),event.operation(),event.requestKey());
+                if(exact!=null && exact==1)
+                    return new Receipt(event.eventId(),event.revision(),"ALREADY_APPLIED");
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Stale reference revision requires explicit reconciliation");
+                    "Old reference event has no exact immutable Core proof");
+            }
             if(event.revision()==old.revision()) {
                 if(old.eventId().equals(event.eventId()) &&
                    old.hash().equals(event.payloadHash()))
@@ -333,6 +344,16 @@ public class SchedulingAssignmentReferenceBridge {
             "actor_username=EXCLUDED.actor_username,applied_at=NOW()",
             event.sourceType(),event.scheduleId(),event.revision(),
             event.eventId(),event.payloadHash(),event.actorUsername());
+        // Keep every acknowledged revision, not just the last snapshot.
+        // The table rejects mutation and duplicate source/revision events.
+        // If any insert fails, the entire Core projection rolls back.
+        db.update(
+            "INSERT INTO scheduling_assignment_reference_event_receipts " +
+            "(event_id,source_type,schedule_id,revision,payload_hash," +
+            "actor_username,operation,request_key) VALUES(?,?,?,?,?,?,?,?)",
+            event.eventId(),event.sourceType(),event.scheduleId(),
+            event.revision(),event.payloadHash(),event.actorUsername(),
+            event.operation(),event.requestKey());
         db.update("INSERT INTO scheduling_assignment_outbox " +
             "(source_type,schedule_id,version,delivered_at) " +
             "VALUES(?,?,?,NOW()) ON CONFLICT(source_type,schedule_id) " +
