@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8d-5 (durable Core writer claims and split-brain fencing)**, not
+This branch is **migration phase 8e (immutable event history and exact Core receipt replay)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,58 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8e: immutable end-to-end assignment event history
+
+The Core reference projection previously retained only the most recent
+receipt per staff assignment. Once a later revision committed, a delayed
+HTTP response or a manual retry for an earlier *already applied* event
+could not be verified. Never accepting stale events was safe, but left
+legitimate cross-service recovery permanently blocked.
+
+Core now maintains `scheduling_assignment_reference_event_receipts`: a
+durable, append-only record of every applied source-type/schedule/revision
+with its event ID, payload SHA-256, actor, operation and command key.
+The historical receipt is inserted in the **same Core transaction** as
+the staff reference mutation, latest-revision receipt and writer-claim
+confirmation. Core still requires the current `QUIESCED` writer fence,
+the durable original writer claim and exactly matching command identity.
+A replay of an older revision is acknowledged as `ALREADY_APPLIED` only
+when the historical record proves the exact event ID, hash and actor
+command. Missing or mismatched history still fails closed; no event
+is ever automatically superseded or acknowledged merely because a higher
+revision exists.
+
+A read-only, key-protected Core endpoint allows an administrator's
+Scheduling saga recovery to verify **one exact event**:
+
+```text
+GET /internal/scheduling/assignments/reference/receipt/event/{eventId}
+    ?sourceType=STAFF&scheduleId={scheduleId}
+X-Internal-Key: <private service key>
+```
+
+This replaces the previous recovery dependence on the latest receipt
+alone; a batch may now recover an earlier proven event even if other
+events for the same schedule subsequently committed.
+
+Historical receipts created before this migration cannot be reconstructed
+from data that Core already collapsed. The migration backfills only the
+**last known receipt** for each assignment and leaves its unknown
+operation/request identity blank. Those legacy backfills are intentionally
+not accepted as historical replay proof. No fabricated history is added.
+
+PostgreSQL now rejects UPDATE/DELETE of Core historical receipts and
+rewriting/deleting Scheduling immutable domain events. Scheduling still
+permits delivery metadata updates (retry count, errors, acknowledgement)
+without changing the original event. Docker smoke tests exercise both
+database guards within transactions that are rolled back.
+
+**Still incomplete:** this is a reliability improvement, not the
+teacher/Academic/Attendance cutover. The Academic and Attendance bounded
+contexts do not yet run as fully independent services, class-support
+rules and attendance/payroll coordination remain Core-owned, and there
+is no verified live E2E green result. Feature flags remain disabled.
 
 ## Phase 8d-5: durable Core writer claims before independent commits
 
