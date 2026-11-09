@@ -12,8 +12,9 @@ import org.springframework.web.server.ResponseStatusException;
 class StatisticsReadModelServiceTest {
     private final SnapshotRepository repository = mock(SnapshotRepository.class);
     private final ReportingCoreClient core = mock(ReportingCoreClient.class);
+    private final ReportingPayrollClient payroll = mock(ReportingPayrollClient.class);
     private final StatisticsReadModelService service = new StatisticsReadModelService(
-        repository, core, new ObjectMapper(), 30);
+        repository, core, payroll, new ObjectMapper(), 30);
     private final StatisticsQuery q = StatisticsQuery.of("YEAR", 2026, null, null);
 
     @Test void readsFreshCacheButStillChecksCurrentAdminPermission() {
@@ -44,6 +45,38 @@ class StatisticsReadModelServiceTest {
         var result = service.load(q,"Bearer valid");
         assertTrue(result.payload().get("new").asBoolean());
         verify(repository).put(q.key(), "{\"period\":\"YEAR\",\"new\":true}");
+    }
+
+    @Test void replacesStaleCoreFinancialDataWithPayrollLedger() {
+        var month=StatisticsQuery.of("MONTH",2026,10,null);
+        when(core.currentStatistics(month)).thenReturn(
+            "{\"period\":\"MONTH\",\"financial\":{\"revenue\":null,\"revenueAvailable\":false,"
+            + "\"salaryCost\":1,\"payrollRecords\":1},"
+            + "\"monthly\":[{\"month\":10,\"label\":\"T10\",\"salaryCost\":1,\"profit\":null}]}");
+        when(payroll.monthly("2026-01","2026-12")).thenReturn(java.util.List.of(
+            new ReportingPayrollClient.MonthCost("2026-10",
+                new java.math.BigDecimal("9500000.00"),4)));
+        when(repository.put(eq(month.key()),anyString())).thenAnswer(invocation ->
+            new SnapshotRepository.Snapshot(invocation.getArgument(1),Instant.now()));
+
+        var result=service.load(month,"Bearer admin");
+        assertEquals(0,new java.math.BigDecimal("9500000.00").compareTo(
+            result.payload().get("financial").get("salaryCost").decimalValue()));
+        assertEquals(4,result.payload().get("financial").get("payrollRecords").asInt());
+        assertEquals(0,new java.math.BigDecimal("9500000.00").compareTo(
+            result.payload().get("monthly").get(0).get("salaryCost").decimalValue()));
+        assertTrue(result.payload().get("monthly").get(0).get("profit").isNull());
+        verify(payroll).monthly("2026-01","2026-12");
+    }
+
+    @Test void failsClosedWhenPayrollFinancialSourceIsUnavailable() {
+        var month=StatisticsQuery.of("YEAR",2026,null,null);
+        when(core.currentStatistics(month)).thenReturn(
+            "{\"period\":\"YEAR\",\"financial\":{\"salaryCost\":100},\"monthly\":[]}");
+        when(payroll.monthly("2026-01","2026-12")).thenThrow(
+            new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE));
+        assertThrows(ResponseStatusException.class,()->service.load(month,"Bearer admin"));
+        verify(repository,never()).put(anyString(),anyString());
     }
 
     @Test void refusesToInventStatisticsOnSourceOutage() {
