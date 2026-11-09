@@ -844,6 +844,31 @@ if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
   echo "Standalone Scheduling cancellation unexpectedly active without a cutover"; exit 1
 fi
 echo "PASS: private standalone create/cancel mutation routes remain disabled"
+edit_executor_url="http://scheduling-service:8098/internal/scheduling/assignments/commands/standalone/${stage_key}/edit"
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" \
+  --header "Authorization: Bearer ${cm_token}" \
+  --post-data '' "$edit_executor_url" >/dev/null 2>&1; then
+  echo "Standalone Scheduling edit endpoint active without a cutover"; exit 1
+fi
+recovery_url="http://scheduling-service:8098/internal/scheduling/assignments/reconciliation/no-such-event/verify"
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" \
+  --post-data '' "$recovery_url" >/dev/null 2>&1; then
+  echo "Scheduling reconciliation endpoint is active without operator opt-in"; exit 1
+fi
+core_receipt_url="http://backend:8081/internal/scheduling/assignments/reference/receipt?sourceType=STAFF&scheduleId=no-such-schedule"
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  "$core_receipt_url" >/dev/null 2>&1; then
+  echo "Core assignment receipt lookup did not require private service key"; exit 1
+fi
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" \
+  "$core_receipt_url" >/dev/null 2>&1; then
+  echo "Missing Core assignment receipt was incorrectly treated as successful"; exit 1
+fi
+echo "PASS: standalone edit and admin recovery routes are opt-in, receipt lookup fails closed"
+
 
 
 # A staged command is unfinished migration work: even if source/JSON/shadow
