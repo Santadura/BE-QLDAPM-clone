@@ -14,6 +14,10 @@ spring:
         response-timeout: 45s
       routes:
         # Admin statistics are now served from an independent read-model DB.
+        - id: reporting-dashboard
+          uri: ${REPORTING_SERVICE_URI:http://localhost:8095}
+          predicates:
+            - Path=/api/dashboard,/api/dashboard/**
         - id: reporting-statistics
           uri: ${REPORTING_SERVICE_URI:http://localhost:8095}
           predicates:

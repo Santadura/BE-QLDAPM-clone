@@ -17,6 +17,8 @@ iig:
     internal-key: ${REPORTING_INTERNAL_API_KEY}
   snapshot:
     max-age-seconds: ${REPORTING_MAX_AGE_SECONDS:30}
+  dashboard:
+    max-age-seconds: ${DASHBOARD_MAX_AGE_SECONDS:10}
 management:
   endpoints:
     web:

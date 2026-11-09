@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 4 (Reporting statistics read-model extraction)**. Do not claim full migration before every
+> Architecture status: **Phase 4b (Reporting dashboard read-model extraction)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -17,7 +17,7 @@
 | Course FK projection | `courses` | Legacy academic read/reference copy; Catalog is authoritative |
 | Audit | **`audit_events`** | **Isolated Audit database (extracted)** |
 | Audit relay source | `audit_logs`, `audit_outbox_deliveries` | Transactional source in legacy core |
-| Dashboard / Statistics | `statistics_snapshots` read model | **Standalone Reporting statistics API and database**; dashboard remains in core; upstream statistics still calculated in core (transitional) |
+| Dashboard / Statistics | `statistics_snapshots` read model | **Reporting owns role-scoped dashboard and statistics snapshots**; source calculations remain in core (transitional) |
 
 The above is the **target ownership design** for remaining entities, not a
 claim that the corresponding services already exist. Legacy FK links and SQL
@@ -32,7 +32,7 @@ Spring Cloud Gateway (:8080 public)
   |-- POST /api/auth/login, /api/auth/logout --> Auth (:8094) --> identity-postgres
   |     (live credential lookup & logout revocation --> Core private API)
   |-- /api/classes/courses, /api/catalog/** --> Catalog (:8093) --> catalog-postgres
-  |-- /api/statistics ------------------------> Reporting (:8095) --> reporting-postgres
+  |-- /api/statistics and /api/dashboard -----> Reporting (:8095) --> reporting-postgres
   |      (live JWT authorization + key-protected snapshot via Core)
   |-- /api/** -------------------------------> Core (:8081) --> core-postgres
                                                 |   |
@@ -128,7 +128,11 @@ service-key-protected projection API after bootstrap.
   30-second stale response while the source is healthy.
 - [ ] Replace the temporary Core snapshot endpoint with domain event streams
   (Academic/Scheduling/HR/Payroll), including idempotent backfill and replay.
-- [ ] Move role-specific Dashboard into owned Reporting projections.
+- [x] Move role-specific Dashboard HTTP API to Reporting, with per-user,
+  per-role, per-business-day read models and live JWT revalidation. Cache
+  freshness is 10 seconds by default to reduce exposure to stale staffing.
+- [ ] Replace the temporary Core Dashboard snapshot calculation with
+  event-driven read models of Academic, Scheduling and HR data.
 - [ ] Move all statistics computation out of the Core monolith.
 - Add correlation IDs, distributed tracing, readiness endpoints, retry limits,
   dead-letter handling and alerting on unsent outbox records.

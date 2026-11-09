@@ -33,7 +33,9 @@ public class ReportingCoreClient {
         client = RestClient.builder().baseUrl(coreUrl).requestFactory(factory).build();
     }
 
-    public void requireAdmin(String bearerToken) {
+    public record Principal(String username, String role) {}
+
+    public Principal currentPrincipal(String bearerToken) {
         if (bearerToken == null || !bearerToken.startsWith("Bearer ")) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bearer token required");
         }
@@ -47,14 +49,47 @@ public class ReportingCoreClient {
         } catch (RestClientException ex) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Identity validation unavailable");
         }
-        if (account == null || account.get("username") == null) {
+        if (account == null || !(account.get("username") instanceof String username)
+                || username.isBlank()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid session");
         }
         Object roles = account.get("authorities");
-        if (!(roles instanceof List<?> authorities)
-            || authorities.stream().noneMatch(item -> item instanceof Map<?,?> role
-                && "ROLE_ADMIN".equals(role.get("authority")))) {
+        if (!(roles instanceof List<?> authorities)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Role not available");
+        }
+        String currentRole = authorities.stream()
+            .filter(item -> item instanceof Map<?, ?>)
+            .map(item -> String.valueOf(((Map<?, ?>)item).get("authority")))
+            .filter(item -> item.startsWith("ROLE_"))
+            .findFirst().orElse(null);
+        if (currentRole == null) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Role not available");
+        }
+        return new Principal(username, currentRole);
+    }
+
+    public void requireAdmin(String bearerToken) {
+        if (!"ROLE_ADMIN".equals(currentPrincipal(bearerToken).role())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "ADMIN role required");
+        }
+    }
+
+    public String currentDashboard(String username) {
+        try {
+            return client.get().uri(builder -> builder
+                .path("/internal/reporting/dashboard")
+                .queryParam("username", username).build())
+                .header("X-Internal-Key", internalKey)
+                .retrieve().body(String.class);
+        } catch (HttpClientErrorException ex) {
+            if (ex.getStatusCode().value() == 403) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Dashboard unavailable for account");
+            }
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Dashboard source unavailable");
+        } catch (RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Dashboard source unavailable");
         }
     }
 

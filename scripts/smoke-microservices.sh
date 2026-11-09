@@ -220,3 +220,23 @@ test "$invalid_period" = "400"
 private_reporting="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/reporting/statistics")"
 test "$private_reporting" = "404"
 echo "PASS: Reporting snapshots stored independently with ADMIN-only authorization and stable API"
+
+# Admin and teacher dashboards must be distinct, with separate read-model
+# entries. A user must never receive another role's cached dashboard.
+admin_dashboard="$(curl --fail --silent --show-error "${BASE}/api/dashboard" \
+  -H "Authorization: Bearer ${TOKEN}")"
+teacher_dashboard="$(curl --fail --silent --show-error "${BASE}/api/dashboard" \
+  -H "Authorization: Bearer ${staff_token}")"
+printf '%s' "$admin_dashboard" | python3 -c \
+  'import json,sys; x=json.load(sys.stdin); assert x["role"]=="ADMIN" and isinstance(x["stats"],list),x'
+printf '%s' "$teacher_dashboard" | python3 -c \
+  'import json,sys; x=json.load(sys.stdin); assert x["role"]=="TEACHER" and isinstance(x["stats"],list),x'
+dash_rows="$("${COMPOSE[@]}" exec -T reporting-postgres psql -U iig_reporting -d iig_reporting -tAc \
+  "SELECT count(DISTINCT snapshot_key) FROM dashboard_snapshots WHERE snapshot_key LIKE 'DASH:%'" | tr -d '[:space:]')"
+test "$dash_rows" -ge 2 || { echo "Dashboard snapshots are not role-scoped"; exit 1; }
+no_dashboard="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/dashboard")"
+test "$no_dashboard" = "401"
+private_dashboard="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/internal/reporting/dashboard?username=admin")"
+test "$private_dashboard" = "404"
+echo "PASS: role-scoped dashboards served from Reporting without cache leakage"

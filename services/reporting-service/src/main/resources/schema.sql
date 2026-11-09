@@ -7,3 +7,13 @@ CREATE TABLE IF NOT EXISTS statistics_snapshots (
 );
 CREATE INDEX IF NOT EXISTS statistics_snapshots_refreshed
   ON statistics_snapshots (refreshed_at DESC);
+
+-- Role-scoped dashboard snapshots. No cache entry is shared between users,
+-- roles, or business dates; caller JWT is always checked before any read.
+CREATE TABLE IF NOT EXISTS dashboard_snapshots (
+  snapshot_key VARCHAR(128) PRIMARY KEY,
+  payload JSONB NOT NULL,
+  refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS dashboard_snapshots_refreshed
+  ON dashboard_snapshots (refreshed_at DESC);

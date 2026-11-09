@@ -179,6 +179,7 @@ services:
       REPORTING_DB_PASSWORD: ${REPORTING_DB_PASSWORD:-local-dev-reporting-password}
       REPORTING_INTERNAL_API_KEY: ${REPORTING_INTERNAL_API_KEY:-local-dev-reporting-key-change-before-deployment}
       REPORTING_MAX_AGE_SECONDS: ${REPORTING_MAX_AGE_SECONDS:-30}
+      DASHBOARD_MAX_AGE_SECONDS: ${DASHBOARD_MAX_AGE_SECONDS:-10}
       CORE_INTERNAL_URL: http://backend:8081
     expose:
       - "8095"

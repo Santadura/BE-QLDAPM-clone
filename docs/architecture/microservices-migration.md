@@ -121,8 +121,14 @@ properties (`period`, `overview`, `employees`, `schedules`, `financial`,
 - A source outage results in an explicit 503 (after current auth has been
   checked), not fabricated values. Reports can be stale up to the TTL;
   this is an intentional **eventual consistency** contract.
-- **Not yet extracted:** role-specific `/api/dashboard` responses and the
-  source statistics SQL calculations. Those move to domain-event subscriptions
+- **Additional dashboard extraction:** Gateway routes `GET /api/dashboard`
+  to Reporting. The service independently stores `dashboard_snapshots`
+  keyed by verified username, ROLE, and Asia/Ho_Chi_Minh business day.
+  Every request revalidates JWT and role with Core. Cached responses are
+  limited to a configurable 10-second TTL and expose their freshness timestamp.
+  The private `GET /internal/reporting/dashboard` adapter remains protected
+  by a service key and the public Gateway cannot access it.
+- **Not yet extracted:** the source dashboard and statistics SQL calculations. Those move to domain-event subscriptions
   after Academic, Scheduling and Payroll own their respective tables.
 - Architecture now uses **five separate PostgreSQL containers**, with no
   cross-service JDBC access. Do not call this full reporting extraction.
@@ -211,7 +217,7 @@ scenarios through the Gateway.
    be redesigned before either database is separated.
 4. **HR/Payroll** — own employee lifecycle and payroll ledgers. Consume
    attendance events rather than joining scheduling tables across databases.
-5. **Dashboard/Statistics** — Reporting has a standalone statistics snapshot
+5. **Dashboard/Statistics** — Reporting now has standalone dashboard/statistics snapshots
    read model with TTL/freshness metadata, but must still replace Core's SQL
    snapshot source with independently consumed domain events and migrate Dashboard.
 6. Add contract tests, idempotency on commands, distributed tracing, retry
