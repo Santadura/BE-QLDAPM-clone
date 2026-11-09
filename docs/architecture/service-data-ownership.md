@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8b-3c (Academic session leases; Core remains assignment write owner)**. Do not claim full migration before every
+> Architecture status: **Phase 8d-1 (durable Scheduling outbox + gated Core reference consumer; no write cutover)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -155,6 +155,20 @@ service-key-protected projection API after bootstrap.
   (including crashes and compensation); enforce resulting reference versions
   in Core attendance/Payroll consumers. The five-minute lease primitive
   alone is not an atomic distributed transaction.
+- [x] Phase 8d-1: durable immutable Scheduling assignment domain outbox
+  and a local STAGED -> PENDING_REFERENCE -> COMMITTED lifecycle (only after
+  all Core reference acknowledgements). The relay never publishes STAGED
+  work, and all failed deliveries are retained for retry.
+- [x] Provide a **disabled-by-default** Core reference consumer for standalone,
+  non-class STAFF UPSERTs with a receipt, exact version, hash checks and
+  an audited Core write-fence bypass confined to the reference transaction.
+- [ ] Implement the independent Scheduling assignment command producer and
+  connect it to the shared local transaction; **no public FE write route is
+  moved in this phase**.
+- [ ] Extend Core reference projection to teacher, CS class coverage,
+  cancellation/tombstones, attendance and payroll without cross-DB FKs.
+- [ ] Enforce strict ownership handoff, compensation and disaster recovery
+  before enabling the two reference feature flags.
 - [ ] Introduce idempotent, durable commands for staff/teacher assignment,
   attendance and Academic session reservation; remove direct Academic SQL.
 - [ ] Check existing committed assignment conflicts in the new authoritative
