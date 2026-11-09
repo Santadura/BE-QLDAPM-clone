@@ -174,6 +174,40 @@ class SchedulingAssignmentReferenceBridgeTest {
             any(Object[].class));
     }
 
+    @Test void obsoleteReferenceRevisionIsNotAcknowledgedWithoutAnExactReceipt()
+            throws Exception {
+        var oldEvent=valid();
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        existingVersion(2,"event-2","f".repeat(64));
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->bridge.apply("trusted-core-key",oldEvent)).getStatusCode());
+        verify(db,never()).update(startsWith("INSERT INTO staff_schedules"),
+            any(Object[].class));
+    }
+
+    @Test void cancellationCannotCreateAReferenceWithoutAnOriginalAssignment()
+            throws Exception {
+        String payload="{\"id\":\"shift-1\",\"employeeId\":\"cs-001\"," +
+            "\"staffRole\":\"CS\",\"workType\":\"FRONT_DESK\"," +
+            "\"status\":\"CANCELLED\",\"date\":\"2027-02-11\"," +
+            "\"startTime\":\"09:00\",\"endTime\":\"11:00\"," +
+            "\"assignedBy\":\"cm-001\"}";
+        var base=event(payload,1);
+        var cancel=new SchedulingAssignmentReferenceBridge.Event(
+            base.eventId(),base.actorUsername(),"CANCEL_STAFF",base.requestKey(),
+            base.sourceType(),base.scheduleId(),base.revision(),base.eventKind(),
+            base.payloadJson(),base.payloadHash());
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->bridge.apply("trusted-core-key",cancel)).getStatusCode());
+        verify(db,never()).update(startsWith("INSERT INTO staff_schedules"),
+            any(Object[].class));
+    }
+
     @Test void sameRevisionWithChangedDigestIsRejected() throws Exception {
         var event=valid();
         when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
