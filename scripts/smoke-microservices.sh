@@ -639,3 +639,27 @@ for i in $(seq 1 40); do
 done
 test "$acked" = "2" || { echo "Exact-version Core acknowledgements missing"; exit 1; }
 echo "PASS: all Core assignment writes relay idempotently, including deletion tombstones"
+
+# Phase 8b-1: SQL-backed worker-time intent reservation semantics. Use only
+# disposable Scheduling PostgreSQL data and prove overlap / adjacency / scope,
+# plus ON DELETE CASCADE when Core releases a lease or expiry cleanup runs.
+intent_id="${fixture}-intent"
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 -c \
+  "INSERT INTO scheduling_availability_reservations(reservation_id,availability_id,employee_id,expires_at) SELECT '${intent_id}',availability_id,employee_id,NOW()+interval '10 minutes' FROM scheduling_availabilities WHERE availability_id='auto-avail-1'"
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 -c \
+  "INSERT INTO scheduling_assignment_intent_reservations(reservation_id,employee_id,work_date,start_time,end_time) VALUES ('${intent_id}','teacher-001','2027-02-11','09:00','11:00')"
+overlap_query="SELECT count(*) FROM scheduling_assignment_intent_reservations i JOIN scheduling_availability_reservations lease ON lease.reservation_id=i.reservation_id WHERE i.employee_id='teacher-001' AND i.work_date='2027-02-11' AND i.start_time<'10:00' AND i.end_time>'09:30' AND lease.expires_at>NOW()"
+overlap_count="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "$overlap_query" | tr -d '[:space:]')"
+test "$overlap_count" = "1" || { echo "Scheduling assignment intent overlap SQL failed"; exit 1; }
+adjacent_count="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc \
+  "SELECT count(*) FROM scheduling_assignment_intent_reservations i JOIN scheduling_availability_reservations lease ON lease.reservation_id=i.reservation_id WHERE i.employee_id='teacher-001' AND i.work_date='2027-02-11' AND i.start_time<'12:00' AND i.end_time>'11:00' AND lease.expires_at>NOW()" | tr -d '[:space:]')"
+test "$adjacent_count" = "0" || { echo "Adjacent assignment intent incorrectly overlaps"; exit 1; }
+other_count="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc \
+  "SELECT count(*) FROM scheduling_assignment_intent_reservations WHERE employee_id='cs-001' AND work_date='2027-02-11'" | tr -d '[:space:]')"
+test "$other_count" = "0" || { echo "Worker intent scope test invalid"; exit 1; }
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 -c \
+  "DELETE FROM scheduling_availability_reservations WHERE reservation_id='${intent_id}'"
+orphan_count="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc \
+  "SELECT count(*) FROM scheduling_assignment_intent_reservations WHERE reservation_id='${intent_id}'" | tr -d '[:space:]')"
+test "$orphan_count" = "0" || { echo "Assignment intent survived lease release"; exit 1; }
+echo "PASS: Scheduling-owned worker/time intents reject overlap and follow lease lifecycle"
