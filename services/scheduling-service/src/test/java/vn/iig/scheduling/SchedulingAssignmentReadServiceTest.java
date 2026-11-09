@@ -84,6 +84,21 @@ class SchedulingAssignmentReadServiceTest {
         verify(core,times(3)).pendingAssignments(500);
     }
 
+    @Test void pendingIndependentCoreReferencePreventsPrematureBrowserSuccess() {
+        when(core.currentViewer("cm")).thenReturn(
+            new SchedulingCoreClient.Viewer("cm-1","cm001","CM"));
+        when(core.pendingAssignments(500)).thenReturn(List.of());
+        doThrow(new ResponseStatusException(
+            org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+            "reference still pending")).when(repo).requireReferenceSettledForReads();
+
+        var error=assertThrows(ResponseStatusException.class,
+            ()->service.staff("cm",monday,"CS"));
+        assertEquals(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+            error.getStatusCode());
+        verify(repo,never()).list(anyString(),any(),any(),any(),anyBoolean());
+    }
+
     @Test void unavailableCoreChangesNeverReturnStaleAssignments() {
         when(core.currentViewer("tc")).thenReturn(
             new SchedulingCoreClient.Viewer("tc-1","tc001","TC"));
