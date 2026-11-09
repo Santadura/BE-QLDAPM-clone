@@ -123,7 +123,7 @@ public class PayrollService {
         BigDecimal total = BigDecimal.ZERO, hours = BigDecimal.ZERO;
         for (Map<String,Object> s : sources) {
             LocalDate day = ((java.sql.Date)s.get("date")).toLocalDate();
-            BigDecimal h = BigDecimal.valueOf(((java.sql.Time)s.get("end_time")).toLocalTime().toSecondOfDay() - ((java.sql.Time)s.get("start_time")).toLocalTime().toSecondOfDay()).divide(BigDecimal.valueOf(3600));
+            BigDecimal h = BigDecimal.valueOf(((java.sql.Time)s.get("end_time")).toLocalTime().toSecondOfDay() - ((java.sql.Time)s.get("start_time")).toLocalTime().toSecondOfDay()).divide(BigDecimal.valueOf(3600), 2, java.math.RoundingMode.HALF_UP);
             BigDecimal rate = rateOn(employeeId, day); BigDecimal amount = rate.multiply(h);
             db.update("INSERT INTO salary_calculation_items(item_id,payroll_source,payroll_id,schedule_id,work_date,work_type,attendance_status,worked_hours,salary_rank_id,hourly_rate,pay_factor,amount) VALUES(?,?,?,?,?,?,?,?,NULL,?,?,?)", UUID.randomUUID().toString(),source,payrollId,s.get("id"),day,teacher ? "TEACHING" : "STAFF","PRESENT",h,rate,BigDecimal.ONE,amount);
             total=total.add(amount); hours=hours.add(h);
