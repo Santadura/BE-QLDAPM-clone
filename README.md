@@ -15,7 +15,7 @@ docker compose -f docker-compose.microservices.yml up --build -d
 Tài liệu triển khai, kiến trúc và giới hạn giai đoạn đầu:
 [docs/architecture/microservices-migration.md](docs/architecture/microservices-migration.md).
 
-**Lưu ý:** Đây là giai đoạn 8d-4: Scheduling sở hữu lịch rảnh, bản đọc độc lập của lịch phân công và các reservation tạm thời theo nhân sự/ngày/giờ để chặn những giao dịch phân công đang chạy bị trùng lịch. Các API GET `/api/teaching-schedules`, `/api/staff-schedules`, `/api/schedules/me` đọc từ Scheduling PostgreSQL. Core vẫn là nơi DUY NHẤT tạo/sửa/hủy phân công và ghi điểm danh để giữ giao dịch lớp học và bảo vệ ca CS cuối cùng. Reservation chỉ chặn các thao tác đang thực hiện đồng thời, không thay thế bước kiểm tra lịch đã ghi thành công trong Core. Core gửi thay đổi qua transactional outbox. Khi FE đọc lịch qua Gateway, Scheduling kiểm tra và áp dụng các thay đổi đã commit còn chờ trước khi trả danh sách; nếu không thể đồng bộ thì trả 503 thay vì âm thầm trả dữ liệu cũ. Đây là read-after-write barrier theo từng request, chưa phải giao dịch phân tán tuyến tính hóa khi có ghi đồng thời. Chưa hoàn thiện 100% Microservices; không dùng bí mật demo cho production.
+**Lưu ý:** Đây là giai đoạn 8d-5: Scheduling sở hữu lịch rảnh, bản đọc độc lập của lịch phân công và các reservation tạm thời theo nhân sự/ngày/giờ để chặn những giao dịch phân công đang chạy bị trùng lịch. Các API GET `/api/teaching-schedules`, `/api/staff-schedules`, `/api/schedules/me` đọc từ Scheduling PostgreSQL. Core vẫn là nơi DUY NHẤT tạo/sửa/hủy phân công và ghi điểm danh để giữ giao dịch lớp học và bảo vệ ca CS cuối cùng. Reservation chỉ chặn các thao tác đang thực hiện đồng thời, không thay thế bước kiểm tra lịch đã ghi thành công trong Core. Core gửi thay đổi qua transactional outbox. Khi FE đọc lịch qua Gateway, Scheduling kiểm tra và áp dụng các thay đổi đã commit còn chờ trước khi trả danh sách; nếu không thể đồng bộ thì trả 503 thay vì âm thầm trả dữ liệu cũ. Đây là read-after-write barrier theo từng request, chưa phải giao dịch phân tán tuyến tính hóa khi có ghi đồng thời. Chưa hoàn thiện 100% Microservices; không dùng bí mật demo cho production.
 Đối với lệnh phân công Teacher/CS/Sale theo một ca, theo lô, toàn khóa,
 sửa hoặc hủy phân công, client có thể truyền header
 `Idempotency-Key: <mã-yêu-cầu-duy-nhất>`. Nếu mất kết nối sau khi ghi thành công,
@@ -102,6 +102,21 @@ lệnh vẫn ở trạng thái cần đối soát, không tự rollback và khô
 thành công giả. Cờ `SCHEDULING_RECOVERY_ENABLED=false` được giữ tắt
 trong cấu hình mặc định. Việc khôi phục này **không** mở thêm route ghi
 FE/Gateway và không thay thế kiểm thử saga xuyên service.
+
+**Bảo vệ chuyển quyền ghi (Phase 8d-5):** Scheduling phải lấy
+`writer claim` ở Core trước khi commit mọi lệnh tạo/sửa/hủy ca CS/Sale
+độc lập. Core kiểm tra CM còn hiệu lực, mode `QUIESCED`, và lưu claim
+có định danh lệnh ổn định. Core không thể bật lại writer cũ khi vẫn còn
+claim, kể cả khi event chưa đến Core. Claim được đánh dấu `CONFIRMED`
+trong cùng transaction với bản ghi tham chiếu và receipt.
+
+Claim không tự hết hạn. Nếu request bị đứt sau khi Core đã lưu claim
+nhưng trước khi Scheduling commit, cần đối soát claim, command inbox
+và outbox ở cả hai database trước khi hoàn nguyên; **không tự xóa claim
+hoặc reset `writer_mode`**. Migration Academic Lease ở mốc 8b-3c cũng đã
+được sửa cú pháp PL/pgSQL để database mới có thể apply; với môi trường
+đã từng apply migration lỗi, phải kiểm tra lịch sử migration trước khi
+chạy lại. Các cờ cutover vẫn tắt mặc định.
 
 Dừng stack bằng `docker compose -f docker-compose.microservices.yml down` để giữ dữ liệu.
 
