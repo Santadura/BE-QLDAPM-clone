@@ -43,6 +43,27 @@ public class SchedulingInternalController {
         this.secret=key.getBytes(StandardCharsets.UTF_8);
     }
 
+    public record AvailabilityAudit(String eventId,String username,String action,
+                                    String entityId) {}
+
+    @PostMapping("/availability/audit")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public void acceptAudit(
+            @RequestHeader(value="X-Internal-Key",required=false) String key,
+            @RequestBody AvailabilityAudit event) {
+        authorize(key);
+        if(event==null || event.eventId()==null || event.eventId().isBlank()
+            || event.eventId().length()>50 || event.username()==null
+            || event.username().isBlank() || event.entityId()==null
+            || event.entityId().isBlank() ||
+            !List.of("REGISTER_AVAILABILITY","UPDATE_AVAILABILITY",
+                    "DELETE_AVAILABILITY","REVIEW_AVAILABILITY").contains(event.action()))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid audit event");
+        db.update("INSERT INTO audit_logs(audit_log_id,username,action,entity_type,entity_id) " +
+                "VALUES(?,?,?,'AVAILABILITY',?) ON CONFLICT(audit_log_id) DO NOTHING",
+            event.eventId(),event.username(),event.action(),event.entityId());
+    }
+
     private void authorize(String provided) {
         byte[] bytes=provided==null?new byte[0]:provided.getBytes(StandardCharsets.UTF_8);
         if(!MessageDigest.isEqual(secret,bytes))
