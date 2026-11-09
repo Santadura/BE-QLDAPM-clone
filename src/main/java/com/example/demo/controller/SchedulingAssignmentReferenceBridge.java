@@ -152,6 +152,20 @@ public class SchedulingAssignmentReferenceBridge {
         if(!"QUIESCED".equals(mode))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Core reference writes require QUIESCED assignment mode");
+        // A durable claim was admitted under Core QUIESCED before the
+        // independent Scheduling DB transaction committed. Without this
+        // claim, a local event could race the operator's CORE handback.
+        List<String> claims=db.query(
+            "SELECT status FROM scheduling_assignment_writer_claims " +
+            "WHERE actor_username=? AND manager_employee_id=? " +
+            "AND operation=? AND request_key=? FOR SHARE",
+            (rs,i)->rs.getString(1),event.actorUsername(),assignedBy,
+            event.operation(),event.requestKey());
+        if(claims.size()!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "No durable Core admission for this Scheduling command");
+        String claimState=claims.get(0);
+
         db.queryForList("SELECT pg_advisory_xact_lock(hashtext(?))",
             "scheduling-reference:"+event.sourceType()+":"+event.scheduleId());
 
@@ -202,6 +216,13 @@ public class SchedulingAssignmentReferenceBridge {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Scheduling cannot overwrite a legacy Core-owned staff assignment");
         }
+        // A CONFIRMED claim may only be replayed when the last durable
+        // receipt matched EXACTLY (handled by the early return above). Never
+        // permit a confirmed command key to create another shift or revision.
+        if(!"PENDING".equals(claimState))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Scheduling writer claim already consumed by another event");
+
         // Metadata changes in Core may also advance its reference outbox.
         // Never lower that version just because a later Scheduling event
         // arrived with an older independent revision.
@@ -319,6 +340,18 @@ public class SchedulingAssignmentReferenceBridge {
             "VALUES(?,?,?,NOW()) ON CONFLICT(source_type,schedule_id) " +
             "DO UPDATE SET version=EXCLUDED.version,delivered_at=NOW(),updated_at=NOW()",
             event.sourceType(),event.scheduleId(),event.revision());
+        // Confirm the Core-side claim in the SAME transaction as the
+        // assignment reference row and durable receipt. Retry can then
+        // safely return ALREADY_APPLIED without acknowledging a new event.
+        int claimed=db.update(
+            "UPDATE scheduling_assignment_writer_claims " +
+            "SET status='CONFIRMED',confirmed_at=NOW() " +
+            "WHERE actor_username=? AND manager_employee_id=? " +
+            "AND operation=? AND request_key=? AND status='PENDING'",
+            event.actorUsername(),assignedBy,event.operation(),event.requestKey());
+        if(claimed!=1)
+            throw new IllegalStateException(
+                "Could not confirm Core writer claim with reference transaction");
         return new Receipt(event.eventId(),event.revision(),"APPLIED");
     }
 
