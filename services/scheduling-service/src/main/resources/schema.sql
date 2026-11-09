@@ -148,6 +148,42 @@ CREATE INDEX IF NOT EXISTS idx_scheduling_assignment_outbound_pending
   ON scheduling_assignment_domain_outbox(next_attempt_at,created_at,event_id)
   WHERE delivered_at IS NULL;
 
+-- Each Scheduling outbox event is a durable immutable business fact.
+-- Retry/delivery metadata may change, but payload, digest, revision and
+-- ownership can never be rewritten or deleted after local commit.
+CREATE OR REPLACE FUNCTION iig_guard_assignment_event_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $
+BEGIN
+  IF TG_OP='DELETE' THEN
+    RAISE EXCEPTION 'Committed assignment events cannot be deleted'
+      USING ERRCODE='55000';
+  END IF;
+  IF NEW.event_id IS DISTINCT FROM OLD.event_id
+     OR NEW.actor_username IS DISTINCT FROM OLD.actor_username
+     OR NEW.operation IS DISTINCT FROM OLD.operation
+     OR NEW.request_key IS DISTINCT FROM OLD.request_key
+     OR NEW.source_type IS DISTINCT FROM OLD.source_type
+     OR NEW.schedule_id IS DISTINCT FROM OLD.schedule_id
+     OR NEW.revision IS DISTINCT FROM OLD.revision
+     OR NEW.event_kind IS DISTINCT FROM OLD.event_kind
+     OR NEW.payload IS DISTINCT FROM OLD.payload
+     OR NEW.payload_hash IS DISTINCT FROM OLD.payload_hash
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+     OR (OLD.delivered_at IS NOT NULL
+         AND NEW.delivered_at IS DISTINCT FROM OLD.delivered_at)
+  THEN
+    RAISE EXCEPTION 'Immutable Scheduling assignment event was modified'
+      USING ERRCODE='55000';
+  END IF;
+  RETURN NEW;
+END;
+$;
+DROP TRIGGER IF EXISTS trg_iig_assignment_event_immutable
+  ON scheduling_assignment_domain_outbox;
+CREATE TRIGGER trg_iig_assignment_event_immutable
+  BEFORE UPDATE OR DELETE ON scheduling_assignment_domain_outbox
+  FOR EACH ROW EXECUTE FUNCTION iig_guard_assignment_event_immutable();
+
 -- Enforce command-inbox state transitions at the Scheduling DB layer.
 -- HTTP retries and controller bugs must not be able to claim COMMITTED
 -- without actual immutable, acknowledged domain events. A rejected staged
