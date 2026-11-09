@@ -363,7 +363,41 @@ printf '%s' "$payroll_read" | python3 -c 'import json,sys; assert isinstance(jso
 payroll_calc="$(curl -fsS -X POST "${BASE}/api/payroll/calculate?period=2026-10&employeeId=teacher-001" \
   -H "Authorization: Bearer ${TOKEN}")"
 printf '%s' "$payroll_calc" | python3 -c 'import json,sys; rows=json.load(sys.stdin); assert isinstance(rows,list) and any(r.get("employeeId")=="teacher-001" for r in rows)'
-payroll_state="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
-  "SELECT status FROM employee_salaries WHERE employee_id='teacher-001' AND period='2026-10'" | tr -d '[:space:]')"
-test "$payroll_state" = "CALCULATED"
-echo "PASS: imported latest main Payroll APIs and schema work through Gateway"
+# All externally visible payroll writes MUST land in Payroll's own database,
+# not in the legacy employee_salaries table.
+payroll_state="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT status FROM payroll_ledgers WHERE employee_id='teacher-001' AND period='2026-10' AND source='EMPLOYEE'" | tr -d '[:space:]')"
+test "$payroll_state" = "CALCULATED" || { echo "Payroll service did not commit its ledger"; exit 1; }
+imported="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT count(*) FROM payroll_meta WHERE key='legacy-import-complete'" | tr -d '[:space:]')"
+test "$imported" = "1"
+historical_count="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT count(*) FROM payroll_ledgers" | tr -d '[:space:]')"
+test "$historical_count" -ge 2 || { echo "Historical salaries were not imported"; exit 1; }
+detail="$(curl -fsS "${BASE}/api/payroll/teacher-001/2026-10" \
+  -H "Authorization: Bearer ${TOKEN}")"
+printf '%s' "$detail" | python3 -c 'import sys,json; x=json.load(sys.stdin); assert x["employeeId"]=="teacher-001" and isinstance(x["items"],list)'
+echo "PASS: payroll ledger is owned by independent PostgreSQL and historical data preserved"
+
+# Payroll calculation is a management action, not a worker self-service write.
+teacher_login_payroll="$(curl -fsS -X POST "${BASE}/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"teacher001","password":"123456"}')"
+teacher_payroll_token="$(printf '%s' "$teacher_login_payroll" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')"
+worker_calc_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  "${BASE}/api/payroll/calculate?period=2026-10" \
+  -H "Authorization: Bearer ${teacher_payroll_token}")"
+test "$worker_calc_code" = "403" || { echo "Worker calculated payroll: $worker_calc_code"; exit 1; }
+other_salary_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/api/payroll?period=2026-10&employeeId=cs-001" \
+  -H "Authorization: Bearer ${teacher_payroll_token}")"
+test "$other_salary_code" = "403" || { echo "Worker viewed another payroll: $other_salary_code"; exit 1; }
+
+# Immutable finalized payroll: duplicated calculate command must not rewrite
+# approved payments. Test only against disposable Docker CI database.
+"${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -v ON_ERROR_STOP=1 -c \
+  "UPDATE payroll_ledgers SET status='FINALIZED' WHERE employee_id='teacher-001' AND period='2026-10' AND source='EMPLOYEE'"
+frozen_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  "${BASE}/api/payroll/calculate?period=2026-10&employeeId=teacher-001" \
+  -H "Authorization: Bearer ${TOKEN}")"
+test "$frozen_code" = "409" || { echo "Finalized ledger could be recalculated: $frozen_code"; exit 1; }
+echo "PASS: Payroll authorization and finalized-ledger immutability"
