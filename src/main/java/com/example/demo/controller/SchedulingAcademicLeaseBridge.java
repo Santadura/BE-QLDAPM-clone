@@ -29,7 +29,7 @@ import org.springframework.web.server.ResponseStatusException;
 @ConditionalOnProperty(name="iig.scheduling.bridge-enabled",havingValue="true")
 public class SchedulingAcademicLeaseBridge {
     public record Request(String classId,String sessionId,
-                          long classVersion,long sessionVersion) {}
+                          long classVersion,long sessionVersion,String commandKey) {}
     public record Lease(String leaseId,String classId,String sessionId,
                         long classVersion,long sessionVersion,Instant expiresAt) {}
     private record ClassState(long version,String status,LocalDate start,LocalDate end) {}
@@ -61,7 +61,9 @@ public class SchedulingAcademicLeaseBridge {
         if(request==null || request.classId()==null || request.sessionId()==null ||
                 request.classId().isBlank() || request.sessionId().isBlank() ||
                 request.classId().length()>50 || request.sessionId().length()>50 ||
-                request.classVersion()<1 || request.sessionVersion()<1)
+                request.classVersion()<1 || request.sessionVersion()<1 ||
+                request.commandKey()==null || !request.commandKey()
+                    .matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Valid class/session identifiers and expected versions required");
 
@@ -105,6 +107,23 @@ public class SchedulingAcademicLeaseBridge {
         // class row FOR UPDATE serializes competing transaction initiators.
         db.update("DELETE FROM scheduling_academic_session_leases " +
             "WHERE class_session_id=? AND expires_at<=NOW()",request.sessionId());
+        // A network retry of the SAME command must receive the original
+        // unexpired lease, never a second lease or a false conflict.
+        List<Lease> prior=db.query(
+            "SELECT lease_id,expected_class_version,expected_session_version,expires_at " +
+            "FROM scheduling_academic_session_leases WHERE class_session_id=? " +
+            "AND command_key=? AND expires_at>NOW() FOR UPDATE",
+            (rs,i)->new Lease(rs.getString(1),request.classId(),request.sessionId(),
+                rs.getLong(2),rs.getLong(3),rs.getTimestamp(4).toInstant()),
+            request.sessionId(),request.commandKey());
+        if(!prior.isEmpty()) {
+            Lease existing=prior.get(0);
+            if(existing.classVersion()!=request.classVersion() ||
+                    existing.sessionVersion()!=request.sessionVersion())
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Academic command key was reused with different versions");
+            return existing;
+        }
         Long live=db.queryForObject(
             "SELECT count(*) FROM scheduling_academic_session_leases " +
             "WHERE class_session_id=? AND expires_at>NOW()",
@@ -116,10 +135,10 @@ public class SchedulingAcademicLeaseBridge {
         String leaseId=UUID.randomUUID().toString();
         db.update("INSERT INTO scheduling_academic_session_leases " +
             "(lease_id,class_id,class_session_id,expected_class_version," +
-            "expected_session_version,expires_at) " +
-            "VALUES(?,?,?,?,?,NOW()+interval '5 minutes')",
+            "expected_session_version,command_key,expires_at) " +
+            "VALUES(?,?,?,?,?,?,NOW()+interval '5 minutes')",
             leaseId,request.classId(),request.sessionId(),
-            request.classVersion(),request.sessionVersion());
+            request.classVersion(),request.sessionVersion(),request.commandKey());
         Timestamp expires=db.queryForObject(
             "SELECT expires_at FROM scheduling_academic_session_leases WHERE lease_id=?",
             Timestamp.class,leaseId);
