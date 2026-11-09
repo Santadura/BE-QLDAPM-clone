@@ -58,6 +58,7 @@ public class SecurityConfig {
                     .requestMatchers("/actuator/health").permitAll()
                     // Not published by Gateway; controller enforces service-to-service key.
                     .requestMatchers("/internal/catalog/**").permitAll()
+                    .requestMatchers("/internal/identity/**").permitAll()
                     .requestMatchers("/api/accounts/*/role").denyAll()
                     .requestMatchers("/api/accounts", "/api/accounts/**").hasAuthority("ROLE_ADMIN")
                     .requestMatchers("/api/statistics", "/api/statistics/**").hasAuthority("ROLE_ADMIN")
