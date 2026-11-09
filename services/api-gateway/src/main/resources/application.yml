@@ -6,19 +6,6 @@ spring:
     name: iig-api-gateway
   cloud:
     gateway:
-      # Browser preflight must terminate at the edge. The core security CORS
-      # config is retained for the legacy (non-gateway) deployment.
-      globalcors:
-        add-to-simple-url-handler-mapping: true
-        cors-configurations:
-          '[/**]':
-            allowedOrigins:
-              - http://localhost:5173
-              - http://localhost:3000
-            allowedMethods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]
-            allowedHeaders: ["*"]
-            allowCredentials: true
-            maxAge: 3600
       # Core and Gateway can both add ACAO; return exactly one value.
       default-filters:
         - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
@@ -32,6 +19,11 @@ spring:
           uri: ${CORE_SERVICE_URI:http://localhost:8081}
           predicates:
             - Path=/api/**
+# Keep the allowed browser origins explicit; override from environment in deployment.
+iig:
+  cors:
+    allowed-origins: ${GATEWAY_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
+
 management:
   endpoints:
     web:
