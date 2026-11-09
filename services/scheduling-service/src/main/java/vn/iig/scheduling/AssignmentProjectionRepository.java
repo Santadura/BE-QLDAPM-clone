@@ -153,6 +153,47 @@ public class AssignmentProjectionRepository {
     private record Stored(long version,boolean deleted,String employeeId,
                           String staffRole,LocalDate date,String status,String payload) {}
 
+    /** Every Core-backed assignment must also exist in the candidate writer store. */
+    private record Shadow(long version,boolean deleted,String employeeId,String staffRole,
+                          String classId,String workplaceId,LocalDate date,
+                          LocalTime start,LocalTime end,String workType,
+                          String status,String assignedBy) {}
+
+    public long countShadowAssignments() {
+        requireReady();
+        Long count=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_write_shadow",Long.class);
+        return count==null?0:count;
+    }
+
+    public boolean matchesWriteShadow(AssignmentSnapshot expected) {
+        requireReady();
+        List<Shadow> result=db.query(
+            "SELECT version,deleted,employee_id,staff_role,class_id,workplace_id," +
+            "work_date,start_time,end_time,work_type,status,assigned_by " +
+            "FROM scheduling_assignment_write_shadow " +
+            "WHERE source_type=? AND schedule_id=?",
+            (rs,i)->new Shadow(rs.getLong(1),rs.getBoolean(2),rs.getString(3),
+                rs.getString(4),rs.getString(5),rs.getString(6),
+                rs.getObject(7,LocalDate.class),rs.getObject(8,LocalTime.class),
+                rs.getObject(9,LocalTime.class),rs.getString(10),
+                rs.getString(11),rs.getString(12)),
+            expected.sourceType(),expected.id());
+        if(result.size()!=1) return false;
+        Shadow x=result.get(0);
+        return x.version()==expected.version() && x.deleted()==expected.deleted() &&
+            Objects.equals(x.employeeId(),expected.employeeId()) &&
+            Objects.equals(x.staffRole(),expected.staffRole()) &&
+            Objects.equals(x.classId(),expected.classId()) &&
+            Objects.equals(x.workplaceId(),expected.workplaceId()) &&
+            Objects.equals(x.date(),expected.date()) &&
+            Objects.equals(x.start(),expected.startTime()) &&
+            Objects.equals(x.end(),expected.endTime()) &&
+            Objects.equals(x.workType(),expected.workType()) &&
+            Objects.equals(x.status(),expected.status()) &&
+            Objects.equals(x.assignedBy(),expected.assignedBy());
+    }
+
     public long countAllAssignments() {
         requireReady();
         Long count=db.queryForObject(
@@ -185,7 +226,7 @@ public class AssignmentProjectionRepository {
                 || !Objects.equals(actual.status(),expected.status())) return false;
         try {
             return json.readTree(encodedPayload(expected))
-                .equals(json.readTree(actual.payload()));
+                .equals(json.readTree(actual.payload())) && matchesWriteShadow(expected);
         } catch(JsonProcessingException ex) {
             return false;
         }
