@@ -61,6 +61,7 @@ public class SecurityConfig {
                     .requestMatchers("/internal/identity/**").permitAll()
                     .requestMatchers("/internal/reporting/**").permitAll()
                     .requestMatchers("/internal/hr/**").permitAll()
+                    .requestMatchers("/internal/payroll/**").permitAll()
                     .requestMatchers("/api/accounts/*/role").denyAll()
                     .requestMatchers("/api/accounts", "/api/accounts/**").hasAuthority("ROLE_ADMIN")
                     .requestMatchers("/api/statistics", "/api/statistics/**").hasAuthority("ROLE_ADMIN")
