@@ -353,3 +353,17 @@ tc_role_denied="$(curl -sS -o /dev/null -w '%{http_code}' \
   "${BASE}/api/payroll/ranks?roleId=CS" -H "Authorization: Bearer ${tc_token}")"
 test "$tc_role_denied" = "403"
 echo "PASS: HR salary ranks enforce Admin/TC/CM role boundaries"
+
+# The two newer main-branch payroll/scheduling commits must remain functional
+# after the Microservices stack synchronizes. Payroll ledger is still in Core
+# during this transitional stage and must not be presented as extracted.
+payroll_read="$(curl -fsS "${BASE}/api/payroll?period=2026-10" \
+  -H "Authorization: Bearer ${TOKEN}")"
+printf '%s' "$payroll_read" | python3 -c 'import json,sys; assert isinstance(json.load(sys.stdin),list)'
+payroll_calc="$(curl -fsS -X POST "${BASE}/api/payroll/calculate?period=2026-10&employeeId=teacher-001" \
+  -H "Authorization: Bearer ${TOKEN}")"
+printf '%s' "$payroll_calc" | python3 -c 'import json,sys; rows=json.load(sys.stdin); assert isinstance(rows,list) and any(r.get("employeeId")=="teacher-001" for r in rows)'
+payroll_state="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT status FROM employee_salaries WHERE employee_id='teacher-001' AND period='2026-10'" | tr -d '[:space:]')"
+test "$payroll_state" = "CALCULATED"
+echo "PASS: imported latest main Payroll APIs and schema work through Gateway"
