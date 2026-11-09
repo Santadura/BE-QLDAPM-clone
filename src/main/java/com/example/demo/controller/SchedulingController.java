@@ -20,6 +20,7 @@ public class SchedulingController {
     private final AvailabilityService availability;
     private final AssignmentService assignment;
     private final SchedulingAccess access;
+    private final com.example.demo.service.SchedulingCommandReceiptService commands;
 
     @GetMapping("/employees")
     public List<Map<String, Object>> employees(@RequestParam String role) {
@@ -70,31 +71,52 @@ public class SchedulingController {
 
     @PostMapping("/teaching-schedules/batch")
     @ResponseStatus(HttpStatus.CREATED)
-    public List<Map<String, Object>> assignTeacherBatch(@Valid @RequestBody TeachingBatchRequest body) {
-        return assignment.assignTeacherBatch(body);
+    public List<Map<String, Object>> assignTeacherBatch(
+            @Valid @RequestBody TeachingBatchRequest body,
+            @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        String actor=access.requireRole("TC").username();
+        return commands.execute(key,actor,"POST /api/teaching-schedules/batch",body,
+            ()->assignment.assignTeacherBatch(body));
     }
 
     @PostMapping("/staff-schedules/batch")
     @ResponseStatus(HttpStatus.CREATED)
-    public List<Map<String, Object>> assignSupportBatch(@Valid @RequestBody SupportBatchRequest body) {
-        return assignment.assignSupportBatch(body);
+    public List<Map<String, Object>> assignSupportBatch(
+            @Valid @RequestBody SupportBatchRequest body,
+            @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        String actor=access.requireRole("CM").username();
+        return commands.execute(key,actor,"POST /api/staff-schedules/batch",body,
+            ()->assignment.assignSupportBatch(body));
     }
 
     @PostMapping("/teaching-schedules")
     @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> assignTeacher(@Valid @RequestBody TeachingRequest body) {
-        return assignment.assignTeacher(body);
+    public Map<String, Object> assignTeacher(
+            @Valid @RequestBody TeachingRequest body,
+            @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        String actor=access.requireRole("TC").username();
+        return commands.execute(key,actor,"POST /api/teaching-schedules",body,
+            ()->assignment.assignTeacher(body));
     }
 
     @PutMapping("/teaching-schedules/{id}")
-    public Map<String, Object> editTeacher(@PathVariable String id, @Valid @RequestBody TeachingRequest body) {
-        return assignment.editTeacher(id, body);
+    public Map<String, Object> editTeacher(@PathVariable String id,
+            @Valid @RequestBody TeachingRequest body,
+            @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        String actor=access.requireRole("TC").username();
+        return commands.execute(key,actor,"PUT /api/teaching-schedules/"+id,body,
+            ()->assignment.editTeacher(id,body));
     }
 
     @DeleteMapping("/teaching-schedules/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void cancelTeacher(@PathVariable String id) {
-        assignment.cancelTeacher(id);
+    public void cancelTeacher(@PathVariable String id,
+            @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        String actor=access.requireRole("TC").username();
+        commands.execute(key,actor,"DELETE /api/teaching-schedules/"+id,null,()->{
+            assignment.cancelTeacher(id);
+            return null;
+        });
     }
 
     @GetMapping("/staff-schedules")
@@ -105,19 +127,32 @@ public class SchedulingController {
 
     @PostMapping("/staff-schedules")
     @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> assignStaff(@Valid @RequestBody StaffRequest body) {
-        return assignment.assignStaff(body);
+    public Map<String, Object> assignStaff(
+            @Valid @RequestBody StaffRequest body,
+            @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        String actor=access.requireRole("CM").username();
+        return commands.execute(key,actor,"POST /api/staff-schedules",body,
+            ()->assignment.assignStaff(body));
     }
 
     @PutMapping("/staff-schedules/{id}")
-    public Map<String, Object> editStaff(@PathVariable String id, @Valid @RequestBody StaffRequest body) {
-        return assignment.editStaff(id, body);
+    public Map<String, Object> editStaff(@PathVariable String id,
+            @Valid @RequestBody StaffRequest body,
+            @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        String actor=access.requireRole("CM").username();
+        return commands.execute(key,actor,"PUT /api/staff-schedules/"+id,body,
+            ()->assignment.editStaff(id,body));
     }
 
     @DeleteMapping("/staff-schedules/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void cancelStaff(@PathVariable String id) {
-        assignment.cancelStaff(id);
+    public void cancelStaff(@PathVariable String id,
+            @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        String actor=access.requireRole("CM").username();
+        commands.execute(key,actor,"DELETE /api/staff-schedules/"+id,null,()->{
+            assignment.cancelStaff(id);
+            return null;
+        });
     }
 
     @GetMapping("/schedules/me")
