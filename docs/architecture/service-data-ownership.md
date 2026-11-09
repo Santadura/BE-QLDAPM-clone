@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8d-4 (admin-only exact-proof reconciliation; Core remains public writer)**. Do not claim full migration before every
+> Architecture status: **Phase 8d-5 (durable Core writer claims before Scheduling standalone writes; no public cutover)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -162,6 +162,16 @@ service-key-protected projection API after bootstrap.
 - [x] Provide a **disabled-by-default** Core reference consumer for standalone,
   non-class STAFF UPSERTs with a receipt, exact version, hash checks and
   an audited Core write-fence bypass confined to the reference transaction.
+- [x] Phase 8d-5: reserve a durable, actor-scoped claim in Core before
+  independently committing a standalone Scheduling create/edit/cancel command.
+  Claims serialize with Core writer-mode changes and prevent a race between
+  the preflight QUIESCED read and the Scheduling DB transaction.
+- [x] Require the matching claim to apply a Core assignment reference;
+  confirm it atomically with the receipt. Claims fence unsafe handback even
+  before a first reference event exists and do not auto-expire.
+- [ ] Deliver an auditable, carefully coordinated orphan-claim cleanup,
+  handback and disaster recovery protocol once the full Academic/teacher/CS
+  assignment saga is independently authoritative and tested.
 - [x] Phase 8d-4: implement Core read-only exact reference receipt lookup,
   plus feature-gated ADMIN-only reconciliation of exhausted Scheduling events.
   The event ID, version and digest must match the latest committed Core
