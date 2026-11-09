@@ -477,12 +477,15 @@ model SchedulingAcademicSessionLease {
   classSessionId String @map("class_session_id") @db.VarChar(50)
   expectedClassVersion BigInt @map("expected_class_version")
   expectedSessionVersion BigInt @map("expected_session_version")
+  commandKey String @map("command_key") @db.VarChar(128)
   expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   academicClass Class @relation(fields: [classId], references: [classId], onDelete: Cascade)
   plannedSession ClassSession @relation(fields: [classSessionId], references: [classSessionId], onDelete: Cascade)
 
+  @@unique([classSessionId,commandKey], map:"idx_scheduling_academic_command")
+  @@index([expiresAt], map:"idx_scheduling_academic_lease_expiry")
   @@index([classSessionId,expiresAt], map:"idx_scheduling_academic_active_leases")
   @@index([classId,expiresAt], map:"idx_scheduling_academic_active_class_leases")
   @@map("scheduling_academic_session_leases")
