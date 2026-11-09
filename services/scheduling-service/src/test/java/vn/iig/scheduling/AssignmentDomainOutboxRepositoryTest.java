@@ -149,6 +149,14 @@ class AssignmentDomainOutboxRepositoryTest {
             eq("Core HTTP 503"),eq("event-1"));
     }
 
+    @Test void deliveryQueueNeverSelectsStagedOrCompensatingCommands() {
+        when(db.query(contains("AND inbox.state='PENDING_REFERENCE'"),
+            any(RowMapper.class),eq(50))).thenReturn(List.of());
+        assertEquals(List.of(),outbox.pending(50));
+        verify(db).query(contains("JOIN scheduling_assignment_command_inbox inbox"),
+            any(RowMapper.class),eq(50));
+    }
+
     @Test void rejectsUnboundedOutboxBatch() {
         assertEquals(HttpStatus.BAD_REQUEST,
             assertThrows(ResponseStatusException.class,()->outbox.pending(501))
