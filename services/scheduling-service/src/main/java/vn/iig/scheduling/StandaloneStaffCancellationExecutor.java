@@ -179,6 +179,10 @@ public class StandaloneStaffCancellationExecutor {
         else event.put("workplaceId",current.workplaceId());
         event.put("assignedBy",actorEmployeeId);
 
+        // Durable Core claim is required before advancing source revision.
+        // An uncertain local rollback must not permit Core split-brain writes.
+        core.acquireAssignmentWriterClaim(actorUsername,actorEmployeeId,
+            "CANCEL_STAFF",requestKey);
         projection.project(snapshot);
         outbox.append(actorUsername,"CANCEL_STAFF",requestKey,
             "STAFF",target,nextRevision,"UPSERT",event);
