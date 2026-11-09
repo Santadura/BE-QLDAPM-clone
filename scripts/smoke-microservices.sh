@@ -586,10 +586,26 @@ forbidden="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/staff-schedule
 test "$forbidden" = "403" || { echo "Worker bypassed assignment read role scope: $forbidden"; exit 1; }
 echo "PASS: Scheduling read model preserves FE GET shapes and current role boundaries"
 
+# A class rename is a separate Core write path, but must still invalidate
+# both assignment summaries because the FE displays their class labels.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c \
+  "UPDATE classes SET name='Assignment read model updated' WHERE class_id='${one}'"
+for i in $(seq 1 60); do
+  renamed="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc \
+    "SELECT count(*) FROM scheduling_assignment_read_model WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND version=2" | tr -d '[:space:]')"
+  test "$renamed" = "2" && break
+  sleep 2
+done
+test "$renamed" = "2" || { echo "Class metadata changes did not invalidate assignment copies"; exit 1; }
+class_name="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc \
+  "SELECT payload->>'className' FROM scheduling_assignment_read_model WHERE schedule_id='${fixture}-t'" | tr -d '\r\n')"
+test "$class_name" = "Assignment read model updated" || { echo "Teacher class display label was stale"; exit 1; }
+echo "PASS: Core class metadata updates invalidate independent schedule read models"
+
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "UPDATE teaching_schedules SET status='CANCELLED' WHERE teaching_schedule_id='${fixture}-t'"
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "UPDATE staff_schedules SET status='CANCELLED' WHERE staff_schedule_id='${fixture}-s'"
 for i in $(seq 1 70); do
-  changed="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_assignment_read_model WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND status='CANCELLED' AND version=2" | tr -d '[:space:]')"
+  changed="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_assignment_read_model WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND status='CANCELLED' AND version=3" | tr -d '[:space:]')"
   test "$changed" = "2" && break
   sleep 2
 done
@@ -597,13 +613,13 @@ test "$changed" = "2" || { echo "Cancelled assignment version didn't sync"; exit
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "DELETE FROM teaching_schedules WHERE teaching_schedule_id='${fixture}-t'"
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c "DELETE FROM staff_schedules WHERE staff_schedule_id='${fixture}-s'"
 for i in $(seq 1 70); do
-  deleted="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_assignment_read_model WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND deleted=TRUE AND version=3" | tr -d '[:space:]')"
+  deleted="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc "SELECT count(*) FROM scheduling_assignment_read_model WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND deleted=TRUE AND version=4" | tr -d '[:space:]')"
   test "$deleted" = "2" && break
   sleep 2
 done
 test "$deleted" = "2" || { echo "Hard delete tombstones missing"; exit 1; }
 for i in $(seq 1 40); do
-  acked="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc "SELECT count(*) FROM scheduling_assignment_outbox WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND version=3 AND delivered_at IS NOT NULL" | tr -d '[:space:]')"
+  acked="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc "SELECT count(*) FROM scheduling_assignment_outbox WHERE schedule_id IN ('${fixture}-t','${fixture}-s') AND version=4 AND delivered_at IS NOT NULL" | tr -d '[:space:]')"
   test "$acked" = "2" && break
   sleep 2
 done
