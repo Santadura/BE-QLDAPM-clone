@@ -18,6 +18,8 @@ iig:
   scheduling:
     # Future Core reference relay: must not run before controlled writer cutover.
     assignment-reference-relay-enabled: ${SCHEDULING_REFERENCE_RELAY_ENABLED:false}
+    # Internal-only standalone CS/Sale writer: opt in under controlled cutover.
+    assignment-executor-enabled: ${SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED:false}
 management:
   endpoints:
     web:
