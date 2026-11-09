@@ -159,8 +159,12 @@ public class SchedulingAssignmentReferenceBridge {
             event.sourceType(),event.scheduleId());
         if(!prior.isEmpty()) {
             Previous old=prior.get(0);
+            // Only the latest committed reference receipt is retained.
+            // We cannot prove that an older event with a different digest
+            // was EVER applied, so never silently acknowledge stale events.
             if(event.revision()<old.revision())
-                return new Receipt(event.eventId(),event.revision(),"SUPERSEDED");
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Stale reference revision requires explicit reconciliation");
             if(event.revision()==old.revision()) {
                 if(old.eventId().equals(event.eventId()) &&
                    old.hash().equals(event.payloadHash()))
@@ -175,9 +179,10 @@ public class SchedulingAssignmentReferenceBridge {
             // Never allow a Scheduling event to overwrite an existing legacy
             // Core-owned row that has not been explicitly migrated. Creating
             // a brand-new standalone shift must start with source revision 1.
-            if(event.revision()!=1)
+            if(event.revision()!=1 || !"ASSIGNED".equals(status) ||
+                    !"ASSIGN_STAFF".equals(event.operation()))
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "New Scheduling assignment reference must begin at revision 1");
+                    "A new reference must begin with an ASSIGNED revision-1 create");
             Long legacy=db.queryForObject(
                 "SELECT count(*) FROM staff_schedules WHERE staff_schedule_id=?",
                 Long.class,event.scheduleId());
