@@ -800,6 +800,42 @@ END
 SQL
 echo "PASS: Core blocks unsafe writer handback after Scheduling reference events"
 
+# A durable writer claim prevents Core handback BEFORE the independent
+# Scheduling transaction commits or its outbox event reaches Core. A failed
+# local write intentionally leaves a claim for reviewed recovery.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  UPDATE scheduling_assignment_writer_control
+    SET writer_mode='QUIESCED',changed_at=NOW() WHERE singleton=TRUE;
+  INSERT INTO scheduling_assignment_writer_claims
+    (actor_username,operation,request_key,manager_employee_id)
+  VALUES ('cm001','ASSIGN_STAFF','${fixture}-handoff-claim','cm-001');
+  BEGIN
+    UPDATE scheduling_assignment_writer_control
+      SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE;
+    RAISE EXCEPTION 'Core resumed while Scheduling command admission is pending';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  DELETE FROM scheduling_assignment_writer_claims
+    WHERE actor_username='cm001' AND operation='ASSIGN_STAFF'
+      AND request_key='${fixture}-handoff-claim';
+  UPDATE scheduling_assignment_writer_control
+    SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE;
+END
+\$\$;
+SQL
+claim_url="http://backend:8081/internal/scheduling/assignments/claims"
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" \
+  --header "Content-Type: application/json" \
+  --post-data '{"actorUsername":"cm001","managerEmployeeId":"cm-001","operation":"ASSIGN_STAFF","requestKey":"${fixture}-claim-denied"}' \
+  "$claim_url" >/dev/null 2>&1; then
+  echo "Core admitted a Scheduling writer claim while still in CORE mode"; exit 1
+fi
+echo "PASS: Core handback is fenced by durable command claims; CORE mode cannot admit claims"
+
+
 
 # Phase 8b-3b: future Scheduling commands may only be staged through a private
 # service key AND a live Core JWT. Repeating a command never inserts an actual
