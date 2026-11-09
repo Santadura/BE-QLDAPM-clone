@@ -131,6 +131,66 @@ public class AssignmentCommandLifecycleService {
             throw new IllegalStateException("Cannot flag assignment command for recovery");
     }
 
+    /**
+     * Manual recovery of an exhausted event is permitted ONLY with an exact
+     * durable Core receipt, not based on an HTTP response or operator choice.
+     * All local marks and the final state transition are one transaction.
+     * Remaining unconfirmed batch events keep the command COMPENSATING.
+     */
+    @Transactional
+    public boolean reconcileVerified(
+            AssignmentDomainOutboxRepository.Event event,
+            SchedulingCoreClient.DurableAssignmentReferenceReceipt confirmed) {
+        if(event==null || confirmed==null ||
+                !event.eventId().equals(confirmed.eventId()) ||
+                event.revision()!=confirmed.revision() ||
+                !event.payloadHash().equals(confirmed.payloadHash()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Core receipt does not prove the exact Scheduling event");
+
+        String state=lockedState(event.actorUsername(),event.operation(),
+            event.requestKey());
+        if(!"COMPENSATING".equals(state))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Only failed commands awaiting manual reconciliation qualify");
+
+        Long matching=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_domain_outbox " +
+            "WHERE event_id=? AND payload_hash=? AND source_type=? " +
+            "AND schedule_id=? AND revision=? AND actor_username=? " +
+            "AND operation=? AND request_key=? AND delivered_at IS NULL",
+            Long.class,event.eventId(),event.payloadHash(),event.sourceType(),
+            event.scheduleId(),event.revision(),event.actorUsername(),
+            event.operation(),event.requestKey());
+        if(matching==null || matching!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Unresolved event changed during reference reconciliation");
+
+        int acknowledged=db.update(
+            "UPDATE scheduling_assignment_domain_outbox SET delivered_at=NOW()," +
+            "last_error=NULL WHERE event_id=? AND payload_hash=? " +
+            "AND delivered_at IS NULL",event.eventId(),event.payloadHash());
+        if(acknowledged!=1)
+            throw new IllegalStateException("Cannot persist verified reference receipt");
+        Long pending=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_domain_outbox " +
+            "WHERE actor_username=? AND operation=? AND request_key=? " +
+            "AND delivered_at IS NULL",
+            Long.class,event.actorUsername(),event.operation(),event.requestKey());
+        if(pending==null)
+            throw new IllegalStateException("Cannot inspect remaining domain events");
+        if(pending>0) return false;
+
+        int done=db.update(
+            "UPDATE scheduling_assignment_command_inbox SET state='COMMITTED'," +
+            "updated_at=NOW() WHERE actor_username=? AND operation=? " +
+            "AND request_key=? AND state='COMPENSATING'",
+            event.actorUsername(),event.operation(),event.requestKey());
+        if(done!=1)
+            throw new IllegalStateException("Could not finalize recovered assignment command");
+        return true;
+    }
+
     private String lockedState(String actor,String operation,String key) {
         if(actor==null || actor.isBlank() || operation==null || operation.isBlank() ||
            key==null || key.isBlank())
