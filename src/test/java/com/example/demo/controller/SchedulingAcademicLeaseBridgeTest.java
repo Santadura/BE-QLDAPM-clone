@@ -78,6 +78,44 @@ class SchedulingAcademicLeaseBridgeTest {
             any(Object[].class));
     }
 
+    @SuppressWarnings({"rawtypes","unchecked"})
+    private void existingCommandLease(long classVersion,long sessionVersion) throws Exception {
+        when(db.query(contains("SELECT lease_id,expected_class_version"),
+                any(RowMapper.class),eq("lesson-1"),eq("command-1")))
+            .thenAnswer(invocation -> {
+                RowMapper mapper=invocation.getArgument(1);
+                var rs=mock(java.sql.ResultSet.class);
+                when(rs.getString(1)).thenReturn("lease-already-created");
+                when(rs.getLong(2)).thenReturn(classVersion);
+                when(rs.getLong(3)).thenReturn(sessionVersion);
+                when(rs.getTimestamp(4)).thenReturn(
+                    Timestamp.from(Instant.parse("2027-02-11T09:05:00Z")));
+                return List.of(mapper.mapRow(rs,0));
+            });
+    }
+
+    @Test void lostResponseReplayGetsSameAcademicLeaseWithoutSecondInsert()
+            throws Exception {
+        when(db.queryForObject(contains("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        classAndLesson(3,7,"RUNNING","PLANNED");
+        existingCommandLease(3,7);
+        var duplicate=bridge.reserve("trusted-academic-key",request);
+        assertEquals("lease-already-created",duplicate.leaseId());
+        verify(db,never()).update(startsWith("INSERT INTO scheduling_academic_session_leases"),
+            any(Object[].class));
+    }
+
+    @Test void commandKeyCannotSilentlyReuseOldAcademicVersions() throws Exception {
+        when(db.queryForObject(contains("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        classAndLesson(3,7,"READY","PLANNED");
+        existingCommandLease(3,6);
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->bridge.reserve("trusted-academic-key",request)).getStatusCode());
+    }
+
     @Test void concurrentActiveAcademicLeaseConflicts() throws Exception {
         when(db.queryForObject(contains("SELECT writer_mode"),eq(String.class)))
             .thenReturn("QUIESCED");
