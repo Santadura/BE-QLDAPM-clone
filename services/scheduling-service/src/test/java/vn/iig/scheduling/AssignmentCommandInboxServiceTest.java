@@ -85,6 +85,41 @@ class AssignmentCommandInboxServiceTest {
         verifyNoInteractions(db);
     }
 
+    @Test void withdrawStagedCommandIsIdempotentAndNeverRunsDomainWrite()
+            throws Exception {
+        when(db.update(startsWith("UPDATE scheduling_assignment_command_inbox"),
+            eq("cm001"),eq("ASSIGN_STAFF"),eq("req-5"))).thenReturn(1,0);
+        stored("cm001","ASSIGN_STAFF","req-5","REJECTED","digest-5");
+        var first=service.rejectStaged("cm001","CM","ASSIGN_STAFF","req-5");
+        var second=service.rejectStaged("cm001","CM","ASSIGN_STAFF","req-5");
+        assertEquals(first,second);
+        assertEquals("REJECTED",first.state());
+        verify(db,never()).update(contains("scheduling_assignment_write_shadow"),
+            any(Object[].class));
+    }
+
+    @Test void committedCommandCannotBeWithdrawnAsStaged() throws Exception {
+        when(db.update(startsWith("UPDATE scheduling_assignment_command_inbox"),
+            eq("cm001"),eq("ASSIGN_STAFF"),eq("req-6"))).thenReturn(0);
+        stored("cm001","ASSIGN_STAFF","req-6","COMMITTED","digest-6");
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->service.rejectStaged("cm001","CM","ASSIGN_STAFF","req-6"))
+                .getStatusCode());
+    }
+
+    @Test void otherActorCannotWithdrawUnownedCommand() throws Exception {
+        when(db.update(startsWith("UPDATE scheduling_assignment_command_inbox"),
+            eq("other"),eq("ASSIGN_STAFF"),eq("req-7"))).thenReturn(0);
+        when(db.query(startsWith("SELECT state,request_hash"),
+            any(RowMapper.class),eq("other"),eq("ASSIGN_STAFF"),eq("req-7")))
+            .thenReturn(List.of());
+        assertEquals(HttpStatus.NOT_FOUND,
+            assertThrows(ResponseStatusException.class,
+                ()->service.rejectStaged("other","CM","ASSIGN_STAFF","req-7"))
+                .getStatusCode());
+    }
+
     @Test void stagingIsNeverConfusedWithCommittedAssignment() throws Exception {
         when(db.update(startsWith("INSERT INTO scheduling_assignment_command_inbox"),
             eq("tc001"),eq("ASSIGN_TEACHER"),eq("safe-key"),anyString(),anyString()))
