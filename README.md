@@ -9,14 +9,13 @@ Bản `docker-compose.yml` bên dưới vẫn chạy monolith như trước.
 # Thay các giá trị mẫu trong microservices.env.example bằng bí mật thật trong .env
 docker compose -f docker-compose.microservices.yml up --build -d
 # API qua Spring Cloud Gateway: http://localhost:8080/api/**
-# Audit, Catalog, Identity, Reporting, HR có DB riêng (6 PostgreSQL tổng cộng)
+# Audit, Catalog, Identity, Reporting, HR và Payroll có DB riêng (7 PostgreSQL tổng cộng)
 ```
 
 Tài liệu triển khai, kiến trúc và giới hạn giai đoạn đầu:
 [docs/architecture/microservices-migration.md](docs/architecture/microservices-migration.md).
 
-**Lưu ý:** Đây là giai đoạn 5b (Gateway + Audit + Catalog + Authentication + Reporting + HR Certificates + HR Salary Ranks). Class, Student, Scheduling, quản lý nhân viên và Payroll ledger chưa được tách thành
-những microservice độc lập; không dùng cấu hình demo làm production.
+**Lưu ý:** Đây là giai đoạn 6: Payroll Service đã sở hữu database bảng lương và API tính lương riêng. Class, Student, Scheduling, quản lý nhân viên, Identity hoàn chỉnh và các giao dịch xét bậc lương vẫn chưa được tách hết. Payroll vẫn lấy dữ liệu điểm danh/lịch làm qua API nội bộ của Core; không dùng cấu hình demo làm production.
 Dừng stack bằng `docker compose -f docker-compose.microservices.yml down` để giữ dữ liệu.
 
 

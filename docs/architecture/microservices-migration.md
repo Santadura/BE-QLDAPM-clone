@@ -2,11 +2,11 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 5b (HR salary-rank ownership)**, not a claim
+This branch is **migration phase 6 (Payroll ledger extraction)**, not a claim
 that all IIG business modules are independently deployable microservices.
-Core still owns Academic, Students, Scheduling, Payroll transactions,
-employee lifecycle and credential writes. **Audit, Course Catalog,
-Authentication, Reporting and HR** run as independent Spring Boot services
+Core still owns Academic, Students, Scheduling, HR employee lifecycle,
+salary review workflows and credential writes. **Audit, Course Catalog,
+Authentication, Reporting, HR and Payroll** run as independent Spring Boot services
 with different processes and exclusive PostgreSQL databases.
 
 The legacy `docker-compose.yml` and FE `/api/**` contract are unchanged.
@@ -19,11 +19,12 @@ React -> Spring Cloud Gateway :8080
   |-- /api/statistics, /api/dashboard -> Reporting :8095 -> reporting-postgres
   |-- /api/employee-management/*/certificates/** -> HR :8096 -> hr-postgres
   |-- /api/payroll/ranks/** -> HR :8096 -> hr-postgres
+  |-- /api/payroll (read/detail/calculate) -> Payroll :8097 -> payroll-postgres
   +-- remaining /api/** -> Core :8081 -> core-postgres
                                    +-- audit events -> Audit :8092 -> audit-postgres
 ```
 
-Core, Audit, Catalog, Identity, Reporting and HR use **different PostgreSQL instances**, not just two schemas in
+Core, Audit, Catalog, Identity, Reporting, HR and Payroll use **seven independent PostgreSQL instances**, not just two schemas in
 the same logical database. The API gateway is a separately started Spring
 application, not an Nginx reverse proxy or a folder named gateway.
 
@@ -192,6 +193,45 @@ now owns salary-rank creation, updates and management queries.
 There are still **six PostgreSQL instances**, not seven: HR Certificates
 and HR Salary Ranks are two bounded contexts in the same HR deployment.
 
+## Phase 6: independently owned Payroll ledger and calculation
+
+`services/payroll-service` is a separate Spring Boot application with its
+**own exclusive** `iig_payroll` PostgreSQL instance and a locally transactional
+`payroll_ledgers` + `payroll_items` write model.
+
+- Gateway routes GET `/api/payroll`, GET `/api/payroll/{employeeId}/{period}`
+  and POST `/api/payroll/calculate` to Payroll. Routes for HR salary ranks
+  remain on HR. Salary rank assignments, salary reviews, salary history
+  and employee salary profile remain on Core for now.
+- The first startup imports legacy `employee_salaries`, `staff_salaries` and
+  existing calculated items through a private, service-key-validated Core
+  endpoint. The `payroll_meta` import marker is committed in the same local
+  transaction. Repeat startups never overwrite Payroll's live ledger.
+- Payroll retrieves **current** username, active role, employee scope, dated
+  salary rate, eligible teaching attendance and assigned staff shifts over
+  private HTTP contracts. The service has **no database credentials** for
+  Core, HR, Identity or Scheduling.
+- A calculation writes summary and item rows in one Payroll-only transaction.
+  `(source,employee_id,period)` is unique and locked during recalculation;
+  duplicate commands preserve the ledger ID instead of creating new
+  paychecks. A previously APPROVED/PAID/FINALIZED ledger cannot be
+  recalculated.
+- Every list/detail/calculate request checks the current JWT and employee
+  role via Core. Admin can manage all, TC Teacher only, CM CS/Sale only,
+  and workers may read their own records but cannot calculate.
+- The original Core salary tables remain as **historical rollback data**.
+  There is no back-projection from Payroll to these tables; the Gateway
+  no longer lets clients write calculated salary rows in Core.
+- **Not yet complete:** schedule/attendance source facts and historical salary
+  rank review/assignment transactions still originate in Core. The facts
+  HTTP snapshot is eventual-consistent, not a distributed transaction.
+  Independent Academic/Scheduling and HR/Identity ownership will allow
+  a future versioned event stream with finalized attendance and rate snapshots.
+
+CI uses seven isolated PostgreSQL instances, tests first-time import,
+calculation in Payroll's own database, role restrictions, finalized-payroll
+protection and the existing FE Playwright suite.
+
 ## Architecture decisions
 
 | Concern | Design | Reason |
@@ -215,8 +255,9 @@ and HR Salary Ranks are two bounded contexts in the same HR deployment.
   events without rows in `audit_logs` cannot be propagated. An outbox-wide
   cleanup/retention policy and alarm for delivery lag are still needed.
 - Gateway and core remain a single point of failure for classroom workflows.
-- Classes, students, scheduling, the employee lifecycle and payroll are **not yet independently
-  deployed bounded contexts**. Calling phase 1 a completed full migration is
+- Classes, students, scheduling and employee lifecycle are **not yet independently
+  deployed bounded contexts**. The Payroll ledger has its own service, but
+  still depends on Core-sourced attendance/rates and salary-review operations. Calling phase 1 a completed full migration is
   incorrect.
 - Local default passwords in the Compose file are for the disposable demo only,
   not for Internet-facing deployment.
@@ -251,6 +292,7 @@ mvn -B -ntp -f services/catalog-service/pom.xml test
 mvn -B -ntp -f services/identity-service/pom.xml test
 mvn -B -ntp -f services/reporting-service/pom.xml test
 mvn -B -ntp -f services/hr-service/pom.xml test
+mvn -B -ntp -f services/payroll-service/pom.xml test
 npm ci && npx prisma validate
 docker compose -f docker-compose.microservices.yml config --quiet
 docker compose -f docker-compose.microservices.yml up --build -d
@@ -275,8 +317,9 @@ scenarios through the Gateway.
    cross-service SQL joins. Build a schedule-conflict API and request/response
    contracts with Academics. The current enrollment conflict transaction must
    be redesigned before either database is separated.
-4. **HR/Payroll** — own employee lifecycle and payroll ledgers. Consume
-   attendance events rather than joining scheduling tables across databases.
+4. **HR/Payroll** — HR must own employee lifecycle; Payroll already owns its
+   ledger but must consume versioned, finalized attendance/rate events instead
+   of synchronous Core facts, and move review/rank-assignment workflows out.
 5. **Dashboard/Statistics** — Reporting now has standalone dashboard/statistics snapshots
    read model with TTL/freshness metadata, but must still replace Core's SQL
    snapshot source with independently consumed domain events and migrate Dashboard.

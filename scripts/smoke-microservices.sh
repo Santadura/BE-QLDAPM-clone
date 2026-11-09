@@ -392,6 +392,19 @@ other_salary_code="$(curl -sS -o /dev/null -w '%{http_code}' \
   -H "Authorization: Bearer ${teacher_payroll_token}")"
 test "$other_salary_code" = "403" || { echo "Worker viewed another payroll: $other_salary_code"; exit 1; }
 
+# Duplicate calculations must be idempotent at the ledger identity boundary.
+ledger_before="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT id FROM payroll_ledgers WHERE employee_id='teacher-001' AND period='2026-10' AND source='EMPLOYEE'" | tr -d '[:space:]')"
+curl -fsS -X POST "${BASE}/api/payroll/calculate?period=2026-10&employeeId=teacher-001" \
+  -H "Authorization: Bearer ${TOKEN}" >/dev/null
+ledger_after="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT id FROM payroll_ledgers WHERE employee_id='teacher-001' AND period='2026-10' AND source='EMPLOYEE'" | tr -d '[:space:]')"
+test -n "$ledger_before" && test "$ledger_before" = "$ledger_after"
+legacy_calculated="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM employee_salaries WHERE employee_id='teacher-001' AND period='2026-10' AND status='CALCULATED'" | tr -d '[:space:]')"
+test "$legacy_calculated" = "0" || { echo "Payroll unexpectedly wrote the old Core payroll database"; exit 1; }
+echo "PASS: repeated payroll calculation preserves ledger identity, Core payroll stays untouched"
+
 # Immutable finalized payroll: duplicated calculate command must not rewrite
 # approved payments. Test only against disposable Docker CI database.
 "${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -v ON_ERROR_STOP=1 -c \
