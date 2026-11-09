@@ -40,7 +40,7 @@ class SchedulingAssignmentReferenceBridgeTest {
         return event("{\"id\":\"shift-1\",\"employeeId\":\"cs-001\"," +
             "\"staffRole\":\"CS\",\"workType\":\"FRONT_DESK\"," +
             "\"status\":\"ASSIGNED\",\"date\":\"2027-02-11\"," +
-            "\"startTime\":\"09:00\",\"endTime\":\"11:00\"}",1);
+            "\"startTime\":\"09:00\",\"endTime\":\"11:00\",\"assignedBy\":\"cm-001\"}",1);
     }
 
     @Test void rejectsMissingServiceKeyBeforeInspectingDatabase() throws Exception {
@@ -55,7 +55,7 @@ class SchedulingAssignmentReferenceBridgeTest {
             "\"staffRole\":\"CS\",\"workType\":\"CLASS_SUPPORT\"," +
             "\"classId\":\"class-1\",\"status\":\"ASSIGNED\"," +
             "\"date\":\"2027-02-11\",\"startTime\":\"09:00\"," +
-            "\"endTime\":\"11:00\"}",1);
+            "\"endTime\":\"11:00\",\"assignedBy\":\"cm-001\"}",1);
         assertEquals(HttpStatus.BAD_REQUEST,
             assertThrows(ResponseStatusException.class,
                 ()->bridge.apply("trusted-core-key",illegal)).getStatusCode());
@@ -66,7 +66,7 @@ class SchedulingAssignmentReferenceBridgeTest {
         var missing=event("{\"id\":\"shift-1\",\"employeeId\":\"cs-001\"," +
             "\"workType\":\"FRONT_DESK\",\"status\":\"ASSIGNED\"," +
             "\"date\":\"2027-02-11\",\"startTime\":\"09:00\"," +
-            "\"endTime\":\"11:00\"}",1);
+            "\"endTime\":\"11:00\",\"assignedBy\":\"cm-001\"}",1);
         assertEquals(HttpStatus.BAD_REQUEST,
             assertThrows(ResponseStatusException.class,
                 ()->bridge.apply("trusted-core-key",missing)).getStatusCode());
@@ -105,6 +105,10 @@ class SchedulingAssignmentReferenceBridgeTest {
         when(db.queryForObject(startsWith("SELECT COALESCE(max(version),0)"),
             eq(Long.class),eq("STAFF"),eq("shift-1"))).thenReturn(0L);
 
+        when(db.queryForObject(contains("AND upper(r.role_name)=?"),
+            eq(Long.class),eq("cs-001"),eq("CS"))).thenReturn(1L);
+        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+            eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
         var result=bridge.apply("trusted-core-key",valid());
         assertEquals("APPLIED",result.outcome());
         verify(db).queryForObject(contains("set_config('iig.assignment_reference_projection'"),
@@ -159,7 +163,7 @@ class SchedulingAssignmentReferenceBridgeTest {
         var event=event("{\"id\":\"shift-1\",\"employeeId\":\"cs-001\"," +
             "\"staffRole\":\"CS\",\"workType\":\"FRONT_DESK\"," +
             "\"status\":\"ASSIGNED\",\"date\":\"2027-02-11\"," +
-            "\"startTime\":\"09:00\",\"endTime\":\"11:00\"}",3);
+            "\"startTime\":\"09:00\",\"endTime\":\"11:00\",\"assignedBy\":\"cm-001\"}",3);
         when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
             .thenReturn("QUIESCED");
         existingVersion(1,"event-old","f".repeat(64));
