@@ -164,6 +164,22 @@ public class AssignmentProjectionRepository {
      * A cutover check must never silently ignore them even when the current
      * Core-backed projection looks byte-for-byte consistent.
      */
+    /**
+     * In the transitional write path a local Scheduling commit is not fully
+     * visible to dependent Core/Payroll flows until the reference event is
+     * durably acknowledged. Fail closed rather than serving an ASSIGNED or
+     * CANCELLED card that has not yet reached Core.
+     */
+    public void requireReferenceSettledForReads() {
+        requireReady();
+        Long active=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_command_inbox " +
+            "WHERE state IN ('PENDING_REFERENCE','COMPENSATING')",Long.class);
+        if(active==null || active>0)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Scheduling assignment reference reconciliation is incomplete");
+    }
+
     public long pendingAssignmentCommands() {
         requireReady();
         Long count=db.queryForObject(
