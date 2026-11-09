@@ -38,7 +38,7 @@ public class AssignmentService {
         "JOIN users u ON u.username=e.username ";
 
     public List<Map<String,Object>> employees(String role) {
-        var actor=access.requireRole("TC","CM","ADMIN");
+        var actor=access.requireActiveRole("TC","CM","ADMIN");
         String r=role.toUpperCase(Locale.ROOT);
         if (!List.of("TEACHER","CS","SALE").contains(r)) {
             throw new ApiException(HttpStatus.BAD_REQUEST,"Unknown employee role");
@@ -54,14 +54,14 @@ public class AssignmentService {
     }
 
     public List<Map<String,Object>> teaching(LocalDate week) {
-        access.requireRole("TC","ADMIN");
+        access.requireActiveRole("TC","ADMIN");
         LocalDate start=access.monday(week);
         return db.queryForList(TEACHING+"WHERE t.date BETWEEN ? AND ? ORDER BY t.date,t.start_time",
             start,start.plusDays(6));
     }
 
     public List<Map<String,Object>> staff(LocalDate week,String role) {
-        var actor=access.requireRole("CM","ADMIN");
+        var actor=access.requireActiveRole("CM","ADMIN");
         String requested=role==null?null:role.toUpperCase(Locale.ROOT);
         if (requested!=null && !List.of("CS","SALE").contains(requested)) {
             throw new ApiException(HttpStatus.BAD_REQUEST,"role must be CS or SALE");
