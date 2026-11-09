@@ -141,7 +141,7 @@ SELECT source_type,schedule_id,version,deleted,employee_id,staff_role,
   NULLIF(payload->>'startTime','')::TIME,
   NULLIF(payload->>'endTime','')::TIME,
   payload->>'workType',status,payload->>'assignedBy'
-FROM scheduling_assignment_read_model
+FROM scheduling_assignment_read_model WHERE TRUE
 ON CONFLICT(source_type,schedule_id) DO UPDATE SET
   version=EXCLUDED.version,deleted=EXCLUDED.deleted,
   employee_id=EXCLUDED.employee_id,staff_role=EXCLUDED.staff_role,
