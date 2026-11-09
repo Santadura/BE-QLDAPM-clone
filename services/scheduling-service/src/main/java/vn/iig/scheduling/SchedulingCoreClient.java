@@ -68,7 +68,8 @@ public class SchedulingCoreClient {
         }
     }
 
-    public record AssignmentManifestSummary(long rowCount,long versionSum,long pendingCount) {}
+    public record AssignmentManifestSummary(long rowCount,long versionSum,long pendingCount,
+                                            long liveSchedules,long trackedLiveSchedules) {}
 
     /** An independent non-outbox-draining manifest for ownership cutover checks. */
     public AssignmentManifestSummary assignmentManifestSummary() {
