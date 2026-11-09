@@ -152,12 +152,12 @@ CREATE INDEX IF NOT EXISTS idx_scheduling_assignment_outbound_pending
 -- Retry/delivery metadata may change, but payload, digest, revision and
 -- ownership can never be rewritten or deleted after local commit.
 CREATE OR REPLACE FUNCTION iig_guard_assignment_event_immutable()
-RETURNS TRIGGER LANGUAGE plpgsql AS $
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP='DELETE' THEN
     RAISE EXCEPTION 'Committed assignment events cannot be deleted'
-      USING ERRCODE='55000'@@
-  END IF@@
+      USING ERRCODE='55000';
+  END IF;
   IF NEW.event_id IS DISTINCT FROM OLD.event_id
      OR NEW.actor_username IS DISTINCT FROM OLD.actor_username
      OR NEW.operation IS DISTINCT FROM OLD.operation
@@ -173,11 +173,11 @@ BEGIN
          AND NEW.delivered_at IS DISTINCT FROM OLD.delivered_at)
   THEN
     RAISE EXCEPTION 'Immutable Scheduling assignment event was modified'
-      USING ERRCODE='55000'@@
-  END IF@@
-  RETURN NEW@@
-END@@
-$@@
+      USING ERRCODE='55000';
+  END IF;
+  RETURN NEW;
+END;
+$$@@
 DROP TRIGGER IF EXISTS trg_iig_assignment_event_immutable
   ON scheduling_assignment_domain_outbox@@
 CREATE TRIGGER trg_iig_assignment_event_immutable
