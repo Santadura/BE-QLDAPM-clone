@@ -19,10 +19,6 @@ CREATE TABLE IF NOT EXISTS scheduling_assignment_reference_event_receipts (
     (operation IS NOT NULL AND request_key IS NOT NULL)
   )
 );
-CREATE INDEX IF NOT EXISTS idx_scheduling_reference_event_schedule
-  ON scheduling_assignment_reference_event_receipts
-    (source_type,schedule_id,revision);
-
 -- Safely bootstrap the last receipt of previous phase 8d-5 deployments.
 -- Older events cannot be reconstructed and remain fail-closed; never forge
 -- missing historical records. A nullable command identity identifies this
