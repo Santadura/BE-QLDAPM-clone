@@ -95,6 +95,39 @@ public class AssignmentCommandInboxService {
         return new Receipt(request.operation(),request.requestKey(),prior.state(),digest);
     }
 
+    /**
+     * An unexecuted STAGED command may be withdrawn without any domain
+     * compensation, since it never changed an assignment. Never withdraw
+     * COMMITTED/COMPENSATING work via this operation; those states will
+     * require the future saga's explicit compensation protocol.
+     *
+     * Authorization is checked again at the private controller boundary,
+     * and actor scoping is enforced by the SQL primary key.
+     */
+    @Transactional
+    public Receipt rejectStaged(String username,String role,String operation,String requestKey) {
+        if(username==null || username.isBlank() || role==null || role.isBlank())
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Authenticated actor required");
+        if(operation==null || !OPERATIONS.contains(operation) || requestKey==null ||
+                !requestKey.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid command identifier");
+        db.update("UPDATE scheduling_assignment_command_inbox " +
+            "SET state='REJECTED',updated_at=NOW() " +
+            "WHERE actor_username=? AND operation=? AND request_key=? AND state='STAGED'",
+            username,operation,requestKey);
+        List<Stored> rows=db.query(
+            "SELECT state,request_hash FROM scheduling_assignment_command_inbox " +
+            "WHERE actor_username=? AND operation=? AND request_key=? FOR UPDATE",
+            (rs,i)->new Stored(rs.getString(1),rs.getString(2)),
+            username,operation,requestKey);
+        if(rows.isEmpty())
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Assignment command missing");
+        if(rows.size()!=1 || !"REJECTED".equals(rows.get(0).state()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Only staged assignment commands may be rejected");
+        return new Receipt(operation,requestKey,"REJECTED",rows.get(0).hash());
+    }
+
     private String canonical(Request input) {
         try {
             TreeMap<String,Object> record=new TreeMap<>();
