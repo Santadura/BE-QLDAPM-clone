@@ -546,7 +546,6 @@ model SchedulingAssignmentReferenceEventReceipt {
   appliedAt DateTime @default(now()) @map("applied_at") @db.Timestamptz(6)
 
   @@unique([sourceType,scheduleId,revision])
-  @@index([sourceType,scheduleId,revision])
   @@map("scheduling_assignment_reference_event_receipts")
 }
 
