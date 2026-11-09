@@ -154,7 +154,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduling_assignment_outbound_pending
 -- without actual immutable, acknowledged domain events. A rejected staged
 -- request cannot suppress events that have already been committed.
 CREATE OR REPLACE FUNCTION iig_guard_assignment_command_state()
-RETURNS TRIGGER LANGUAGE plpgsql AS $
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE total BIGINT; pending BIGINT;
 BEGIN
   IF NEW.state=OLD.state THEN RETURN NEW; END IF;
@@ -187,7 +187,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$;
+$$;
 DROP TRIGGER IF EXISTS trg_iig_assignment_command_state ON scheduling_assignment_command_inbox;
 CREATE TRIGGER trg_iig_assignment_command_state
   BEFORE UPDATE OF state ON scheduling_assignment_command_inbox
