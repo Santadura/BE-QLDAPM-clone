@@ -22,14 +22,19 @@ done
 TOKEN="$(printf '%s' "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
 test -n "$TOKEN"
 echo "PASS: legacy JWT login works through Spring Cloud Gateway"
-# Browsers require an OPTIONS preflight (curl login by itself does not).
-# Detect missing or duplicated Access-Control-Allow-Origin before Playwright.
+# Browsers require a preflight OPTIONS request (curl login alone does not).
+# Verify Gateway accepts the origin exactly once before starting Playwright.
 preflight="$(curl -sS -D - -o /dev/null -X OPTIONS "${BASE}/api/auth/login" \
   -H 'Origin: http://localhost:5173' \
   -H 'Access-Control-Request-Method: POST' \
   -H 'Access-Control-Request-Headers: content-type')"
-allowed="$(printf '%s' "$preflight" | tr -d '\r' | grep -ic '^access-control-allow-origin: http://localhost:5173
-
+count="$(printf '%s' "$preflight" | tr -d '\r' | grep -ic 'access-control-allow-origin: http://localhost:5173' || true)"
+if [ "$count" != "1" ]; then
+  echo "Gateway CORS preflight missing or duplicated the allowed origin:"
+  printf '%s\n' "$preflight"
+  exit 1
+fi
+echo "PASS: React browser CORS preflight returns a single origin header"
 # Internal write API must not become a public Gateway route.
 code="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/audit/events")"
 test "$code" = "404"
