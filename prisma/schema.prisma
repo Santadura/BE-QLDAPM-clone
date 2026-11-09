@@ -501,6 +501,21 @@ model SchedulingAssignmentWriterControl {
   @@map("scheduling_assignment_writer_control")
 }
 
+// Core-local idempotent reference receipts for a FUTURE Scheduling writer.
+// Not used by legacy monolith assignment commands or by public FE routes.
+model SchedulingAssignmentReferenceReceipt {
+  sourceType String @map("source_type") @db.VarChar(12)
+  scheduleId String @map("schedule_id") @db.VarChar(50)
+  lastRevision BigInt @map("last_revision")
+  lastEventId String @unique @map("last_event_id") @db.VarChar(50)
+  payloadHash String @map("payload_hash") @db.Char(64)
+  actorUsername String @map("actor_username") @db.VarChar(100)
+  appliedAt DateTime @default(now()) @map("applied_at") @db.Timestamptz(6)
+
+  @@id([sourceType,scheduleId])
+  @@map("scheduling_assignment_reference_receipts")
+}
+
 model SchedulingCommandReceipt {
   actorUsername   String    @map("actor_username") @db.VarChar(100)
   commandType     String    @map("command_type") @db.VarChar(160)
