@@ -764,5 +764,35 @@ END
 SQL
 echo "PASS: database write fence blocks direct Core assignment SQL in QUIESCED mode"
 
+# Phase 8b-3b: future Scheduling commands may only be staged through a private
+# service key AND a live Core JWT. Repeating a command never inserts an actual
+# teacher/CS/Sale shift or invokes a Core assignment transaction.
+stage_key="stage-${GITHUB_RUN_ID:-local}-001"
+stage_json="{\"operation\":\"ASSIGN_STAFF\",\"requestKey\":\"${stage_key}\",\"payload\":{\"employeeId\":\"cs-001\",\"staffRole\":\"CS\"}}"
+stage_url="http://scheduling-service:8098/internal/scheduling/assignments/commands/stage"
+for i in 1 2; do
+  staged="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    --header "X-Internal-Key: ${scheduling_key}" \
+    --header "Authorization: Bearer ${cm_token}" \
+    --header "Content-Type: application/json" \
+    --post-data "$stage_json" "$stage_url")"
+  printf '%s' "$staged" | python3 -c 'import json,sys; assert json.load(sys.stdin)["state"]=="STAGED"'
+done
+staged_count="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -tAc \
+  "SELECT count(*) FROM scheduling_assignment_command_inbox WHERE actor_username='cm001' AND operation='ASSIGN_STAFF' AND request_key='${stage_key}' AND state='STAGED'" | tr -d '[:space:]')"
+test "$staged_count" = "1" || { echo "Staged command inbox was not idempotent"; exit 1; }
+public_staging="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/scheduling/assignments/commands/stage")"
+test "$public_staging" = "404" || { echo "Private command stage API was publicly routed"; exit 1; }
+echo "PASS: private Scheduling inbox stages repeated commands without business writes"
+
+# Versioned Academic session facts are private, too. They are a read
+# contract only; a later write cutover needs a real version-checked lease.
+session_url="http://backend:8081/internal/scheduling/academic/session?classId=${one}&date=2027-02-11&startTime=09:00&endTime=11:00"
+academic_facts="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${scheduling_key}" "$session_url")"
+printf '%s' "$academic_facts" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["sessionStatus"]=="PLANNED" and d["classVersion"]>=1 and d["sessionVersion"]>=1'
+echo "PASS: Scheduling can read a versioned Academic planned-session contract over private HTTP"
+
+
 
 
