@@ -15,7 +15,7 @@ docker compose -f docker-compose.microservices.yml up --build -d
 Tài liệu triển khai, kiến trúc và giới hạn giai đoạn đầu:
 [docs/architecture/microservices-migration.md](docs/architecture/microservices-migration.md).
 
-**Lưu ý:** Đây là giai đoạn 8a: Scheduling sở hữu lịch rảnh và một bản đọc độc lập của lịch phân công. Các API GET `/api/teaching-schedules`, `/api/staff-schedules`, `/api/schedules/me` đọc từ Scheduling PostgreSQL. Core vẫn là nơi DUY NHẤT tạo/sửa/hủy phân công và ghi điểm danh để giữ giao dịch lớp học và bảo vệ ca CS cuối cùng. Core gửi các thay đổi qua transactional outbox; dữ liệu đọc cập nhật bất đồng bộ và có thể trễ vài giây sau thao tác ghi. Chưa hoàn thiện 100% Microservices; không dùng bí mật demo cho production.
+**Lưu ý:** Đây là giai đoạn 8a: Scheduling sở hữu lịch rảnh và một bản đọc độc lập của lịch phân công. Các API GET `/api/teaching-schedules`, `/api/staff-schedules`, `/api/schedules/me` đọc từ Scheduling PostgreSQL. Core vẫn là nơi DUY NHẤT tạo/sửa/hủy phân công và ghi điểm danh để giữ giao dịch lớp học và bảo vệ ca CS cuối cùng. Core gửi thay đổi qua transactional outbox. Khi FE đọc lịch qua Gateway, Scheduling kiểm tra và áp dụng các thay đổi đã commit còn chờ trước khi trả danh sách; nếu không thể đồng bộ thì trả 503 thay vì âm thầm trả dữ liệu cũ. Đây là read-after-write barrier theo từng request, chưa phải giao dịch phân tán tuyến tính hóa khi có ghi đồng thời. Chưa hoàn thiện 100% Microservices; không dùng bí mật demo cho production.
 Dừng stack bằng `docker compose -f docker-compose.microservices.yml down` để giữ dữ liệu.
 
 
