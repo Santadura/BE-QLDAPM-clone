@@ -44,6 +44,15 @@ CREATE TRIGGER trg_iig_core_staff_write_fence
   BEFORE INSERT OR UPDATE OR DELETE ON staff_schedules
   FOR EACH ROW EXECUTE FUNCTION iig_fence_core_assignment_writes();
 
+-- Teacher attendance is tied to the authoritative teaching assignment
+-- and must be frozen with it. Without this additional trigger, attendance
+-- could change during the Core-to-Scheduling parity snapshot even while the
+-- two assignment tables were already quiesced.
+DROP TRIGGER IF EXISTS trg_iig_core_attendance_write_fence ON teacher_session_attendance;
+CREATE TRIGGER trg_iig_core_attendance_write_fence
+  BEFORE INSERT OR UPDATE OR DELETE ON teacher_session_attendance
+  FOR EACH ROW EXECUTE FUNCTION iig_fence_core_assignment_writes();
+
 -- Operator rollback (only when coordinating a cutover):
 -- UPDATE scheduling_assignment_writer_control
 -- SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE;
