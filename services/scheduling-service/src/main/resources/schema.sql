@@ -58,3 +58,22 @@ CREATE TABLE IF NOT EXISTS scheduling_availability_audit_outbox (
 CREATE INDEX IF NOT EXISTS idx_scheduling_audit_pending
   ON scheduling_availability_audit_outbox(created_at,event_id)
   WHERE delivered_at IS NULL;
+
+-- Assignment READ model only. Core is still the sole assignment writer.
+-- Keep tombstones so a delayed/crossed delivery cannot resurrect a deletion.
+CREATE TABLE IF NOT EXISTS scheduling_assignment_read_model (
+  source_type VARCHAR(12) NOT NULL CHECK (source_type IN ('TEACHING','STAFF')),
+  schedule_id VARCHAR(50) NOT NULL,
+  version BIGINT NOT NULL CHECK (version>=1),
+  deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  employee_id VARCHAR(50),
+  staff_role VARCHAR(50),
+  work_date DATE,
+  status VARCHAR(20),
+  payload JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (source_type,schedule_id)
+);
+CREATE INDEX IF NOT EXISTS idx_scheduling_assignment_read_week
+  ON scheduling_assignment_read_model (source_type,work_date,employee_id)
+  WHERE deleted=FALSE;
