@@ -13,6 +13,11 @@ spring:
         connect-timeout: 3000
         response-timeout: 45s
       routes:
+        # Admin statistics are now served from an independent read-model DB.
+        - id: reporting-statistics
+          uri: ${REPORTING_SERVICE_URI:http://localhost:8095}
+          predicates:
+            - Path=/api/statistics,/api/statistics/**
         # Only login/logout migrate in this stage. Registration and other
         # account/role writes remain in legacy core until Identity owns them.
         - id: identity-login

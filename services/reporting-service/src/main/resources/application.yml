@@ -1,0 +1,24 @@
+server:
+  port: ${SERVER_PORT:8095}
+spring:
+  application:
+    name: iig-reporting-service
+  datasource:
+    url: ${REPORTING_DB_URL:jdbc:postgresql://localhost:5436/iig_reporting}
+    username: ${REPORTING_DB_USERNAME:iig_reporting}
+    password: ${REPORTING_DB_PASSWORD}
+  sql:
+    init:
+      mode: always
+      continue-on-error: false
+iig:
+  core:
+    url: ${CORE_INTERNAL_URL:http://localhost:8081}
+    internal-key: ${REPORTING_INTERNAL_API_KEY}
+  snapshot:
+    max-age-seconds: ${REPORTING_MAX_AGE_SECONDS:30}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

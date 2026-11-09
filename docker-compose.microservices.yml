@@ -39,6 +39,8 @@ services:
       DB_PASSWORD: ${CORE_DB_PASSWORD:-postgres}
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-key-at-least-256-bits-please}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      REPORTING_BRIDGE_ENABLED: "true"
+      REPORTING_INTERNAL_API_KEY: ${REPORTING_INTERNAL_API_KEY:-local-dev-reporting-key-change-before-deployment}
       IDENTITY_BRIDGE_ENABLED: "true"
       IDENTITY_INTERNAL_API_KEY: ${IDENTITY_INTERNAL_API_KEY:-local-dev-identity-key-change-before-deployment}
       CATALOG_PROJECTION_ENABLED: "true"
@@ -153,6 +155,40 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  reporting-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iig_reporting
+      POSTGRES_USER: iig_reporting
+      POSTGRES_PASSWORD: ${REPORTING_DB_PASSWORD:-local-dev-reporting-password}
+    volumes:
+      - reporting_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iig_reporting -d iig_reporting"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  reporting-service:
+    build:
+      context: ./services/reporting-service
+    environment:
+      SERVER_PORT: "8095"
+      REPORTING_DB_URL: jdbc:postgresql://reporting-postgres:5432/iig_reporting
+      REPORTING_DB_USERNAME: iig_reporting
+      REPORTING_DB_PASSWORD: ${REPORTING_DB_PASSWORD:-local-dev-reporting-password}
+      REPORTING_INTERNAL_API_KEY: ${REPORTING_INTERNAL_API_KEY:-local-dev-reporting-key-change-before-deployment}
+      REPORTING_MAX_AGE_SECONDS: ${REPORTING_MAX_AGE_SECONDS:-30}
+      CORE_INTERNAL_URL: http://backend:8081
+    expose:
+      - "8095"
+    depends_on:
+      reporting-postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
   api-gateway:
     build:
       context: ./services/api-gateway
@@ -161,6 +197,7 @@ services:
       CORE_SERVICE_URI: http://backend:8081
       CATALOG_SERVICE_URI: http://catalog-service:8093
       IDENTITY_SERVICE_URI: http://identity-service:8094
+      REPORTING_SERVICE_URI: http://reporting-service:8095
     ports:
       - "8080:8080"
     depends_on:
@@ -170,6 +207,8 @@ services:
         condition: service_started
       identity-service:
         condition: service_started
+      reporting-service:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
@@ -177,3 +216,4 @@ volumes:
   audit_pgdata:
   catalog_pgdata:
   identity_pgdata:
+  reporting_pgdata:
