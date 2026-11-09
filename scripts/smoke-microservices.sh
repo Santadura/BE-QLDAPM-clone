@@ -121,3 +121,35 @@ count="$("${COMPOSE[@]}" exec -T catalog-postgres psql -U iig_catalog -d iig_cat
 test "$count" = "1"
 echo "PASS: catalog owns and synchronizes course updates to academic reference"
 
+
+# Authoritative update and versioned replication are required for a true
+# owned catalog, not just an HTTP facade over the monolith's course table.
+updated_status="$(curl -sS -o /tmp/iig-updated-course.json -w '%{http_code}' \
+  -X PUT "${BASE}/api/catalog/courses/${course_id}" \
+  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+  -d "{\"courseId\":\"${course_id}\",\"name\":\"Microservice Catalog Updated\",\"status\":\"ACTIVE\"}")"
+test "$updated_status" = "200" || { cat /tmp/iig-updated-course.json; exit 1; }
+updated_projected=0
+for i in $(seq 1 50); do
+  actual="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT name FROM courses WHERE course_id='${course_id}'" | tr -d '\r\n')"
+  if [ "$actual" = "Microservice Catalog Updated" ]; then
+    updated_projected=1
+    break
+  fi
+  sleep 2
+done
+test "$updated_projected" = "1" || { echo "Catalog update did not reach academic read model"; exit 1; }
+ack_version="$("${COMPOSE[@]}" exec -T catalog-postgres psql -U iig_catalog -d iig_catalog -tAc \
+  "SELECT version FROM catalog_outbox WHERE course_id='${course_id}' AND delivered_at IS NOT NULL" | tr -d '[:space:]')"
+test "$ack_version" = "2"
+echo "PASS: catalog updates replicate, advance version and are acknowledged"
+
+teacher_login="$(curl -fsS -X POST "${BASE}/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"teacher001","password":"123456"}')"
+teacher_token="$(printf '%s' "$teacher_login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+denied="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE}/api/catalog/courses" \
+  -H "Authorization: Bearer ${teacher_token}" -H 'Content-Type: application/json' \
+  -d '{"courseId":"ms-role-blocked","name":"Disallowed","status":"ACTIVE"}')"
+test "$denied" = "403" || { echo "Non-admin was not rejected: $denied"; exit 1; }
+echo "PASS: catalog rejects staff course changes without ADMIN role"
