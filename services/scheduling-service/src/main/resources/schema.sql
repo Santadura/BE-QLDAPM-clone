@@ -120,11 +120,10 @@ ALTER TABLE scheduling_assignment_command_inbox
   ADD CONSTRAINT scheduling_assignment_command_inbox_state_check
   CHECK (state IN ('STAGED','PENDING_REFERENCE','COMMITTED','REJECTED','COMPENSATING'));
 
--- Phase 8d: durable, replayable outbound change stream for the FUTURE
--- Scheduling assignment writer. Local domain mutations must insert their
--- immutable event in the SAME Scheduling transaction. No producer is enabled
--- yet: Core remains the sole assignment authority until its reference writer
--- and attendance/payroll compensation are implemented and tested.
+-- Phase 8d: durable replayable outbound change stream. The feature-gated
+-- private standalone CS/Sale executor may produce events while Core is
+-- QUIESCED; public and classroom writes remain owned by Core. Mutation, event
+-- and inbox state must commit in the SAME Scheduling transaction.
 CREATE TABLE IF NOT EXISTS scheduling_assignment_domain_outbox (
   event_id VARCHAR(50) PRIMARY KEY,
   actor_username VARCHAR(100) NOT NULL,
