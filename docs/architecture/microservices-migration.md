@@ -490,6 +490,14 @@ The gate also refuses `READY` while the private Scheduling command inbox
 contains unresolved `STAGED` or `COMPENSATING` requests, even if all
 projected rows match. Until the command executor and saga recovery exist,
 these entries are incomplete work, not successful assignments.
+An authenticated actor can explicitly reject their own **STAGED-only**
+command through the private service-key-protected
+`POST /internal/scheduling/assignments/commands/{operation}/{requestKey}/reject`.
+Rejection is idempotent, cannot touch a `COMMITTED` or `COMPENSATING` command,
+and makes no business write or attendance change. Replaying the original
+request key will return `REJECTED` instead of staging a fresh command.
+This supports a controlled cleanup of test/stale unexecuted commands; future
+saga failures still require proper compensation rather than this endpoint.
 
 A new transaction-scoped `AssignmentWriteConflictGuard` is available for
 the future writer. While holding the same employee advisory lock used for
