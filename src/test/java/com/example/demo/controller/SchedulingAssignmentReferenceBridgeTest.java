@@ -167,9 +167,34 @@ class SchedulingAssignmentReferenceBridgeTest {
         when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
             .thenReturn("QUIESCED");
         existingVersion(event.revision(),event.eventId(),event.payloadHash());
+        when(db.queryForObject(
+            startsWith("SELECT count(*) FROM scheduling_assignment_reference_event_receipts"),
+            eq(Long.class),eq("STAFF"),eq("shift-1"),eq(1L),
+            eq("event-1"),eq(event.payloadHash()),eq("cm001"),
+            eq("ASSIGN_STAFF"),eq("req-1"))).thenReturn(1L);
         var response=bridge.apply("trusted-core-key",event);
         assertEquals("ALREADY_APPLIED",response.outcome());
         verify(db,never()).update(anyString(),any(Object[].class));
+    }
+
+    @Test void latestEventCannotBeReplayedByDifferentUnverifiedCommand()
+            throws Exception {
+        var original=valid();
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        existingVersion(1,original.eventId(),original.payloadHash());
+        // Even identical latest event ID and payload hash cannot be accepted
+        // without its exact actor/operation/request-key history.
+        when(db.queryForObject(
+            startsWith("SELECT count(*) FROM scheduling_assignment_reference_event_receipts"),
+            eq(Long.class),eq("STAFF"),eq("shift-1"),eq(1L),
+            eq("event-1"),eq(original.payloadHash()),eq("cm001"),
+            eq("ASSIGN_STAFF"),eq("req-1"))).thenReturn(0L);
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->bridge.apply("trusted-core-key",original)).getStatusCode());
+        verify(db,never()).update(startsWith("INSERT INTO staff_schedules"),
+            any(Object[].class));
     }
 
     @Test void cannotOverwriteAnExistingLegacyCoreShiftWithoutMigratedReceipt()
