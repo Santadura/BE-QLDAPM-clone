@@ -115,6 +115,8 @@ class StandaloneStaffEditExecutorTest {
         assertEquals("cm-1",event.getValue().path("assignedBy").asText());
         verify(conflicts).requireUnoccupied(any());
         verify(lifecycle).markLocallyApplied("cm001","EDIT_STAFF","edit-1");
+        verify(core).acquireAssignmentWriterClaim(
+            "cm001","cm-1","EDIT_STAFF","edit-1");
     }
 
     @Test void cannotEditLegacyCoreShiftEvenIfItsReadModelLooksIdentical()
@@ -146,6 +148,21 @@ class StandaloneStaffEditExecutorTest {
             assertThrows(ResponseStatusException.class,
                 ()->executor.edit("cm001","cm-1","CM","edit-1")).getStatusCode());
         verify(projection,never()).project(any());
+    }
+
+    @Test void CoreHandbackRacePreventsIndependentEditBeforeWrite() throws Exception {
+        command("STAGED",request);
+        shift(null,"ASSIGNED");
+        ownedAndConfirmed();
+        approvedLease();
+        doThrow(new ResponseStatusException(HttpStatus.CONFLICT,"Core writer resumed"))
+            .when(core).acquireAssignmentWriterClaim(
+                "cm001","cm-1","EDIT_STAFF","edit-1");
+        assertEquals(HttpStatus.CONFLICT,
+            assertThrows(ResponseStatusException.class,
+                ()->executor.edit("cm001","cm-1","CM","edit-1")).getStatusCode());
+        verify(projection,never()).project(any());
+        verifyNoInteractions(outbox,lifecycle);
     }
 
     @Test void expiredLeaseBlocksEditBeforeAnyDomainWrite() throws Exception {
