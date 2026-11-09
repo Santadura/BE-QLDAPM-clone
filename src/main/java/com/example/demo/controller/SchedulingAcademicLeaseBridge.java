@@ -146,7 +146,7 @@ public class SchedulingAcademicLeaseBridge {
             "WHERE l.lease_id=? AND l.expires_at>NOW() " +
             "AND c.scheduling_version=l.expected_class_version " +
             "AND s.scheduling_version=l.expected_session_version " +
-            "AND c.status IN ('READY','RUNNING') AND s.status='PLANNED' FOR UPDATE OF l",
+            "AND c.status IN ('READY','RUNNING') AND s.status='PLANNED' FOR UPDATE OF l,c,s",
             (rs,i)->new Lease(id,rs.getString(1),rs.getString(2),
                 rs.getLong(3),rs.getLong(4),rs.getTimestamp(5).toInstant()),id);
         if(current.size()!=1)
