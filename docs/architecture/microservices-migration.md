@@ -2,11 +2,11 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 1**, not a claim that the entire IIG system
+This branch is **migration phase 2**, not a claim that the entire IIG system
 has become independently deployable microservices. The existing monolith
-remains the system of record for Auth, HR, Classes, Students, Scheduling, Payroll,
-and Statistics. The Audit bounded context has been separated into a real
-Spring Boot service with its **own process and its own database**.
+still owns Auth, HR, Classes, Students, Scheduling, Payroll and Statistics.
+**Audit and Course Catalog** now run as independent Spring Boot services
+with different processes and exclusive PostgreSQL databases.
 
 The legacy `docker-compose.yml` and FE `/api/**` contract are unchanged.
 The opt-in `docker-compose.microservices.yml` runs the new stack:
@@ -29,9 +29,45 @@ PostgreSQL core_db                   v
                                  PostgreSQL audit_db [private]
 ```
 
-Core and Audit use **different PostgreSQL instances**, not just two schemas in
+Core, Audit and Catalog use **different PostgreSQL instances**, not just two schemas in
 the same logical database. The API gateway is a separately started Spring
 application, not an Nginx reverse proxy or a folder named gateway.
+
+## Phase 2: Course Catalog ownership
+
+The Course Catalog bounded context has been extracted into
+`services/catalog-service`, with a standalone database `iig_catalog`.
+
+- Spring Cloud Gateway routes the existing FE endpoint
+  `GET /api/classes/courses` to Catalog, preserving the response
+  `[{ courseId, name }]` and requiring the same valid JWT.
+- Catalog exposes `GET/POST /api/catalog/courses` and
+  `PUT /api/catalog/courses/{courseId}`. Mutations require ADMIN.
+- During its **first** startup, Catalog imports existing rows using
+  `GET http://backend:8081/internal/catalog/export`, protected with
+  `X-Internal-Key`. This endpoint cannot be called through Gateway.
+  A durable `catalog_meta` record prevents repeated overwrite after import.
+- Catalog writes `catalog_courses` in its own database. Each write also
+  creates/updates a versioned `catalog_outbox` row in the *same transaction*.
+- A background relay sends the latest catalog state over HTTP to
+  `POST /internal/catalog/project` in the Academic core. The core's existing
+  `courses` table remains a **reference projection** because the current
+  Prisma schema has foreign keys from classes, lessons and student targets.
+  It is not the authoritative course write model.
+- Projection is **at least once**, idempotent at core (`INSERT ... ON CONFLICT`).
+  The relay only acknowledges the version it actually sent, so concurrent
+  updates cannot be lost by an older acknowledgement.
+- Enrollment of a class in a newly added course can be delayed until the
+  projection arrives (normally one polling interval). The API intentionally
+  does not pretend these are strongly consistent cross-service transactions.
+- Catalog checks each caller's current JWT via core `GET /api/me`;
+  it does not access core's `users` table. Consequently, while databases
+  and deployments are independent, authentication is not yet independent
+  from the legacy core. The future Identity service will remove this dependency.
+
+Deployment topology now contains **Gateway + Core + Audit + Catalog**,
+and **three distinct PostgreSQL instances**. Catalog listens on the Compose
+network only (`catalog-service:8093`). The legacy Compose stack is unchanged.
 
 ## Architecture decisions
 
@@ -40,6 +76,7 @@ application, not an Nginx reverse proxy or a folder named gateway.
 | Edge | Spring Cloud Gateway (Boot 3.3.13 + Cloud 2023.0.6) | Preserve all existing FE `/api/**` routes |
 | Authentication | Existing JWT + Spring Security in core | No disruptive role/security behavior change in phase 1 |
 | Audit ownership | New Audit Service / independent DB | Clear bounded context and deployment unit |
+| Course Catalog | Standalone service + DB, versioned projection into Academic references | No cross-service database writes; keep FK integrity and FE schema |
 | Domain event source | Existing committed `audit_logs` | Already written in the domain transactions |
 | Reliable transport | Poll committed logs, HTTP POST, acknowledgement table | Retry after audit-service outage or container restart |
 | Delivery semantics | At least once | Audit DB's unique `event_id` makes retries idempotent |
@@ -47,7 +84,7 @@ application, not an Nginx reverse proxy or a folder named gateway.
 | Service discovery | Compose DNS: `backend`, `audit-service` | Eureka not needed for a fixed Docker Compose topology |
 | Rollback | Use original `docker-compose.yml` | Original service entrypoint and DB migration support retained |
 
-### Limits of phase 1
+### Limits of the current migration
 
 - The gateway delegates authorization of legacy endpoints to core. It does not
   validate JWTs or act as the authoritative identity service yet.
@@ -70,7 +107,8 @@ Requirements: Docker Engine/Compose. No local Java, Maven or Node required.
 3. Open `http://localhost:8080/actuator/health` — gateway health.
 4. Login unchanged: `POST http://localhost:8080/api/auth/login`.
 5. The core API is at `http://backend:8081` **inside** the Compose network,
-   and Audit is at `http://audit-service:8092` only on that network.
+   and Audit is at `http://audit-service:8092`, Catalog is at
+   `http://catalog-service:8093` only on that network.
 6. Examine projection via
    `docker compose -f docker-compose.microservices.yml exec audit-postgres psql -U iig_audit -d iig_audit -c "SELECT event_id,action,entity_type,occurred_at FROM audit_events ORDER BY occurred_at DESC LIMIT 10;"`
 7. Normal shutdown: `docker compose -f docker-compose.microservices.yml down`.
@@ -86,6 +124,7 @@ overlap.
 mvn -B -ntp test
 mvn -B -ntp -f services/api-gateway/pom.xml test
 mvn -B -ntp -f services/audit-service/pom.xml test
+mvn -B -ntp -f services/catalog-service/pom.xml test
 npm ci && npx prisma validate
 docker compose -f docker-compose.microservices.yml config --quiet
 docker compose -f docker-compose.microservices.yml up --build -d
@@ -95,7 +134,9 @@ bash scripts/smoke-microservices.sh
 CI runs these checks in separate jobs with **disposable** PostgreSQL data.
 Smoke asserts JWT login over Gateway; internal API isolation; real class
 creation; audit projection; business continuity while Audit is unavailable;
-and successful replay after restart.
+and successful replay after restart. It also validates catalog initial import,
+ADMIN-only writes, versioned course projection and all FE Playwright E2E
+scenarios through the Gateway.
 
 ## Required follow-on migration before calling IIG fully microservices
 
