@@ -119,11 +119,19 @@ service-key-protected projection API after bootstrap.
 
 ### C. Scheduling
 
-- Introduce stable commands for availability, staff/teacher assignment,
-  attendance and session reservation; no direct Academic SQL.
-- Make conflict reservation atomic within Scheduling's database, with
-  idempotency keys, version checks and compensation on failed enrollment.
-- Test high-concurrency schedule races as well as role/override boundaries.
+- [x] Move availability registration/review ownership to Scheduling DB and
+  block Core assignment writes unless they obtain a live approved-slot lease.
+- [x] Phase 8b-1: persist overlapping in-flight employee/time assignment
+  intents within Scheduling's local reservation transaction. Employee advisory
+  locks serialize reservations; committed Core assignments remain authoritative.
+- [ ] Introduce idempotent, durable commands for staff/teacher assignment,
+  attendance and Academic session reservation; remove direct Academic SQL.
+- [ ] Check existing committed assignment conflicts in the new authoritative
+  Scheduling write model (the current asynchronous copy is insufficient).
+- [ ] Add version checks, idempotency keys, expiry and compensation for failed
+  cross-service enrollment/assignment, while keeping last-CS-coverage and
+  teacher attendance constraints correct.
+- [ ] Test high-concurrency cross-service schedule races and role/override boundaries.
 
 ### D. HR and Payroll
 
