@@ -127,9 +127,9 @@ class SchedulingAssignmentReferenceBridgeTest {
         when(db.queryForObject(startsWith("SELECT COALESCE(max(version),0)"),
             eq(Long.class),eq("STAFF"),eq("shift-1"))).thenReturn(0L);
 
-        when(db.queryForObject(contains("AND upper(r.role_name)=?"),
+        when(db.queryForObject(contains("AND u.role_id=?"),
             eq(Long.class),eq("cs-001"),eq("CS"))).thenReturn(1L);
-        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+        when(db.queryForObject(contains("AND u.role_id='CM'"),
             eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
         when(db.update(startsWith("INSERT INTO staff_schedules"),
             any(Object[].class))).thenReturn(1);
@@ -257,9 +257,9 @@ class SchedulingAssignmentReferenceBridgeTest {
         committedShift("cs-001",null,null,"ASSIGNED");
         when(db.queryForObject(startsWith("SELECT COALESCE(max(version),0)"),
             eq(Long.class),eq("STAFF"),eq("shift-1"))).thenReturn(1L);
-        when(db.queryForObject(contains("AND upper(r.role_name)=?"),
+        when(db.queryForObject(contains("AND u.role_id=?"),
             eq(Long.class),eq("cs-001"),eq("CS"))).thenReturn(1L);
-        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+        when(db.queryForObject(contains("AND u.role_id='CM'"),
             eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
         when(db.update(startsWith("UPDATE staff_schedules SET workplace_id="),
             eq("center-02"),eq(java.time.LocalDate.of(2027,2,12)),
@@ -282,9 +282,9 @@ class SchedulingAssignmentReferenceBridgeTest {
         committedShift("cs-001","class-1",null,"ASSIGNED");
         when(db.queryForObject(startsWith("SELECT COALESCE(max(version),0)"),
             eq(Long.class),eq("STAFF"),eq("shift-1"))).thenReturn(1L);
-        when(db.queryForObject(contains("AND upper(r.role_name)=?"),
+        when(db.queryForObject(contains("AND u.role_id=?"),
             eq(Long.class),eq("cs-001"),eq("CS"))).thenReturn(1L);
-        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+        when(db.queryForObject(contains("AND u.role_id='CM'"),
             eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
         assertEquals(HttpStatus.CONFLICT,
             assertThrows(ResponseStatusException.class,
@@ -300,7 +300,7 @@ class SchedulingAssignmentReferenceBridgeTest {
         committedShift("cs-001",null,null,"ASSIGNED");
         when(db.queryForObject(startsWith("SELECT COALESCE(max(version),0)"),
             eq(Long.class),eq("STAFF"),eq("shift-1"))).thenReturn(1L);
-        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+        when(db.queryForObject(contains("AND u.role_id='CM'"),
             eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
         when(db.update(startsWith("UPDATE staff_schedules"),
             eq("cm-001"),eq("shift-1"))).thenReturn(1);
@@ -320,7 +320,7 @@ class SchedulingAssignmentReferenceBridgeTest {
         committedShift("cs-001","class-1",null,"ASSIGNED");
         when(db.queryForObject(startsWith("SELECT COALESCE(max(version),0)"),
             eq(Long.class),eq("STAFF"),eq("shift-1"))).thenReturn(1L);
-        when(db.queryForObject(contains("AND upper(r.role_name)='CM'"),
+        when(db.queryForObject(contains("AND u.role_id='CM'"),
             eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
         assertEquals(HttpStatus.CONFLICT,
             assertThrows(ResponseStatusException.class,
