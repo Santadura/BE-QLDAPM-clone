@@ -149,6 +149,50 @@ CREATE INDEX IF NOT EXISTS idx_scheduling_assignment_outbound_pending
   ON scheduling_assignment_domain_outbox(next_attempt_at,created_at,event_id)
   WHERE delivered_at IS NULL;
 
+-- Enforce command-inbox state transitions at the Scheduling DB layer.
+-- HTTP retries and controller bugs must not be able to claim COMMITTED
+-- without actual immutable, acknowledged domain events. A rejected staged
+-- request cannot suppress events that have already been committed.
+CREATE OR REPLACE FUNCTION iig_guard_assignment_command_state()
+RETURNS TRIGGER LANGUAGE plpgsql AS $
+DECLARE total BIGINT; pending BIGINT;
+BEGIN
+  IF NEW.state=OLD.state THEN RETURN NEW; END IF;
+  IF OLD.state IN ('REJECTED','COMMITTED') THEN
+    RAISE EXCEPTION 'Terminal assignment command state is immutable'
+      USING ERRCODE='55000';
+  END IF;
+  SELECT count(*),count(*) FILTER (WHERE delivered_at IS NULL)
+    INTO total,pending FROM scheduling_assignment_domain_outbox
+    WHERE actor_username=NEW.actor_username
+      AND operation=NEW.operation AND request_key=NEW.request_key;
+  IF NEW.state='REJECTED' AND (OLD.state<>'STAGED' OR total>0) THEN
+    RAISE EXCEPTION 'Cannot reject command with committed domain events'
+      USING ERRCODE='55000';
+  END IF;
+  IF NEW.state='PENDING_REFERENCE'
+     AND (OLD.state<>'STAGED' OR total=0) THEN
+    RAISE EXCEPTION 'Reference pending requires atomic domain events'
+      USING ERRCODE='55000';
+  END IF;
+  IF NEW.state='COMMITTED' AND (total=0 OR pending>0 OR
+       OLD.state NOT IN ('PENDING_REFERENCE','COMPENSATING')) THEN
+    RAISE EXCEPTION 'Assignment command cannot finish with undelivered events'
+      USING ERRCODE='55000';
+  END IF;
+  IF NEW.state='STAGED' OR
+     (NEW.state='COMPENSATING' AND OLD.state<>'PENDING_REFERENCE') THEN
+    RAISE EXCEPTION 'Invalid assignment command state regression'
+      USING ERRCODE='55000';
+  END IF;
+  RETURN NEW;
+END;
+$;
+DROP TRIGGER IF EXISTS trg_iig_assignment_command_state ON scheduling_assignment_command_inbox;
+CREATE TRIGGER trg_iig_assignment_command_state
+  BEFORE UPDATE OF state ON scheduling_assignment_command_inbox
+  FOR EACH ROW EXECUTE FUNCTION iig_guard_assignment_command_state();
+
 -- Phase 8b-3b candidate assignment WRITE model. During migration, Core's
 -- transactional outbox is still the ONLY source of writes. The independent
 -- normalized store is transactionally maintained alongside the FE read copy.
