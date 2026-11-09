@@ -15,7 +15,7 @@ import static org.mockito.Mockito.*;
 
 class SchedulingAvailabilityMatchingTest {
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
-    private final SchedulingAccess access = new SchedulingAccess(jdbc);
+    private final SchedulingAccess access = new SchedulingAccess(jdbc, mock(SchedulingReservationClient.class));
 
     private static Map<String,Object> recurring(String status, String day, String campus,
                                                  String from, String to) {
