@@ -63,6 +63,23 @@ class AssignmentReferenceRelayTest {
         verify(outbox).retryLater(eq("event-01"),anyString());
     }
 
+    @Test void tenthFailedDeliveryStopsAutomaticReplayAndRequiresReconciliation() {
+        var exhausted=new AssignmentDomainOutboxRepository.Event(
+            "event-01","cm001","ASSIGN_STAFF","cmd-1",
+            "STAFF","shift-1",1,"UPSERT","{\"id\":\"shift-1\"}",
+            "a".repeat(64),9);
+        when(outbox.pending(50)).thenReturn(List.of(exhausted));
+        when(core.applyAssignmentReference(exhausted))
+            .thenThrow(new IllegalStateException("Core projection unreachable"));
+        new AssignmentReferenceRelay(outbox,lifecycle,core,true).relay();
+        var order=inOrder(outbox,lifecycle);
+        order.verify(outbox).retryLater(eq("event-01"),anyString());
+        order.verify(lifecycle).flagForReconciliation(
+            "cm001","ASSIGN_STAFF","cmd-1","event-01");
+        verify(lifecycle,never()).confirmReference(
+            anyString(),anyString(),anyString(),anyString(),anyString());
+    }
+
     @Test void coreMayHaveCommittedEvenIfLocalAckFailsSoRetrySameEvent() {
         when(outbox.pending(50)).thenReturn(List.of(event));
         when(core.applyAssignmentReference(event)).thenReturn(
