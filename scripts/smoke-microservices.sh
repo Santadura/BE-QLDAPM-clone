@@ -10,8 +10,15 @@ for i in $(seq 1 120); do
   sleep 3
 done
 
-response="$(curl --fail --silent --show-error -X POST "${BASE}/api/auth/login" \
-  -H 'Content-Type: application/json' -d '{"username":"admin","password":"123456"}')"
+# Wait for the backend to finish booting; the gateway may become healthy first.
+response=""
+for i in $(seq 1 100); do
+  if response="$(curl --fail --silent -X POST "${BASE}/api/auth/login" -H 'Content-Type: application/json' -d '{"username":"admin","password":"123456"}' 2>/dev/null)" && printf '%s' "$response" | grep -q '"token"'; then
+    break
+  fi
+  if [ "$i" -eq 100 ]; then echo "Core login did not become ready through Gateway"; exit 1; fi
+  sleep 3
+done
 TOKEN="$(printf '%s' "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
 test -n "$TOKEN"
 echo "PASS: legacy JWT login works through Spring Cloud Gateway"
