@@ -2,6 +2,8 @@ package vn.iig.scheduling;
 
 import java.util.Arrays;
 import java.util.List;
+import java.time.LocalDate;
+import java.time.LocalTime;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -65,6 +67,33 @@ public class SchedulingCoreClient {
         } catch(RestClientException e) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Core assignment import unavailable");
+        }
+    }
+
+    public record AcademicSessionFacts(String classId,long classVersion,String classStatus,
+            LocalDate classStart,LocalDate classEnd,String sessionId,
+            long sessionVersion,String sessionStatus,LocalDate date,
+            LocalTime startTime,LocalTime endTime) {}
+
+    /** Versioned Academic session facts: diagnostic, never a mutation lease. */
+    public AcademicSessionFacts academicSession(String classId,LocalDate date,
+                                               LocalTime start,LocalTime end) {
+        try {
+            AcademicSessionFacts result=client.get()
+                .uri(builder->builder.path("/internal/scheduling/academic/session")
+                    .queryParam("classId",classId).queryParam("date",date)
+                    .queryParam("startTime",start).queryParam("endTime",end).build())
+                .header("X-Internal-Key",key).retrieve()
+                .body(AcademicSessionFacts.class);
+            if(result==null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic session facts missing");
+            return result;
+        } catch(HttpClientErrorException.NotFound ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Planned academic session no longer exists",ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic session version service unavailable",ex);
         }
     }
 
