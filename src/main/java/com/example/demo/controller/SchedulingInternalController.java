@@ -39,7 +39,6 @@ public class SchedulingInternalController {
             @Value("${iig.scheduling.internal-key}") String key) {
         if(key==null || key.isBlank())
             throw new IllegalArgumentException("SCHEDULING_INTERNAL_API_KEY required");
-        db.getClass(); // fail fast if JDBC not wired
         this.db=db;
         this.secret=key.getBytes(StandardCharsets.UTF_8);
     }
@@ -102,7 +101,7 @@ public class SchedulingInternalController {
         Integer teaching=db.queryForObject(
             "SELECT count(*) FROM teaching_schedules t WHERE t.teacher_id=? " +
             "AND t.status='ASSIGNED' AND (t.date=? OR " +
-            "(? IS NULL AND lower(to_char(t.date,'dy'))=?)) " +
+            "(CAST(? AS date) IS NULL AND lower(to_char(t.date,'dy'))=?)) " +
             "AND t.start_time>=? AND t.end_time<=?",
             Integer.class,slot.employeeId(),slot.availableDate(),
             slot.availableDate(),slot.dayOfWeek().toLowerCase(),
@@ -110,7 +109,7 @@ public class SchedulingInternalController {
         Integer staff=db.queryForObject(
             "SELECT count(*) FROM staff_schedules s WHERE s.employee_id=? " +
             "AND s.status='ASSIGNED' AND (s.date=? OR " +
-            "(? IS NULL AND lower(to_char(s.date,'dy'))=?)) " +
+            "(CAST(? AS date) IS NULL AND lower(to_char(s.date,'dy'))=?)) " +
             "AND s.start_time>=? AND s.end_time<=?",
             Integer.class,slot.employeeId(),slot.availableDate(),
             slot.availableDate(),slot.dayOfWeek().toLowerCase(),
