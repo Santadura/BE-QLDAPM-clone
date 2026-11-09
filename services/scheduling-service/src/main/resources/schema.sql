@@ -113,6 +113,35 @@ CREATE TABLE IF NOT EXISTS scheduling_assignment_command_inbox (
 CREATE INDEX IF NOT EXISTS idx_scheduling_command_inbox_state
   ON scheduling_assignment_command_inbox(state,created_at);
 
+-- Phase 8d: durable, replayable outbound change stream for the FUTURE
+-- Scheduling assignment writer. Local domain mutations must insert their
+-- immutable event in the SAME Scheduling transaction. No producer is enabled
+-- yet: Core remains the sole assignment authority until its reference writer
+-- and attendance/payroll compensation are implemented and tested.
+CREATE TABLE IF NOT EXISTS scheduling_assignment_domain_outbox (
+  event_id VARCHAR(50) PRIMARY KEY,
+  actor_username VARCHAR(100) NOT NULL,
+  operation VARCHAR(40) NOT NULL,
+  request_key VARCHAR(128) NOT NULL,
+  source_type VARCHAR(12) NOT NULL CHECK (source_type IN ('TEACHING','STAFF')),
+  schedule_id VARCHAR(50) NOT NULL,
+  revision BIGINT NOT NULL CHECK (revision>=1),
+  event_kind VARCHAR(12) NOT NULL CHECK (event_kind IN ('UPSERT','TOMBSTONE')),
+  payload JSONB NOT NULL,
+  payload_hash CHAR(64) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  delivered_at TIMESTAMPTZ,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  attempt_count INT NOT NULL DEFAULT 0 CHECK (attempt_count>=0),
+  last_error VARCHAR(300),
+  FOREIGN KEY(actor_username,operation,request_key)
+    REFERENCES scheduling_assignment_command_inbox(actor_username,operation,request_key),
+  UNIQUE(source_type,schedule_id,revision)
+);
+CREATE INDEX IF NOT EXISTS idx_scheduling_assignment_outbound_pending
+  ON scheduling_assignment_domain_outbox(next_attempt_at,created_at,event_id)
+  WHERE delivered_at IS NULL;
+
 -- Phase 8b-3b candidate assignment WRITE model. During migration, Core's
 -- transactional outbox is still the ONLY source of writes. The independent
 -- normalized store is transactionally maintained alongside the FE read copy.
