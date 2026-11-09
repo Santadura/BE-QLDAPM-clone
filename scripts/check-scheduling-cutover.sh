@@ -14,7 +14,8 @@ COMPOSE=(docker compose -f docker-compose.microservices.yml)
 # the current shell environment, to prevent accidental split-brain handoff.
 for item in "backend:SCHEDULING_REFERENCE_WRITES_ENABLED" \
             "scheduling-service:SCHEDULING_REFERENCE_RELAY_ENABLED" \
-            "scheduling-service:SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED"; do
+            "scheduling-service:SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED" \
+            "scheduling-service:SCHEDULING_RECOVERY_ENABLED"; do
   service_name="${item%%:*}"
   flag_name="${item#*:}"
   container_id="$("${COMPOSE[@]}" ps -q "$service_name")"
