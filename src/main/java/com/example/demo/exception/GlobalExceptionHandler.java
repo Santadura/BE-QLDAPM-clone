@@ -10,6 +10,8 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatusCode;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -55,6 +57,26 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleUnreadable(HttpMessageNotReadableException ex) {
         return buildResponse(HttpStatus.BAD_REQUEST, "Dữ liệu gửi lên không hợp lệ.");
+    }
+
+    /**
+     * Spring's ResponseStatusException is intentionally used by key-protected
+     * microservice bridges for 401/403/404/409/503. Without a dedicated
+     * handler our generic Exception handler incorrectly rewrites ALL of these
+     * expected failures to HTTP 500, breaking fail-closed handback and
+     * reconciliation workflows.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String,Object>> handleResponseStatus(
+            ResponseStatusException ex) {
+        HttpStatusCode code = ex.getStatusCode();
+        HttpStatus status = HttpStatus.resolve(code.value());
+        Map<String,Object> body = new HashMap<>();
+        body.put("timestamp", Instant.now().toString());
+        body.put("status", code.value());
+        body.put("error", status == null ? "Request rejected" : status.getReasonPhrase());
+        body.put("message", ex.getReason() == null ? "Request rejected" : ex.getReason());
+        return ResponseEntity.status(code).body(body);
     }
 
     @ExceptionHandler(Exception.class)
