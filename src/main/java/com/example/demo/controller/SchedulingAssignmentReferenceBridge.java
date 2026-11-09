@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -42,6 +43,8 @@ public class SchedulingAssignmentReferenceBridge {
                         String payloadHash) {}
     public record Receipt(String eventId,long revision,String outcome) {}
     private record Previous(long revision,String eventId,String hash) {}
+    private record ExistingShift(String employeeId,String classId,String workplaceId,
+            LocalDate date,LocalTime start,LocalTime end,String workType,String status) {}
 
     private final JdbcTemplate db;
     private final ObjectMapper json;
@@ -175,6 +178,13 @@ public class SchedulingAssignmentReferenceBridge {
             if(event.revision()!=old.revision()+1)
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Missing intermediate Scheduling assignment reference revision");
+            // Until EDIT_STAFF has its own validated executor and reference
+            // contract, the only valid next operation is cancelling the
+            // Scheduling-created shift. A second ASSIGN_STAFF must not rewrite
+            // an established row at a newer revision.
+            if(!"CANCELLED".equals(status) || !"CANCEL_STAFF".equals(event.operation()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Unsupported reference transition for an existing shift");
         } else {
             // Never allow a Scheduling event to overwrite an existing legacy
             // Core-owned row that has not been explicitly migrated. Creating
@@ -232,16 +242,52 @@ public class SchedulingAssignmentReferenceBridge {
         db.queryForObject(
             "SELECT set_config('iig.assignment_reference_projection','true',true)",
             String.class);
-        db.update("INSERT INTO staff_schedules (staff_schedule_id,employee_id," +
-            "class_id,workplace_id,date,start_time,end_time,work_type,status," +
-            "assigned_by,assignment_source) VALUES(?,?,NULL,?,?,?,?,?,?,?,'STANDARD') " +
-            "ON CONFLICT(staff_schedule_id) DO UPDATE SET " +
-            "employee_id=EXCLUDED.employee_id,class_id=NULL," +
-            "workplace_id=EXCLUDED.workplace_id,date=EXCLUDED.date," +
-            "start_time=EXCLUDED.start_time,end_time=EXCLUDED.end_time," +
-            "work_type=EXCLUDED.work_type,status=EXCLUDED.status," +
-            "assigned_by=EXCLUDED.assigned_by",
-            event.scheduleId(),employee,workplace,date,start,end,workType,status,assignedBy);
+        if("ASSIGNED".equals(status)) {
+            // First revision of a brand-new Scheduling-owned shift: never
+            // silently overwrite a legacy Core-owned assignment.
+            int inserted=db.update(
+                "INSERT INTO staff_schedules (staff_schedule_id,employee_id," +
+                "class_id,workplace_id,date,start_time,end_time,work_type,status," +
+                "assigned_by,assignment_source) VALUES(?,?,NULL,?,?,?,?,?,?,?,'STANDARD')",
+                event.scheduleId(),employee,workplace,date,start,end,
+                workType,status,assignedBy);
+            if(inserted!=1)
+                throw new IllegalStateException("Core did not insert reference shift");
+        } else {
+            // Cancellation must only change status and assigner, never dates,
+            // worker, class/work type or campus supplied in a second event.
+            // This is important if a Core/HR action has changed the old row.
+            List<ExistingShift> current=db.query(
+                "SELECT employee_id,class_id,workplace_id,date,start_time," +
+                "end_time,work_type,status FROM staff_schedules " +
+                "WHERE staff_schedule_id=? FOR UPDATE",
+                (rs,i)->new ExistingShift(rs.getString(1),rs.getString(2),
+                    rs.getString(3),rs.getObject(4,LocalDate.class),
+                    rs.getObject(5,LocalTime.class),rs.getObject(6,LocalTime.class),
+                    rs.getString(7),rs.getString(8)),
+                event.scheduleId());
+            if(current.size()!=1)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Cancellation requires a previously committed Core shift");
+            ExistingShift row=current.get(0);
+            if(!Objects.equals(row.employeeId(),employee) ||
+                    row.classId()!=null ||
+                    !Objects.equals(row.workplaceId(),workplace) ||
+                    !Objects.equals(row.date(),date) ||
+                    !Objects.equals(row.start(),start) ||
+                    !Objects.equals(row.end(),end) ||
+                    !Objects.equals(row.workType(),workType) ||
+                    !"ASSIGNED".equals(row.status()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Reference cancellation disagrees with committed Core shift");
+            int changed=db.update(
+                "UPDATE staff_schedules SET status='CANCELLED',assigned_by=? " +
+                "WHERE staff_schedule_id=? AND status='ASSIGNED'",
+                assignedBy,event.scheduleId());
+            if(changed!=1)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Concurrent Core cancellation/reference state change");
+        }
         db.update("INSERT INTO scheduling_assignment_reference_receipts " +
             "(source_type,schedule_id,last_revision,last_event_id,payload_hash,actor_username) " +
             "VALUES(?,?,?,?,?,?) ON CONFLICT(source_type,schedule_id) " +
