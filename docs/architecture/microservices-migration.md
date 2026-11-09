@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8d-1 (disabled-by-default assignment outbox/reference relay)**, not
+This branch is **migration phase 8d-2 (opt-in standalone staff command execution)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,76 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8d-2: scoped standalone CS/Sale command execution (PRIVATE, OFF)
+
+The first independent Scheduling **command executor** is now implemented for
+**CREATE and CANCEL of standalone CS/Sale shifts only**. It does not authorize
+teaching schedules, class-linked CS coverage, attendance, edits, bulk staffing
+or public business writes. The existing React API paths and Gateway mutations
+remain routed to Core by default.
+
+The operator must explicitly opt in to THREE flags in a disposable
+maintenance/cutover environment:
+
+```text
+SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED=false  # private execution controller
+SCHEDULING_REFERENCE_RELAY_ENABLED=false       # Scheduling -> Core relay
+SCHEDULING_REFERENCE_WRITES_ENABLED=false      # Core reference receiver
+```
+
+Even with the flags enabled, a command requires a private service key, a
+currently active CM bearer token and `Core.writer_mode=QUIESCED`. The worker
+must have an approved availability reservation for the exact date/time.
+Scheduling validates worker role against its own approved availability,
+locks the active lease and checks both in-flight intents and previously
+committed worker overlaps in its own normalized assignment store.
+
+The private workflow is:
+
+1. `POST /internal/scheduling/assignments/commands/stage` with
+   `operation="ASSIGN_STAFF"`, a unique `requestKey`, and payload
+   `{employeeId,staffRole,date,startTime,endTime,workType,reservationId,
+   workplaceId?}`. These are standalone, non-class CS operations/front-desk
+   or Sale shifts only.
+2. `POST /internal/scheduling/assignments/commands/standalone/{requestKey}/execute`
+   executes that *previously staged* command in one independent Scheduling
+   PostgreSQL transaction. It writes the FE read projection, normalized
+   assignment row, immutable revision-1 outbox event and
+   `PENDING_REFERENCE` command receipt, then releases the availability
+   reservation with an expiry recheck.
+3. The private relay delivers only locally committed
+   `PENDING_REFERENCE` events. Core checks the employee and CM are active,
+   that no legacy assignment ID is overwritten, and that event revisions
+   are sequential; it atomically records the reference row and immutable
+   digest receipt.
+4. Only after Core acknowledges the exact event and revision does Scheduling
+   mark the original command `COMMITTED`. Retrying the executor with the
+   same command key returns its original schedule ID, not a duplicate shift.
+5. To cancel an independently created standalone shift, stage
+   `operation="CANCEL_STAFF"` with `targetId` and a new request key,
+   then call
+   `POST /internal/scheduling/assignments/commands/standalone/{requestKey}/cancel`.
+   It locks the existing independent row, rejects any class-linked shift,
+   changes status to `CANCELLED`, increments its version and emits a new
+   immutable Core reference UPSERT. It preserves the cancelled row and
+   provides idempotent retries.
+
+Read routes are deliberately fail-closed (503) while any independently
+committed command remains `PENDING_REFERENCE` or `COMPENSATING`, rather than
+showing a shift as already synchronized into Core when the reference write
+is still outstanding. An unexecuted STAGED request does not block reads.
+
+**Cutover is not yet approved.** There is no fully automatic cross-database
+rollback or end-to-end successful Docker/Playwright result for these private
+executors. Core remains the only PUBLIC assignment write owner. Its
+`QUIESCED` mode can only be entered during an explicitly coordinated
+maintenance window. Never enable the three flags on a normal production
+stack or run the 8b-3b dry-run script while these command executors are in
+use; returning to CORE prematurely could leave unresolved independent
+reference events. Further work must extend Academic/attendance/Payroll
+transactions and their reconciliation, then switch public Gateway routes
+only after verified live end-to-end test results.
 
 **Still required for full Scheduling extraction:** move the assignment and
 teacher attendance write model together with its worker-conflict
