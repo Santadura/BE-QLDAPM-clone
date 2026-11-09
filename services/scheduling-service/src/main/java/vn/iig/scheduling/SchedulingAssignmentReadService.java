@@ -1,0 +1,73 @@
+package vn.iig.scheduling;
+
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
+
+/** FE-compatible scheduling GETs, secured using live Core identity state. */
+@Service
+public class SchedulingAssignmentReadService {
+    private static final Logger log=LoggerFactory.getLogger(SchedulingAssignmentReadService.class);
+    private final AssignmentProjectionRepository repo;
+    private final SchedulingCoreClient core;
+
+    public SchedulingAssignmentReadService(AssignmentProjectionRepository repo,SchedulingCoreClient core) {
+        this.repo=repo;this.core=core;
+    }
+
+    private LocalDate monday(LocalDate d) {
+        return (d==null?LocalDate.now(ZoneId.of("Asia/Ho_Chi_Minh")):d).with(DayOfWeek.MONDAY);
+    }
+
+    public List<Map<String,Object>> teaching(String authorization,LocalDate week) {
+        var actor=core.currentViewer(authorization);
+        if(!Set.of("TC","ADMIN").contains(actor.role()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Teacher schedule management forbidden");
+        return repo.list("TEACHING",null,null,monday(week),false);
+    }
+
+    public List<Map<String,Object>> staff(String authorization,LocalDate week,String role) {
+        var actor=core.currentViewer(authorization);
+        if(!Set.of("CM","ADMIN").contains(actor.role()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Staff schedule management forbidden");
+        String requested=role==null?null:role.trim().toUpperCase(Locale.ROOT);
+        if(requested!=null && !Set.of("CS","SALE").contains(requested))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"role must be CS or SALE");
+        return repo.list("STAFF",null,requested,monday(week),false);
+    }
+
+    public List<Map<String,Object>> mine(String authorization,LocalDate week) {
+        var actor=core.currentViewer(authorization);
+        if(!Set.of("TEACHER","CS","SALE").contains(actor.role()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Worker role required");
+        if(actor.employeeId()==null)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Active worker profile required");
+        return "TEACHER".equals(actor.role()) ?
+            repo.list("TEACHING",actor.employeeId(),null,monday(week),true):
+            repo.list("STAFF",actor.employeeId(),null,monday(week),true);
+    }
+
+    @Scheduled(initialDelay=2000,fixedDelay=5000)
+    public void initialize() {
+        if(repo.initialized()) return;
+        try {
+            var original=core.exportAssignments();
+            repo.importInitial(original);
+            log.info("Imported {} core teaching/staff assignments into Scheduling read model",
+                original.size());
+        } catch(Exception e) {
+            log.warn("Scheduling assignment read-model bootstrap pending: {}",e.getMessage());
+        }
+    }
+}
