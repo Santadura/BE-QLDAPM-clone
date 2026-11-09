@@ -698,10 +698,12 @@ The private workflow is:
    `operation="CANCEL_STAFF"` with `targetId` and a new request key,
    then call
    `POST /internal/scheduling/assignments/commands/standalone/{requestKey}/cancel`.
-   It locks the existing independent row, rejects any class-linked shift,
-   changes status to `CANCELLED`, increments its version and emits a new
-   immutable Core reference UPSERT. It preserves the cancelled row and
-   provides idempotent retries.
+   It locks the existing independent row, rejects class-linked shifts
+   and **any legacy Core-owned row**: the original Scheduling-created
+   revision-1 event must have been delivered and its command committed
+   in Core. Only then may the cancellation change status to `CANCELLED`,
+   increment its version and emit a new immutable Core reference UPSERT.
+   It preserves the cancelled row and provides idempotent retries.
 
 Read routes are deliberately fail-closed (503) while any independently
 committed command remains `PENDING_REFERENCE` or `COMPENSATING`, rather than
