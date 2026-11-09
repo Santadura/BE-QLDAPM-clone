@@ -25,7 +25,7 @@ import org.springframework.stereotype.Service;
 public class AssignmentReferenceRelay {
     private static final Logger log=LoggerFactory.getLogger(AssignmentReferenceRelay.class);
     private static final Set<String> ACCEPTED=Set.of(
-        "APPLIED","ALREADY_APPLIED","SUPERSEDED");
+        "APPLIED","ALREADY_APPLIED");
 
     private final AssignmentDomainOutboxRepository outbox;
     private final AssignmentCommandLifecycleService lifecycle;
