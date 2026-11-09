@@ -1,0 +1,41 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: iig-api-gateway
+  cloud:
+    gateway:
+      # Core and Gateway can both add ACAO; return exactly one value.
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+      httpclient:
+        connect-timeout: 3000
+        response-timeout: 45s
+      routes:
+        # Most-specific catalog route must precede the core /api/** fallback.
+        # This retains FE contracts while using catalog-owned persistence.
+        - id: course-catalog-options
+          uri: ${CATALOG_SERVICE_URI:http://localhost:8093}
+          predicates:
+            - Path=/api/classes/courses
+        - id: course-catalog-admin
+          uri: ${CATALOG_SERVICE_URI:http://localhost:8093}
+          predicates:
+            - Path=/api/catalog/**
+        # Strangler migration: retain every /api/** contract while individual
+        # bounded contexts are extracted into separately owned services.
+        - id: legacy-core
+          uri: ${CORE_SERVICE_URI:http://localhost:8081}
+          predicates:
+            - Path=/api/**
+# Keep the allowed browser origins explicit; override from environment in deployment.
+iig:
+  cors:
+    allowed-origins: ${GATEWAY_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

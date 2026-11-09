@@ -1,5 +1,25 @@
 # Backend IIG — Spring Boot + PostgreSQL + JWT
 
+## Thử kiến trúc Spring Microservices (nhánh migration)
+
+Nhánh `feature/spring-microservices-migration-20261109` có Docker stack **riêng** để thử kiến trúc mới.
+Bản `docker-compose.yml` bên dưới vẫn chạy monolith như trước.
+
+```bash
+# Thay các giá trị mẫu trong microservices.env.example bằng bí mật thật trong .env
+docker compose -f docker-compose.microservices.yml up --build -d
+# API qua Spring Cloud Gateway: http://localhost:8080/api/**
+# Audit và Course Catalog có PostgreSQL riêng (3 database tổng cộng), không mở cổng công khai
+```
+
+Tài liệu triển khai, kiến trúc và giới hạn giai đoạn đầu:
+[docs/architecture/microservices-migration.md](docs/architecture/microservices-migration.md).
+
+**Lưu ý:** Đây là giai đoạn 2 (Gateway + Audit + Catalog). Class, Student, Scheduling, HR và Auth chưa được tách thành
+những microservice độc lập; không dùng cấu hình demo làm production.
+Dừng stack bằng `docker compose -f docker-compose.microservices.yml down` để giữ dữ liệu.
+
+
 ## Chạy toàn bộ BE bằng Docker (khuyến nghị)
 
 Máy mới chỉ cần **Git và Docker Desktop (Docker Compose v2)**. Không cần cài PostgreSQL, Node.js, Prisma, Java hoặc Maven ở máy host.

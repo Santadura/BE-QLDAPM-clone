@@ -458,10 +458,19 @@ model AuditLog {
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user User? @relation(fields: [username], references: [username], onDelete: SetNull)
+  outboxDelivery AuditOutboxDelivery?
 
   @@index([entityType, entityId])
   @@index([username, createdAt])
   @@map("audit_logs")
+}
+
+model AuditOutboxDelivery {
+  auditLogId String @id @map("audit_log_id") @db.VarChar(50)
+  deliveredAt DateTime @default(now()) @map("delivered_at") @db.Timestamptz(6)
+  auditLog AuditLog @relation(fields: [auditLogId], references: [auditLogId], onDelete: Cascade)
+
+  @@map("audit_outbox_deliveries")
 }
 
 // Confirmed presence for one teacher assignment in one class lesson.
