@@ -79,3 +79,45 @@ acks="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
   "SELECT count(*) FROM audit_outbox_deliveries d JOIN audit_logs a ON a.audit_log_id=d.audit_log_id WHERE a.action='CREATE_CLASS';" | tr -d '[:space:]')"
 test "$acks" -ge 2
 echo "PASS: original committed events are acknowledged after delivery"
+
+# Course Catalog is a separate Spring service with independent storage.
+# The initial import must preserve all legacy course options for React.
+catalog_ready=0
+for i in $(seq 1 50); do
+  courses="$(curl -fsS "${BASE}/api/classes/courses" -H "Authorization: Bearer ${TOKEN}" 2>/dev/null || true)"
+  if printf '%s' "$courses" | grep -q '"course-ielts"' && \
+     printf '%s' "$courses" | grep -q '"auto-course-20"'; then
+    catalog_ready=1
+    break
+  fi
+  sleep 2
+done
+test "$catalog_ready" = "1" || { echo "Catalog initial import failed"; exit 1; }
+echo "PASS: existing class course options are served from catalog via Gateway"
+
+unauthorized="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/classes/courses")"
+test "$unauthorized" = "401" || { echo "Catalog GET unexpectedly public: $unauthorized"; exit 1; }
+
+course_id="ms-course-${GITHUB_RUN_ID:-local}"
+course_status="$(curl -sS -o /tmp/iig-created-course.json -w '%{http_code}' \
+  -X POST "${BASE}/api/catalog/courses" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"courseId\":\"${course_id}\",\"name\":\"Microservice Catalog Test\",\"status\":\"ACTIVE\"}")"
+test "$course_status" = "201" || { cat /tmp/iig-created-course.json; echo "Catalog POST: $course_status"; exit 1; }
+course_projected=0
+for i in $(seq 1 50); do
+  projected="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT name FROM courses WHERE course_id='${course_id}'" | tr -d '\r\n')"
+  if [ "$projected" = "Microservice Catalog Test" ]; then
+    course_projected=1
+    break
+  fi
+  sleep 2
+done
+test "$course_projected" = "1" || { echo "Core course reference projection unavailable"; exit 1; }
+count="$("${COMPOSE[@]}" exec -T catalog-postgres psql -U iig_catalog -d iig_catalog -tAc \
+  "SELECT COUNT(*) FROM catalog_courses WHERE course_id='${course_id}'" | tr -d '[:space:]')"
+test "$count" = "1"
+echo "PASS: catalog owns and synchronizes course updates to academic reference"
+
