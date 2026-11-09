@@ -36,6 +36,19 @@ spring:
           uri: ${SCHEDULING_SERVICE_URI:http://localhost:8098}
           predicates:
             - Path=/api/availabilities,/api/availabilities/**
+        # Academic's isolated PostgreSQL records the read result on every
+        # authorized request. Core still owns lesson mutations and ACLs until
+        # event-based Academic ownership is fully verified.
+        - id: academic-class-planning-read
+          uri: ${ACADEMIC_SERVICE_URI:http://localhost:8099}
+          predicates:
+            - Path=/api/class-planning
+            - Method=GET
+        - id: academic-planned-sessions-read
+          uri: ${ACADEMIC_SERVICE_URI:http://localhost:8099}
+          predicates:
+            - Path=/api/classes/*/planned-sessions
+            - Method=GET
         # HR owns salary-rank writes; core only retains a versioned FK copy.
         - id: hr-salary-ranks
           uri: ${HR_SERVICE_URI:http://localhost:8096}

@@ -45,7 +45,7 @@ permissions:
 
 jobs:
   service-tests:
-    name: Gateway, Scheduling, Payroll, HR, Reporting, Identity, Catalog, Audit, core and Prisma validation
+    name: Gateway, Academic, Scheduling, Payroll, HR, Reporting, Identity, Catalog, Audit, core and Prisma validation
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -79,6 +79,8 @@ jobs:
         run: mvn -B -ntp -f services/payroll-service/pom.xml test
       - name: Scheduling availability microservice tests
         run: mvn -B -ntp -f services/scheduling-service/pom.xml test
+      - name: Academic planning microservice tests
+        run: mvn -B -ntp -f services/academic-service/pom.xml test
       - name: Validate Prisma schema
         run: |
           npm ci
@@ -90,7 +92,7 @@ jobs:
         run: docker compose -f docker-compose.microservices.yml config --quiet
 
   distributed-smoke:
-    name: Docker PostgreSQL x8, Gateway, Scheduling, Payroll, HR, Reporting, Identity, Catalog, Audit
+    name: Docker PostgreSQL x9, Academic, Gateway, Scheduling, Payroll, HR, Reporting, Identity, Catalog, Audit
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -139,7 +141,7 @@ jobs:
         run: ./e2e/node_modules/.bin/playwright test --config=e2e/playwright.config.mjs
       - name: Print service logs when smoke fails
         if: failure()
-        run: docker compose -f docker-compose.microservices.yml logs --no-color --tail=160 db-init postgres backend api-gateway audit-service catalog-service identity-service reporting-service hr-service payroll-service scheduling-service
+        run: docker compose -f docker-compose.microservices.yml logs --no-color --tail=160 db-init postgres backend api-gateway academic-service academic-postgres audit-service catalog-service identity-service reporting-service hr-service payroll-service scheduling-service
       - name: Logs for diagnosis
         if: always()
         run: |

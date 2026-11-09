@@ -305,6 +305,38 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  academic-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iig_academic
+      POSTGRES_USER: iig_academic
+      POSTGRES_PASSWORD: ${ACADEMIC_DB_PASSWORD:-local-dev-academic-password}
+    volumes:
+      - academic_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iig_academic -d iig_academic"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  academic-service:
+    build:
+      context: ./services/academic-service
+    environment:
+      SERVER_PORT: "8099"
+      ACADEMIC_DB_URL: jdbc:postgresql://academic-postgres:5432/iig_academic
+      ACADEMIC_DB_USERNAME: iig_academic
+      ACADEMIC_DB_PASSWORD: ${ACADEMIC_DB_PASSWORD:-local-dev-academic-password}
+      CORE_INTERNAL_URL: http://backend:8081
+    expose:
+      - "8099"
+    depends_on:
+      academic-postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
   api-gateway:
     build:
       context: ./services/api-gateway
@@ -317,6 +349,7 @@ services:
       HR_SERVICE_URI: http://hr-service:8096
       PAYROLL_SERVICE_URI: http://payroll-service:8097
       SCHEDULING_SERVICE_URI: http://scheduling-service:8098
+      ACADEMIC_SERVICE_URI: http://academic-service:8099
     ports:
       - "8080:8080"
     depends_on:
@@ -334,6 +367,8 @@ services:
         condition: service_started
       scheduling-service:
         condition: service_started
+      academic-service:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
@@ -345,3 +380,4 @@ volumes:
   hr_pgdata:
   payroll_pgdata:
   scheduling_pgdata:
+  academic_pgdata:

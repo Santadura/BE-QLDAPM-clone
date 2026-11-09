@@ -80,6 +80,41 @@ acks="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
 test "$acks" -ge 2
 echo "PASS: original committed events are acknowledged after delivery"
 
+# Academic GETs now traverse an independently deployed service and DB, while
+# Core still enforces the LIVE JWT, class visibility and all session mutations.
+# Always compare the public route with the authoritative Core response so the
+# FE JSON shape cannot drift during read extraction.
+academic_json=""
+for attempt in $(seq 1 30); do
+  if academic_json="$(curl -fsS -H "Authorization: Bearer ${TOKEN}" \
+      "${BASE}/api/class-planning" 2>/dev/null)"; then break; fi
+  sleep 2
+done
+printf '%s' "$academic_json" | python3 -c \
+  'import json,sys; assert isinstance(json.load(sys.stdin),list)'
+core_planning="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "Authorization: Bearer ${TOKEN}" \
+  "http://backend:8081/api/class-planning")"
+CORE_PLANNING_JSON="$core_planning" ACADEMIC_PLANNING_JSON="$academic_json" python3 -c \
+  'import os,json; assert json.loads(os.environ["CORE_PLANNING_JSON"]) == json.loads(os.environ["ACADEMIC_PLANNING_JSON"])'
+if [ "$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/class-planning")" != "401" ]; then
+  echo "Academic planning route did not enforce live JWT"; exit 1
+fi
+new_planned="$(curl -fsS -H "Authorization: Bearer ${TOKEN}" \
+  "${BASE}/api/classes/${one}/planned-sessions")"
+core_planned="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "Authorization: Bearer ${TOKEN}" \
+  "http://backend:8081/api/classes/${one}/planned-sessions")"
+CORE_LESSONS_JSON="$core_planned" ACADEMIC_LESSONS_JSON="$new_planned" python3 -c \
+  'import json,os; a=json.loads(os.environ["ACADEMIC_LESSONS_JSON"]); b=json.loads(os.environ["CORE_LESSONS_JSON"]); assert isinstance(a,list) and a==b'
+academic_rows="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
+  -d iig_academic -tAc "SELECT count(*) FROM academic_read_snapshots;" | tr -d '[:space:]')"
+if ! [[ "$academic_rows" =~ ^[0-9]+$ ]] || [ "$academic_rows" -lt 2 ]; then
+  echo "Academic independent database did not persist both authorized read snapshots"; exit 1
+fi
+echo "PASS: Academic planning/session GETs match Core, reject missing JWT, persist private snapshots"
+
+
 # Course Catalog is a separate Spring service with independent storage.
 # The initial import must preserve all legacy course options for React.
 catalog_ready=0

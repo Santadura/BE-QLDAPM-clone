@@ -132,6 +132,17 @@ còn dữ liệu. **Chưa bật public write cutover**: ca giáo viên,
 CS hỗ trợ lớp, điểm danh và Payroll vẫn cần chuyển giao cùng
 các kiểm thử tích hợp.
 
+**Academic read microservice (bước đầu):** Có thêm service riêng cổng nội
+bộ `8099` và PostgreSQL `iig_academic`, sở hữu bảng snapshot của
+`GET /api/class-planning` và `GET /api/classes/{classId}/planned-sessions`.
+Gateway chuyển hai API GET này qua Academic; mọi POST/PUT/PATCH và nghiệp vụ
+lớp/điểm danh vẫn đi Core. Service kiểm tra JWT còn hiệu lực và gọi nguồn
+Core trong từng lần đọc, lưu bản sao theo người dùng+role+loại dữ liệu,
+trả JSON hợp đồng cũ cùng `Cache-Control: no-store`; **không dùng cache cũ
+khi Core lỗi**. Đây là bước chuyển read model, chưa phải quyền ghi Academic
+độc lập hay khả năng tắt Core. Docker smoke so sánh JSON Academic và Core,
+kiểm tra quyền và chứng minh Academic sở hữu PostgreSQL riêng.
+
 Dừng stack bằng `docker compose -f docker-compose.microservices.yml down` để giữ dữ liệu.
 
 

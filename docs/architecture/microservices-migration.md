@@ -649,6 +649,30 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Academic read-service extraction (Core still owns writes)
+
+Academic now has a separate Spring Boot application
+`services/academic-service`, private `iig_academic` PostgreSQL and
+actor/role-scoped durable JSON read snapshots. Gateway routes only the
+FE-compatible GETs `/api/class-planning` and
+`/api/classes/{classId}/planned-sessions` to Academic. Academic validates
+the current bearer against Core `/api/me` on every call, then asks the
+existing Core GET for the *fresh* source document and writes the result to
+its own read database. Core still evaluates all managing-CS, assigned-CS
+and teacher permissions for a specific class. Authentication failures,
+source unavailability and malformed JSON fail closed: the snapshot is
+never served as an unauthorized or stale fallback. Core POST/PUT/PATCH
+paths are unchanged.
+
+This is a **transitional read boundary, not independent Academic write
+ownership**. The next step requires versioned class/session/attendance
+events, ownership of class and student timetables, and a proven saga
+for class-linked teacher and CS staffing before the Core Academic
+transactions can be removed. No access to Core PostgreSQL is configured
+from Academic. Docker smoke asserts identical Core/Academic JSON for
+existing and newly created class session schedules, live authorization
+and durable snapshot persistence in the separate Academic database.
+
 ## Phase 8e: immutable end-to-end assignment event history
 
 The Core reference projection previously retained only the most recent

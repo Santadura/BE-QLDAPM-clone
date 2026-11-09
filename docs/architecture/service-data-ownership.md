@@ -171,6 +171,14 @@ service-key-protected projection API after bootstrap.
 - [ ] Verify the full event replay/recovery flow against real PostgreSQL,
   then finish independent Academic/Attendance and class-support mutation
   ownership before public API cutover.
+- [x] Academic class-planning and planned-session GET routes now pass
+  through an independently deployed Academic service with isolated
+  `iig_academic` PostgreSQL read snapshots. Authorization and responses
+  are checked against LIVE Core on every GET; source outages fail closed.
+  Public session writes remain Core-owned and are NOT yet a cross-DB saga.
+- [ ] Transfer Academic class/session write authority and event ownership;
+  mirror teacher/CS coverage, classroom access scopes, attendance and
+  student timetable constraints before stopping the Core Academic writer.
 - [x] Phase 8d-5: reserve a durable, actor-scoped claim in Core before
   independently committing a standalone Scheduling create/edit/cancel command.
   Claims serialize with Core writer-mode changes and prevent a race between
