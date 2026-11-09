@@ -18,8 +18,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Independent Scheduling-owned READ copy of assignments. All writes still
- * originate in Core until class lifecycle, CS and attendance invariants move.
+ * Independent Scheduling-owned assignment read projection. Core remains the
+ * default writer. The feature-gated standalone CS/Sale executor can update
+ * it and the normalized shadow in the same local transaction while Core is
+ * QUIESCED; all public/class/teacher writes remain Core-owned.
  * Versioned tombstones prevent delayed retries resurrecting removed records.
  */
 @Repository
