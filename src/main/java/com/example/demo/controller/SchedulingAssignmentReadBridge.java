@@ -132,6 +132,25 @@ public class SchedulingAssignmentReadBridge {
         db.batchUpdate(sql,args);
     }
 
+    /** Diagnostic fence state for the future independent Scheduling writer.
+     * This is advisory only: Core's reference consumer independently checks
+     * QUIESCED under the actual Core write transaction.
+     */
+    public record AssignmentWriterState(String mode) {}
+
+    @GetMapping("/writer-state")
+    public AssignmentWriterState writerState(
+            @RequestHeader(value="X-Internal-Key",required=false) String key) {
+        authorize(key);
+        String mode=db.queryForObject(
+            "SELECT writer_mode FROM scheduling_assignment_writer_control " +
+            "WHERE singleton=TRUE",String.class);
+        if(!"CORE".equals(mode) && !"QUIESCED".equals(mode))
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Unknown Core assignment writer mode");
+        return new AssignmentWriterState(mode);
+    }
+
     public record ManifestSummary(long rowCount,long versionSum,long pendingCount,
                                   long liveSchedules,long trackedLiveSchedules) {}
 
