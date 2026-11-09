@@ -9,8 +9,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Private staging only. No Gateway route, no assignment mutation and no public
- * command execution. A later cutover must revalidate the actor, academic
+ * Private staging and safe withdrawal only. No Gateway route, no assignment
+ * mutation and no public command execution. A later cutover must revalidate the actor, academic
  * session version and business constraints at execution time as well.
  */
 @RestController
