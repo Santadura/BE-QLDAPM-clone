@@ -124,6 +124,24 @@ public class StandaloneStaffCancellationExecutor {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Only an active standalone CS/Sale shift can be cancelled");
 
+        // A copied Core shift can look identical to a standalone
+        // Scheduling-owned shift in the normalized/read model. Never cancel
+        // such legacy rows: require the exact revision-1 create event to have
+        // been delivered AND its original command fully committed in Core.
+        Long owned=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_domain_outbox o " +
+            "JOIN scheduling_assignment_command_inbox inbox " +
+            "ON inbox.actor_username=o.actor_username " +
+            "AND inbox.operation=o.operation AND inbox.request_key=o.request_key " +
+            "WHERE o.source_type='STAFF' AND o.schedule_id=? " +
+            "AND o.revision=1 AND o.operation='ASSIGN_STAFF' " +
+            "AND o.event_kind='UPSERT' AND o.delivered_at IS NOT NULL " +
+            "AND inbox.state='COMMITTED'",
+            Long.class,target);
+        if(owned==null || owned!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Only Core-confirmed Scheduling-owned standalone shifts can be cancelled");
+
         // Consistent with availability reservation and new-shift creation:
         // serialize a cancellation with concurrent assignment commands.
         db.queryForList("SELECT pg_advisory_xact_lock(hashtext(?))",current.employeeId());
