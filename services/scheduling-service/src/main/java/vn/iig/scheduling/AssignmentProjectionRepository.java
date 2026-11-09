@@ -6,6 +6,7 @@ import java.time.LocalTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -79,6 +80,25 @@ public class AssignmentProjectionRepository {
                 || item.startTime()==null || item.endTime()==null
                 || item.status()==null || !item.endTime().isAfter(item.startTime())))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid assignment data");
+        String document=encodedPayload(item);
+        db.update("INSERT INTO scheduling_assignment_read_model " +
+            "(source_type,schedule_id,version,deleted,employee_id,staff_role,work_date,status,payload) " +
+            "VALUES(?,?,?,?,?,?,?, ?,CAST(? AS jsonb)) " +
+            "ON CONFLICT(source_type,schedule_id) DO UPDATE SET " +
+            "version=EXCLUDED.version,deleted=EXCLUDED.deleted,employee_id=EXCLUDED.employee_id," +
+            "staff_role=EXCLUDED.staff_role,work_date=EXCLUDED.work_date," +
+            "status=EXCLUDED.status,payload=EXCLUDED.payload,updated_at=NOW() " +
+            "WHERE scheduling_assignment_read_model.version<EXCLUDED.version",
+            item.sourceType(),item.id(),item.version(),item.deleted(),item.employeeId(),
+            item.staffRole(),item.date(),item.status(),document);
+    }
+
+
+    /**
+     * Use the identical FE-compatible JSON encoding for both projection
+     * writes and migration reconciliation. JSONB key order is irrelevant.
+     */
+    private String encodedPayload(AssignmentSnapshot item) {
         String document="{}";
         if(!item.deleted()) {
             Map<String,Object> row=new LinkedHashMap<>();
@@ -109,16 +129,48 @@ public class AssignmentProjectionRepository {
                 throw new IllegalStateException("Failed to encode assignment data",e);
             }
         }
-        db.update("INSERT INTO scheduling_assignment_read_model " +
-            "(source_type,schedule_id,version,deleted,employee_id,staff_role,work_date,status,payload) " +
-            "VALUES(?,?,?,?,?,?,?, ?,CAST(? AS jsonb)) " +
-            "ON CONFLICT(source_type,schedule_id) DO UPDATE SET " +
-            "version=EXCLUDED.version,deleted=EXCLUDED.deleted,employee_id=EXCLUDED.employee_id," +
-            "staff_role=EXCLUDED.staff_role,work_date=EXCLUDED.work_date," +
-            "status=EXCLUDED.status,payload=EXCLUDED.payload,updated_at=NOW() " +
-            "WHERE scheduling_assignment_read_model.version<EXCLUDED.version",
-            item.sourceType(),item.id(),item.version(),item.deleted(),item.employeeId(),
-            item.staffRole(),item.date(),item.status(),document);
+        return document;
+    }
+
+    private record Stored(long version,boolean deleted,String employeeId,
+                          String staffRole,LocalDate date,String status,String payload) {}
+
+    public long countAllAssignments() {
+        requireReady();
+        Long count=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_read_model",Long.class);
+        return count==null?0:count;
+    }
+
+    /**
+     * Strict equality is a cutover gate, not an eventually-consistent hint:
+     * compare tombstones, IDs, versions, indexed fields AND actual FE JSON.
+     * Never "repair" a same-version divergence by overwriting data here.
+     */
+    public boolean matchesManifest(AssignmentSnapshot expected) {
+        requireReady();
+        if(expected==null || expected.sourceType()==null || expected.id()==null)
+            return false;
+        List<Stored> rows=db.query(
+            "SELECT version,deleted,employee_id,staff_role,work_date,status,payload::text " +
+            "FROM scheduling_assignment_read_model WHERE source_type=? AND schedule_id=?",
+            (rs,i)->new Stored(rs.getLong(1),rs.getBoolean(2),rs.getString(3),
+                rs.getString(4),rs.getObject(5,LocalDate.class),
+                rs.getString(6),rs.getString(7)),
+            expected.sourceType(),expected.id());
+        if(rows.size()!=1) return false;
+        Stored actual=rows.get(0);
+        if(actual.version()!=expected.version() || actual.deleted()!=expected.deleted()
+                || !Objects.equals(actual.employeeId(),expected.employeeId())
+                || !Objects.equals(actual.staffRole(),expected.staffRole())
+                || !Objects.equals(actual.date(),expected.date())
+                || !Objects.equals(actual.status(),expected.status())) return false;
+        try {
+            return json.readTree(encodedPayload(expected))
+                .equals(json.readTree(actual.payload()));
+        } catch(JsonProcessingException ex) {
+            return false;
+        }
     }
 
     public List<Map<String,Object>> list(String source,String employeeId,String role,
