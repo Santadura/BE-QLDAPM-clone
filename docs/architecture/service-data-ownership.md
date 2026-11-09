@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8d-1 (durable Scheduling outbox + gated Core reference consumer; no write cutover)**. Do not claim full migration before every
+> Architecture status: **Phase 8d-2 (private standalone CS/Sale executor; public writes still in Core)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -162,9 +162,14 @@ service-key-protected projection API after bootstrap.
 - [x] Provide a **disabled-by-default** Core reference consumer for standalone,
   non-class STAFF UPSERTs with a receipt, exact version, hash checks and
   an audited Core write-fence bypass confined to the reference transaction.
-- [ ] Implement the independent Scheduling assignment command producer and
-  connect it to the shared local transaction; **no public FE write route is
-  moved in this phase**.
+- [x] Phase 8d-2: implement opt-in, PRIVATE standalone CS/Sale create
+  and cancel executors; use live CM identity, Core QUIESCED mode, approved
+  Scheduling lease, committed shift conflicts, revisioned local projection,
+  immutable event outbox and PENDING_REFERENCE state in one local transaction.
+  The public routes remain in Core and all three cutover flags default off.
+- [ ] Expand independent write ownership to class support/teachers, edits,
+  attendance, bulk staffing and Payroll, with Academic versioned leases,
+  compensating commands and end-to-end verified CI before public routing.
 - [ ] Extend Core reference projection to teacher, CS class coverage,
   cancellation/tombstones, attendance and payroll without cross-DB FKs.
 - [ ] Enforce strict ownership handoff, compensation and disaster recovery
