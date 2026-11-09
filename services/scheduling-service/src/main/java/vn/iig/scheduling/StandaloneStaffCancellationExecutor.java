@@ -117,7 +117,9 @@ public class StandaloneStaffCancellationExecutor {
         Current current=rows.get(0);
         if(current.deleted() || !"ASSIGNED".equals(current.status()) ||
                 (current.classId()!=null && !current.classId().isBlank()) ||
+                current.staffRole()==null ||
                 !Set.of("CS","SALE").contains(current.staffRole()) ||
+                current.employeeId()==null || current.employeeId().isBlank() ||
                 current.version()<1)
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Only an active standalone CS/Sale shift can be cancelled");
