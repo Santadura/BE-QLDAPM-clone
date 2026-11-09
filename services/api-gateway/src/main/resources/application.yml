@@ -13,6 +13,12 @@ spring:
         connect-timeout: 3000
         response-timeout: 45s
       routes:
+        # Availability is now registered/reviewed in Scheduling's independent
+        # database. Other class/teacher/staff assignments remain in Core.
+        - id: scheduling-availabilities
+          uri: ${SCHEDULING_SERVICE_URI:http://localhost:8098}
+          predicates:
+            - Path=/api/availabilities,/api/availabilities/**
         # HR owns salary-rank writes; core only retains a versioned FK copy.
         - id: hr-salary-ranks
           uri: ${HR_SERVICE_URI:http://localhost:8096}

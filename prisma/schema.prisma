@@ -462,6 +462,16 @@ model StaffSalary {
 
 // Transitional payroll source state migrated from the newer main branch.
 // These records will move to the Payroll service as part of ledger extraction.
+// Versions of Scheduling-owned availability reference copies in Core.
+// Deletion tombstones persist here so stale relay retries cannot resurrect rows.
+model SchedulingAvailabilityVersion {
+  availabilityId String @id @map("availability_id") @db.VarChar(50)
+  version BigInt
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("scheduling_availability_versions")
+}
+
 model HRSalaryRankVersion {
   salaryRankId String @id @map("salary_rank_id") @db.VarChar(50)
   version BigInt

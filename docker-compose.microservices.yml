@@ -39,6 +39,10 @@ services:
       DB_PASSWORD: ${CORE_DB_PASSWORD:-postgres}
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-key-at-least-256-bits-please}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      SCHEDULING_BRIDGE_ENABLED: "true"
+      SCHEDULING_AVAILABILITY_EXTERNAL: "true"
+      SCHEDULING_INTERNAL_API_KEY: ${SCHEDULING_INTERNAL_API_KEY:-local-dev-scheduling-key-change-before-deployment}
+      SCHEDULING_SERVICE_URL: http://scheduling-service:8098
       PAYROLL_BRIDGE_ENABLED: "true"
       PAYROLL_INTERNAL_API_KEY: ${PAYROLL_INTERNAL_API_KEY:-local-dev-payroll-key-change-before-deployment}
       HR_CERTIFICATE_BRIDGE_ENABLED: "true"
@@ -263,6 +267,39 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  scheduling-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iig_scheduling
+      POSTGRES_USER: iig_scheduling
+      POSTGRES_PASSWORD: ${SCHEDULING_DB_PASSWORD:-local-dev-scheduling-password}
+    volumes:
+      - scheduling_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iig_scheduling -d iig_scheduling"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  scheduling-service:
+    build:
+      context: ./services/scheduling-service
+    environment:
+      SERVER_PORT: "8098"
+      SCHEDULING_DB_URL: jdbc:postgresql://scheduling-postgres:5432/iig_scheduling
+      SCHEDULING_DB_USERNAME: iig_scheduling
+      SCHEDULING_DB_PASSWORD: ${SCHEDULING_DB_PASSWORD:-local-dev-scheduling-password}
+      SCHEDULING_INTERNAL_API_KEY: ${SCHEDULING_INTERNAL_API_KEY:-local-dev-scheduling-key-change-before-deployment}
+      CORE_INTERNAL_URL: http://backend:8081
+    expose:
+      - "8098"
+    depends_on:
+      scheduling-postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
   api-gateway:
     build:
       context: ./services/api-gateway
@@ -274,6 +311,7 @@ services:
       REPORTING_SERVICE_URI: http://reporting-service:8095
       HR_SERVICE_URI: http://hr-service:8096
       PAYROLL_SERVICE_URI: http://payroll-service:8097
+      SCHEDULING_SERVICE_URI: http://scheduling-service:8098
     ports:
       - "8080:8080"
     depends_on:
@@ -289,6 +327,8 @@ services:
         condition: service_started
       payroll-service:
         condition: service_started
+      scheduling-service:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
@@ -299,3 +339,4 @@ volumes:
   reporting_pgdata:
   hr_pgdata:
   payroll_pgdata:
+  scheduling_pgdata:
