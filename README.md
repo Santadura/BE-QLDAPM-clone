@@ -15,7 +15,7 @@ docker compose -f docker-compose.microservices.yml up --build -d
 Tài liệu triển khai, kiến trúc và giới hạn giai đoạn đầu:
 [docs/architecture/microservices-migration.md](docs/architecture/microservices-migration.md).
 
-**Lưu ý:** Đây là giai đoạn 5 (Gateway + Audit + Catalog + Authentication + Reporting + HR Certificates). Class, Student, Scheduling, HR còn lại và Payroll chưa được tách thành
+**Lưu ý:** Đây là giai đoạn 5b (Gateway + Audit + Catalog + Authentication + Reporting + HR Certificates + HR Salary Ranks). Class, Student, Scheduling, quản lý nhân viên và Payroll ledger chưa được tách thành
 những microservice độc lập; không dùng cấu hình demo làm production.
 Dừng stack bằng `docker compose -f docker-compose.microservices.yml down` để giữ dữ liệu.
 
