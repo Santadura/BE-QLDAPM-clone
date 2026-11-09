@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8b-3b (Core writer fence + Scheduling shadow/inbox, not cutover)**. Do not claim full migration before every
+> Architecture status: **Phase 8b-3c (Academic session leases; Core remains assignment write owner)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -148,9 +148,13 @@ service-key-protected projection API after bootstrap.
   different input. These commands currently have NO executable handler.
 - [x] Version Core Academic class/session state and expose private HTTP
   session facts. This is not a transactional reservation across service DBs.
-- [ ] Introduce a version-checked Academic session reservation that cannot
-  expire during an in-flight Scheduling command and an idempotent saga
-  coordinating Core reference projections, attendance and Payroll.
+- [x] Phase 8b-3c: expose version-checked Academic session lease acquire,
+  renew and release, including a stable command retry key and PostgreSQL
+  mutation fences. Leases are disabled while CORE is the live writer.
+- [ ] Integrate lease renewal through the **entire** Scheduling command/saga
+  (including crashes and compensation); enforce resulting reference versions
+  in Core attendance/Payroll consumers. The five-minute lease primitive
+  alone is not an atomic distributed transaction.
 - [ ] Introduce idempotent, durable commands for staff/teacher assignment,
   attendance and Academic session reservation; remove direct Academic SQL.
 - [ ] Check existing committed assignment conflicts in the new authoritative
