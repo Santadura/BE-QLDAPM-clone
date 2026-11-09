@@ -25,7 +25,7 @@ public class AssignmentCutoverVerificationService {
     private final SchedulingCoreClient core;
 
     public record Report(boolean ready,String state,long sourceRows,long localRows,
-                         long checkedRows,long mismatches,long pendingChanges,
+                         long writeShadowRows,long checkedRows,long mismatches,long pendingChanges,
                          long liveSchedules,long trackedLiveSchedules,
                          long sourceVersionSum,List<String> sampleMismatchKeys) {}
 
@@ -77,6 +77,7 @@ public class AssignmentCutoverVerificationService {
                 "Assignment cutover verification exceeds 25000 rows; use a paged migration job");
 
         long localRows=readModel.countAllAssignments();
+        long shadowRows=readModel.countShadowAssignments();
         var current=core.assignmentManifestSummary();
         boolean unchanged=before.rowCount()==current.rowCount() &&
             before.versionSum()==current.versionSum() &&
@@ -85,14 +86,14 @@ public class AssignmentCutoverVerificationService {
         boolean completeOutbox=current.liveSchedules()==current.trackedLiveSchedules();
         boolean noPending=before.pendingCount()==0 && current.pendingCount()==0;
         boolean matching=checked==current.rowCount() &&
-            localRows==current.rowCount() && mismatched==0;
+            localRows==current.rowCount() && shadowRows==current.rowCount() && mismatched==0;
         String state=!unchanged ? "SOURCE_CHANGED_DURING_SCAN" :
             !completeOutbox ? "CORE_OUTBOX_INCOMPLETE" :
             !noPending ? "PENDING_PROJECTION_CHANGES" :
             !matching ? "PROJECTION_DRIFT" : "READY";
 
         return new Report("READY".equals(state),state,current.rowCount(),localRows,
-            checked,mismatched,current.pendingCount(),current.liveSchedules(),
+            shadowRows,checked,mismatched,current.pendingCount(),current.liveSchedules(),
             current.trackedLiveSchedules(),current.versionSum(),List.copyOf(samples));
     }
 
