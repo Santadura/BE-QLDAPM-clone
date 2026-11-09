@@ -178,13 +178,13 @@ public class SchedulingAssignmentReferenceBridge {
             String.class);
         db.update("INSERT INTO staff_schedules (staff_schedule_id,employee_id," +
             "class_id,workplace_id,date,start_time,end_time,work_type,status," +
-            "assigned_by,assignment_source) VALUES(?,?,NULL,?,?,?,?,?,?,?,'SCHEDULING') " +
+            "assigned_by,assignment_source) VALUES(?,?,NULL,?,?,?,?,?,?,?,'STANDARD') " +
             "ON CONFLICT(staff_schedule_id) DO UPDATE SET " +
             "employee_id=EXCLUDED.employee_id,class_id=NULL," +
             "workplace_id=EXCLUDED.workplace_id,date=EXCLUDED.date," +
             "start_time=EXCLUDED.start_time,end_time=EXCLUDED.end_time," +
             "work_type=EXCLUDED.work_type,status=EXCLUDED.status," +
-            "assigned_by=EXCLUDED.assigned_by,assignment_source='SCHEDULING'",
+            "assigned_by=EXCLUDED.assigned_by",
             event.scheduleId(),employee,workplace,date,start,end,workType,status,assignedBy);
         db.update("INSERT INTO scheduling_assignment_reference_receipts " +
             "(source_type,schedule_id,last_revision,last_event_id,payload_hash,actor_username) " +
