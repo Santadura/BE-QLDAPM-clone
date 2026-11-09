@@ -15,6 +15,9 @@ iig:
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${SCHEDULING_INTERNAL_API_KEY}
+  scheduling:
+    # Future Core reference relay: must not run before controlled writer cutover.
+    assignment-reference-relay-enabled: ${SCHEDULING_REFERENCE_RELAY_ENABLED:false}
 management:
   endpoints:
     web:
