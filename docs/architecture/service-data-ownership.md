@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 5 (HR certificate write-model extraction)**. Do not claim full migration before every
+> Architecture status: **Phase 5b (HR certificates and salary ranks extraction)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -8,11 +8,12 @@
 | Domain | Owned entities / tables | State |
 | --- | --- | --- |
 | Identity & Access | `roles`, `app_functions`, `permissions`, `users` | Legacy core remains **write owner**; standalone Authentication Service authenticates and holds an isolated `identity_users` projection, **not full Identity extraction** |
-| HR & People | `employees`, `salary_ranks` | Employee lifecycle still owned by Core; certificates now written by independent HR Service |
-| HR certificates | **`hr_certificates`, `hr_certificate_outbox`** | HR Service owns certificate writes; Core `certificates` is a versioned read/reference projection |
+| HR & People | `employees` | Employee lifecycle remains in Core; HR owns certificates and salary rank writes |
+| HR certificates | **`hr_certificates`, `hr_certificate_outbox`** | HR Service owns certificate writes; Core `certificates` is a versioned reference projection |
+| HR salary ranks | **`hr_salary_ranks`, `hr_salary_rank_outbox`** | HR Service owns salary-rank writes; Core `salary_ranks` is a versioned FK reference projection |
 | Academic | `classes`, `lessons`, `students`, `student_targets`, `class_target_requirements`, `class_students`, `class_access_scopes`, `assignments`, `exams`, `student_results`, `class_sessions` | Legacy core |
 | Scheduling | `availabilities`, `teaching_schedules`, `staff_schedules`, `teacher_session_attendance` | Legacy core |
-| Payroll | `employee_salaries`, `employee_salary_details`, `staff_salaries` | Legacy core |
+| Payroll | `employee_salaries`, `employee_salary_details`, `staff_salaries`, `salary_rank_history`, `salary_review_requests`, `salary_calculation_items` | Core; not yet independently owned |
 | Authentication projection | **`identity_users`, `identity_revocations`** | **Isolated Identity database; live credentials still originate from core** |
 | Course Catalog | **`catalog_courses`, `catalog_outbox`, `catalog_meta`** | **Isolated Catalog database (extracted)** |
 | Course FK projection | `courses` | Legacy academic read/reference copy; Catalog is authoritative |
@@ -35,6 +36,7 @@ Spring Cloud Gateway (:8080 public)
   |-- /api/classes/courses, /api/catalog/** --> Catalog (:8093) --> catalog-postgres
   |-- /api/statistics and /api/dashboard -----> Reporting (:8095) --> reporting-postgres
   |-- /api/employee-management/*/certificates -> HR (:8096) --> hr-postgres
+  |-- /api/payroll/ranks/** ----------------> HR (:8096) --> hr-postgres
   |      (live JWT authorization + key-protected snapshot via Core)
   |-- /api/** -------------------------------> Core (:8081) --> core-postgres
                                                 |   |
@@ -157,7 +159,7 @@ there are no cross-service SQL joins or shared writable tables,
 distributed business invariants and rollback are proven by automated tests,
 and actual FE flows continue to work through Gateway.
 
-Phase 4 now has independent Audit and Catalog ownership and separately
+Phase 5b now has independent Audit, Catalog and HR salary-rank ownership and separately
 deployed Authentication and Reporting read-model processes. **It is not a
 fully migrated system**: Core is still the source of credential updates,
 reporting computations, dashboard queries and domain transactions.
