@@ -75,6 +75,43 @@ class AttendancePayrollEvidenceControllerTest {
         verify(verifier).verify();
     }
 
+    @Test void historicalPageMustBeKeyProtectedAndBounded() {
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->controller.events(null,0,100)).getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,
+            ()->controller.events("payroll-secret",-1,100)).getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,
+            ()->controller.events("payroll-secret",0,101)).getStatusCode());
+        verifyNoInteractions(source,projection,verifier);
+    }
+
+    @Test void immutableCompleteHistoryIsPaginatedWithoutFinancialOrActorData() {
+        stableParity();
+        var event=new AttendanceEventProjectionRepository.PayrollHistoryEvent(
+            9,"teach-1","UPSERT","PRESENT","a".repeat(64));
+        when(projection.payrollHistory(0,100)).thenReturn(List.of(event));
+        var page=controller.events("payroll-secret",0,100).getBody();
+        assertEquals(HttpStatus.OK,
+            controller.events("payroll-secret",0,100).getStatusCode());
+        assertEquals(List.of(event),page.events());
+        assertEquals(9L,page.sourceRevision());
+        assertEquals(4L,page.sourceEventCount());
+        verify(projection,times(2)).payrollHistory(0,100);
+    }
+
+    @Test void historyEventWithReusedOrBackwardsIdIsRejected() {
+        stableParity();
+        when(projection.payrollHistory(9,100)).thenReturn(List.of(
+            new AttendanceEventProjectionRepository.PayrollHistoryEvent(
+                9,"teach-1","UPSERT","PRESENT","a".repeat(64))));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,
+            ()->controller.events("payroll-secret",9,100)).getStatusCode());
+    }
+
     @Test void tamperedHistoryRefusesToPublishPayrollEvidence() {
         when(source.writerFence()).thenReturn(fence);
         when(source.manifestSummary()).thenReturn(summary);
