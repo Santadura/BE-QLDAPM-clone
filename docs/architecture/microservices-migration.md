@@ -2,7 +2,7 @@
 
 ## Status (2026-11-10)
 
-This branch is **migration phase 8f-6 (coordinated Attendance/Scheduling writer freeze preflight)**, not
+This branch is **migration phase 8f-7 (versioned Academic/Scheduling Attendance command preconditions)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,50 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8f-7: versioned Academic, teacher and exact-CS support evidence
+
+The Attendance public PUT now obtains a service-key and live-CS-JWT-protected
+`GET /internal/attendance/lesson-facts` from Core **before** issuing the
+private write. This scoped snapshot requires one active teacher assignment
+matching a PLANNED Academic class session and the exact active CLASS_SUPPORT
+shift of the authenticated CS. It includes the class and session
+`scheduling_version`, Core teacher/CS assignment outbox revisions, the
+exact session and CS shift identities/time interval, plus the Attendance
+and Scheduling writer-mode generations. It never trusts a client-supplied
+actor or reads Core PostgreSQL from the independent Attendance Service.
+
+A canonical SHA-256 optimistic precondition `X-Attendance-Lesson-Token`
+is forwarded through the private Core command. After Core's original
+transactional `mark()` has acquired the class/lesson/teacher/CS row locks,
+Core re-reads and compares the complete scoped reference snapshot **inside
+the same transaction**. If a version or support identity changed between
+HTTP preflight and the locked write, Core returns HTTP 409 and rolls back
+the entire attendance, audit, source-outbox and command-receipt transaction.
+The detached HTTP snapshot alone never authorizes a write.
+
+Both keyed and keyless existing FE calls use this check through the
+microservices ingress. Completed same-key commands still replay Core's
+atomic receipt (subject to live CS role and exact-support revalidation),
+without reapplying attendance. The legacy Compose Core public PUT keeps
+its existing original row locks and request shape. The Core private GET
+does not appear on the public Gateway.
+
+Docker smoke checks service-key/JWT isolation and demonstrates that a
+change in CS shift outbox revision changes the token even when the same
+lesson and CS role remain valid. A stale private Core PUT is expected to
+return 409 without recording attendance or an idempotency receipt, and the
+following normal microservices FE-compatible PUT must still succeed.
+Core unit tests cover missing CS assignment, quiesced writer, changed
+version, changed actor and controller authorization.
+
+**Boundary:** these checks reduce the risk of time-of-check/time-of-use
+races while Core still holds the real transaction and SQL locks. They are
+not a new independent Attendance or Academic writer. The remaining
+cutover requires an Attendance-owned authoritative command model,
+Academic/Scheduling versioned leases renewed across the entire saga,
+Payroll source-fact reconciliation, immutable downstream events and a
+fenced one-way handoff.
 
 ## Phase 8f-6: coordinated Attendance + Scheduling writer quiescence
 

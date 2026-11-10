@@ -253,6 +253,69 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
 attendance_support="ms-attendance-cs-${GITHUB_RUN_ID:-local}"
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
   -c "INSERT INTO staff_schedules(staff_schedule_id,employee_id,class_id,date,start_time,end_time,work_type,status) VALUES('${attendance_support}','cs-001','class-0001','2026-10-06','18:30','20:30','CLASS_SUPPORT','ASSIGNED')"
+# Phase 8f-7: real versioned Academic/teacher/CS precondition.
+# Core is the only writer; Attendance only receives a checked HTTP token.
+attendance_key="${ATTENDANCE_INTERNAL_API_KEY:-local-dev-attendance-key-change-before-deployment}"
+lesson_facts_url="http://backend:8081/internal/attendance/lesson-facts?classId=class-0001&teachingScheduleId=teaching-001"
+if "${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "Authorization: Bearer ${cs_token}" "$lesson_facts_url" >/dev/null 2>&1; then
+  echo "Private Attendance Academic/CS facts accepted a missing service key"; exit 1
+fi
+if "${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${attendance_key}" "$lesson_facts_url" >/dev/null 2>&1; then
+  echo "Private Attendance Academic/CS facts accepted a missing JWT"; exit 1
+fi
+if [ "$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/attendance/lesson-facts")" != "404" ]; then
+  echo "Private Attendance Academic/CS facts were exposed through Gateway"; exit 1
+fi
+lesson_facts_before="$("${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${attendance_key}" \
+  --header "Authorization: Bearer ${cs_token}" "$lesson_facts_url")"
+stale_lesson_token="$(FACTS="$lesson_facts_before" python3 -c \
+  'import json,os; f=json.loads(os.environ["FACTS"]); assert f["sessionVersion"]>=1 and f["classVersion"]>=1 and f["teacherVersion"]>=1 and f["supportVersion"]>=1 and f["actorEmployeeId"]=="cs-001"; print(f["token"])')"
+
+# A concurrent Core Scheduling change bumps the teacher/CS source revision.
+# This fixtures changes only the support workplace, preserving assigned
+# CS coverage so the stale token is rejected for VERSION, not missing CS.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "UPDATE staff_schedules SET workplace_id='center-01' WHERE staff_schedule_id='${attendance_support}'"
+lesson_facts_after="$("${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${attendance_key}" \
+  --header "Authorization: Bearer ${cs_token}" "$lesson_facts_url")"
+FIRST_FACTS="$lesson_facts_before" SECOND_FACTS="$lesson_facts_after" python3 -c \
+  'import os,json; a=json.loads(os.environ["FIRST_FACTS"]); b=json.loads(os.environ["SECOND_FACTS"]); assert a["token"]!=b["token"] and b["supportVersion"]>a["supportVersion"] and a["sessionVersion"]==b["sessionVersion"] and a["teacherVersion"]==b["teacherVersion"],(a,b)'
+echo "PASS: Core live Academic/CS context token invalidates on independently revisioned support data"
+
+# POST/PUT cannot be sent by BusyBox wget, so issue a raw HTTP/1.1 PUT
+# from the disposable Core container. Body length and Connection: close
+# are explicit, no public Gateway/private endpoint routing is added.
+stale_command_key="ms-attendance-stale-${GITHUB_RUN_ID:-local}"
+stale_reply="$("${COMPOSE[@]}" exec -T \
+  -e IIG_CS_TOKEN="${cs_token}" -e IIG_PRIVATE_KEY="${attendance_key}" \
+  -e IIG_STALE_TOKEN="${stale_lesson_token}" \
+  -e IIG_STALE_KEY="${stale_command_key}" backend bash -c '
+  set -e
+  body="{\"status\":\"PRESENT\"}"
+  exec 3<>/dev/tcp/127.0.0.1/8081
+  printf "PUT /internal/attendance/commands/classes/class-0001/teacher-attendance/teaching-001 HTTP/1.1\r\nHost: localhost\r\nX-Internal-Key: %s\r\nAuthorization: Bearer %s\r\nIdempotency-Key: %s\r\nX-Attendance-Lesson-Token: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
+    "$IIG_PRIVATE_KEY" "$IIG_CS_TOKEN" "$IIG_STALE_KEY" "$IIG_STALE_TOKEN" \
+    "${#body}" "$body" >&3
+  cat <&3
+' | tr -d '\r')"
+if ! printf '%s' "$stale_reply" | grep -Eq '^HTTP/1[.]1 409|^HTTP/1[.]0 409'; then
+  echo "Core accepted stale Attendance Academic/CS precondition:"
+  printf '%s\n' "$stale_reply" | head -c 2000
+  exit 1
+fi
+stale_attendance_rows="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM teacher_session_attendance WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+stale_core_receipts="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM teacher_attendance_command_receipts WHERE request_key='${stale_command_key}'" | tr -d '[:space:]')"
+test "$stale_attendance_rows" = "0" && test "$stale_core_receipts" = "0" || {
+  echo "Stale Attendance precondition wrote Core data or left a command receipt"; exit 1
+}
+echo "PASS: stale Academic/CS token rejects Core PUT transaction before an attendance commit"
+
 receipt_key="ms-attendance-receipt-${GITHUB_RUN_ID:-local}"
 audit_before="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
   "SELECT count(*) FROM audit_logs WHERE action='RECORD_TEACHER_ATTENDANCE_PRESENT' AND entity_id='teaching-001'" | tr -d '[:space:]')"
