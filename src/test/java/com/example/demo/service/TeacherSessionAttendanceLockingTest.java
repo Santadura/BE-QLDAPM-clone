@@ -59,8 +59,8 @@ class TeacherSessionAttendanceLockingTest {
             contains("LIMIT 1 FOR SHARE OF s"),eq("teach-1"),eq("cs-001"));
         order.verify(db).update(startsWith("INSERT INTO teacher_session_attendance"),
             any(Object[].class));
-        verify(access).audit(any(),"RECORD_TEACHER_ATTENDANCE_PRESENT",
-            "TEACHING_SCHEDULE","teach-1");
+        verify(access).audit(any(),eq("RECORD_TEACHER_ATTENDANCE_PRESENT"),
+            eq("TEACHING_SCHEDULE"),eq("teach-1"));
     }
 
     @Test void cancelledCsSupportShiftCannotMarkAttendance() {
