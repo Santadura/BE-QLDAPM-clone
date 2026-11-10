@@ -34,6 +34,7 @@ public class SchedulingAcademicLeaseBridge {
                         long classVersion,long sessionVersion,Instant expiresAt) {}
     private record ClassState(long version,String status,LocalDate start,LocalDate end) {}
     private record SessionState(long version,String status,LocalDate date) {}
+    private record WriterState(String mode,long generation) {}
 
     private final JdbcTemplate db;
     private final byte[] secret;
@@ -69,10 +70,12 @@ public class SchedulingAcademicLeaseBridge {
 
         // This shared row lock prevents the mode flipping back to CORE while
         // reserving. Existing Core assignment writers are already blocked.
-        String mode=db.queryForObject(
-            "SELECT writer_mode FROM scheduling_assignment_writer_control " +
-            "WHERE singleton=TRUE FOR SHARE",String.class);
-        if(!"QUIESCED".equals(mode))
+        WriterState mode=db.queryForObject(
+            "SELECT writer_mode,writer_generation " +
+            "FROM scheduling_assignment_writer_control " +
+            "WHERE singleton=TRUE FOR SHARE",
+            (rs,i)->new WriterState(rs.getString(1),rs.getLong(2)));
+        if(mode==null || !"QUIESCED".equals(mode.mode()) || mode.generation()<1)
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Core must be quiesced before reserving Academic sessions");
 
@@ -110,7 +113,8 @@ public class SchedulingAcademicLeaseBridge {
         // A network retry of the SAME command must receive the original
         // unexpired lease, never a second lease or a false conflict.
         List<Lease> prior=db.query(
-            "SELECT lease_id,expected_class_version,expected_session_version,expires_at " +
+            "SELECT lease_id,expected_class_version,expected_session_version,expires_at," +
+            "expected_writer_generation " +
             "FROM scheduling_academic_session_leases WHERE class_session_id=? " +
             "AND command_key=? AND expires_at>NOW() FOR UPDATE",
             (rs,i)->new Lease(rs.getString(1),request.classId(),request.sessionId(),
@@ -122,6 +126,12 @@ public class SchedulingAcademicLeaseBridge {
                     existing.sessionVersion()!=request.sessionVersion())
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Academic command key was reused with different versions");
+            Long oldGeneration=db.queryForObject(
+                "SELECT expected_writer_generation FROM scheduling_academic_session_leases " +
+                "WHERE lease_id=?",Long.class,existing.leaseId());
+            if(oldGeneration==null || oldGeneration!=mode.generation())
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Academic lease belongs to a retired writer generation");
             return existing;
         }
         Long live=db.queryForObject(
@@ -135,10 +145,11 @@ public class SchedulingAcademicLeaseBridge {
         String leaseId=UUID.randomUUID().toString();
         db.update("INSERT INTO scheduling_academic_session_leases " +
             "(lease_id,class_id,class_session_id,expected_class_version," +
-            "expected_session_version,command_key,expires_at) " +
-            "VALUES(?,?,?,?,?,?,NOW()+interval '5 minutes')",
+            "expected_session_version,command_key,expires_at,expected_writer_generation) " +
+            "VALUES(?,?,?,?,?,?,NOW()+interval '5 minutes',?)",
             leaseId,request.classId(),request.sessionId(),
-            request.classVersion(),request.sessionVersion(),request.commandKey());
+            request.classVersion(),request.sessionVersion(),request.commandKey(),
+            mode.generation());
         Timestamp expires=db.queryForObject(
             "SELECT expires_at FROM scheduling_academic_session_leases WHERE lease_id=?",
             Timestamp.class,leaseId);
@@ -154,6 +165,17 @@ public class SchedulingAcademicLeaseBridge {
         authorize(key);
         if(id==null || id.isBlank() || id.length()>50)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Invalid lease ID");
+        // The writer generation is checked under the SAME shared singleton
+        // lock that fences a concurrent QUIESCED -> CORE transition. A
+        // renewed academic lease cannot survive a mode change or ABA.
+        WriterState mode=db.queryForObject(
+            "SELECT writer_mode,writer_generation " +
+            "FROM scheduling_assignment_writer_control " +
+            "WHERE singleton=TRUE FOR SHARE",
+            (rs,i)->new WriterState(rs.getString(1),rs.getLong(2)));
+        if(mode==null || !"QUIESCED".equals(mode.mode()) || mode.generation()<1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Scheduling writer is not quiesced for Academic lease renewal");
         // Renewal is version-checked: a changed/expired Academic session can
         // never be extended into an apparently authorized assignment.
         List<Lease> current=db.query(
@@ -163,11 +185,13 @@ public class SchedulingAcademicLeaseBridge {
             "JOIN classes c ON c.class_id=l.class_id " +
             "JOIN class_sessions s ON s.class_session_id=l.class_session_id " +
             "WHERE l.lease_id=? AND l.expires_at>NOW() " +
+            "AND l.expected_writer_generation=? " +
             "AND c.scheduling_version=l.expected_class_version " +
             "AND s.scheduling_version=l.expected_session_version " +
             "AND c.status IN ('READY','RUNNING') AND s.status='PLANNED' FOR UPDATE OF l,c,s",
             (rs,i)->new Lease(id,rs.getString(1),rs.getString(2),
-                rs.getLong(3),rs.getLong(4),rs.getTimestamp(5).toInstant()),id);
+                rs.getLong(3),rs.getLong(4),rs.getTimestamp(5).toInstant()),id,
+            mode.generation());
         if(current.size()!=1)
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Academic lease expired or class/session version changed");
