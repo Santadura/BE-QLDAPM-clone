@@ -98,6 +98,24 @@ public class AttendanceSourceClient {
         }
     }
 
+    /** Complete Core source history, including already acknowledged events. */
+    public List<Event> history(long after,int limit) {
+        try {
+            Event[] events=client.get()
+                .uri(uri->uri.path("/internal/attendance/events/history")
+                    .queryParam("after",after).queryParam("limit",limit).build())
+                .header("X-Internal-Key",secret)
+                .retrieve().body(Event[].class);
+            if(events==null || events.length>limit)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Invalid Core Attendance historical event page");
+            return Arrays.asList(events);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core Attendance event history unavailable",ex);
+        }
+    }
+
     public List<Event> pending(int limit) {
         try {
             Event[] events=client.get()

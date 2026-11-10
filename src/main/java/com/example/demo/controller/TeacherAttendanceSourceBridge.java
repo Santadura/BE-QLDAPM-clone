@@ -166,6 +166,32 @@ public class TeacherAttendanceSourceBridge {
             },limit);
     }
 
+    /**
+     * Historical event export is keyset-paginated and includes events already
+     * acknowledged by the live importer. A new Attendance ledger must
+     * backfill all prior Core revisions, not just pending events.
+     */
+    @GetMapping("/history")
+    @Transactional(readOnly=true)
+    public List<Event> history(
+            @RequestHeader(value="X-Internal-Key",required=false) String key,
+            @RequestParam(defaultValue="0") long after,
+            @RequestParam(defaultValue="100") int limit) {
+        authenticate(key);
+        if(after<0 || limit<1 || limit>200)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Invalid Attendance historical event cursor");
+        return db.query(
+            "SELECT event_id,teaching_schedule_id,event_kind,payload::text " +
+            "FROM teacher_attendance_source_outbox " +
+            "WHERE event_id>? ORDER BY event_id LIMIT ?",
+            (rs,i)->{
+                String payload=rs.getString(4);
+                return new Event(rs.getLong(1),rs.getString(2),
+                    rs.getString(3),payload,sha256(payload));
+            },after,limit);
+    }
+
     @PostMapping("/ack")
     @Transactional
     public AckReceipt acknowledge(

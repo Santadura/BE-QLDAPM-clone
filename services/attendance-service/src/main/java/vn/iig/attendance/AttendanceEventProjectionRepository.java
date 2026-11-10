@@ -87,6 +87,114 @@ public class AttendanceEventProjectionRepository {
         }
     }
 
+    /** Separate ordered cursor so a late historical event cannot be missed. */
+    public long historyCursor() {
+        Long id=db.queryForObject(
+            "SELECT last_event_id FROM attendance_history_backfill_cursor " +
+            "WHERE singleton=TRUE",Long.class);
+        if(id==null || id<0)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Attendance historical cursor unavailable");
+        return id;
+    }
+
+    /** Called only AFTER an independently committed event apply(). */
+    public void advanceHistoryCursor(long eventId) {
+        if(eventId<1)throw new IllegalArgumentException("Invalid historical event ID");
+        int changed=db.update(
+            "UPDATE attendance_history_backfill_cursor " +
+            "SET last_event_id=?,updated_at=NOW() " +
+            "WHERE singleton=TRUE AND last_event_id<?",eventId,eventId);
+        if(changed!=1 && historyCursor()<eventId)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Attendance history cursor failed to advance");
+    }
+
+    public long ledgerRowCount() {
+        Long count=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_teacher_ledger",Long.class);
+        if(count==null || count<0)throw new ResponseStatusException(
+            HttpStatus.SERVICE_UNAVAILABLE,"Attendance normalized ledger unavailable");
+        return count;
+    }
+
+    public long historicalEventCount() {
+        Long count=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_teacher_event_history",Long.class);
+        if(count==null || count<0)throw new ResponseStatusException(
+            HttpStatus.SERVICE_UNAVAILABLE,"Attendance historical events unavailable");
+        return count;
+    }
+
+    /** Receipt/history mismatches imply a torn import or missing history. */
+    public long historicalReceiptDivergence() {
+        Long count=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_import_receipts r " +
+            "FULL OUTER JOIN attendance_teacher_event_history h ON r.event_id=h.event_id " +
+            "WHERE r.event_id IS NULL OR h.event_id IS NULL OR " +
+            "r.teaching_schedule_id IS DISTINCT FROM h.teaching_schedule_id OR " +
+            "r.payload_hash IS DISTINCT FROM h.payload_hash",
+            Long.class);
+        if(count==null || count<0)throw new ResponseStatusException(
+            HttpStatus.SERVICE_UNAVAILABLE,"Attendance historical parity unavailable");
+        return count;
+    }
+
+    /**
+     * Full payload/version parity across independently stored projection
+     * and normalized ledger, including DELETE tombstones.
+     */
+    public boolean matchesLedgerManifest(AttendanceSourceClient.ManifestRow expected) {
+        record Stored(long eventId,String kind,String status,String id,
+                      String recorder,String digest,String payload) {}
+        List<Stored> current=db.query(
+            "SELECT source_event_id,event_kind,status,attendance_id," +
+            "recorded_by,source_hash,source_payload::text " +
+            "FROM attendance_teacher_ledger WHERE teaching_schedule_id=?",
+            (rs,i)->new Stored(rs.getLong(1),rs.getString(2),rs.getString(3),
+                rs.getString(4),rs.getString(5),rs.getString(6),rs.getString(7)),
+            expected.teachingScheduleId());
+        if(current.size()!=1)return false;
+        Stored row=current.get(0);
+        try {
+            JsonNode payload=mapper.readTree(expected.payloadJson());
+            JsonNode local=mapper.readTree(row.payload());
+            if(payload==null || !payload.isObject() || !payload.equals(local))
+                return false;
+            String canonical=expected.payloadJson();
+            String digest=sha256(canonical);
+            boolean upsert="UPSERT".equals(expected.eventKind());
+            return row.eventId()==expected.eventId() &&
+                expected.eventKind().equals(row.kind()) &&
+                digest.equals(row.digest()) &&
+                (!upsert || (payload.path("attendance_id").asText().equals(row.id()) &&
+                    payload.path("status").asText().equals(row.status()) &&
+                    payload.path("recorded_by").asText().equals(row.recorder()))) &&
+                (upsert || (row.id()==null && row.status()==null && row.recorder()==null));
+        } catch(Exception ex) {
+            return false;
+        }
+    }
+
+    public boolean matchesHistoricalEvent(AttendanceSourceClient.Event event) {
+        record Stored(String scheduleId,String kind,String digest,String payload) {}
+        List<Stored> rows=db.query(
+            "SELECT teaching_schedule_id,event_kind,payload_hash,source_payload::text " +
+            "FROM attendance_teacher_event_history WHERE event_id=?",
+            (rs,i)->new Stored(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getString(4)),event.eventId());
+        if(rows.size()!=1)return false;
+        Stored row=rows.get(0);
+        try {
+            return event.teachingScheduleId().equals(row.scheduleId()) &&
+                event.eventKind().equals(row.kind()) &&
+                event.payloadHash().equals(row.digest()) &&
+                mapper.readTree(event.payloadJson()).equals(mapper.readTree(row.payload()));
+        } catch(Exception ex) {
+            return false;
+        }
+    }
+
     @Transactional
     public void apply(AttendanceSourceClient.Event event) {
         if(event==null || event.eventId()<1 ||
@@ -122,12 +230,41 @@ public class AttendanceEventProjectionRepository {
         List<String> old=db.query(
             "SELECT payload_hash FROM attendance_import_receipts WHERE event_id=?",
             (rs,i)->rs.getString(1),event.eventId());
-        if(!old.isEmpty()) {
-            if(old.size()!=1 || !sha.equals(old.get(0)))
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Source event ID was reused with different Attendance data");
-            return;
-        }
+        boolean alreadyImported=!old.isEmpty();
+        if(alreadyImported && (old.size()!=1 || !sha.equals(old.get(0))))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Source event ID was reused with different Attendance data");
+
+        // The new normalized ledger and immutable historical event are
+        // written in the SAME independent Attendance transaction. Backfill
+        // must hydrate these even if the old import receipt already exists.
+        db.update(
+            "INSERT INTO attendance_teacher_event_history " +
+            "(event_id,teaching_schedule_id,event_kind,payload_hash,source_payload) " +
+            "VALUES(?,?,?,?,CAST(? AS JSONB)) ON CONFLICT(event_id) DO NOTHING",
+            event.eventId(),event.teachingScheduleId(),event.eventKind(),
+            sha,event.payloadJson());
+        db.update(
+            "INSERT INTO attendance_teacher_ledger " +
+            "(teaching_schedule_id,source_event_id,event_kind,attendance_id," +
+            "status,recorded_by,source_hash,source_payload) VALUES(" +
+            "?,?,?,CASE WHEN ?='UPSERT' THEN ? ELSE NULL END," +
+            "CASE WHEN ?='UPSERT' THEN ? ELSE NULL END," +
+            "CASE WHEN ?='UPSERT' THEN ? ELSE NULL END,?,CAST(? AS JSONB)) " +
+            "ON CONFLICT(teaching_schedule_id) DO UPDATE SET " +
+            "source_event_id=EXCLUDED.source_event_id," +
+            "event_kind=EXCLUDED.event_kind,attendance_id=EXCLUDED.attendance_id," +
+            "status=EXCLUDED.status,recorded_by=EXCLUDED.recorded_by," +
+            "source_hash=EXCLUDED.source_hash,source_payload=EXCLUDED.source_payload," +
+            "imported_at=NOW() WHERE " +
+            "attendance_teacher_ledger.source_event_id<EXCLUDED.source_event_id",
+            event.teachingScheduleId(),event.eventId(),event.eventKind(),
+            event.eventKind(),json.path("attendance_id").asText(),
+            event.eventKind(),json.path("status").asText(),
+            event.eventKind(),json.path("recorded_by").asText(),
+            sha,event.payloadJson());
+
+        if(alreadyImported)return;
 
         // For one teaching schedule, committed Core row mutations serialize,
         // so each newer event ID represents the next committed state.
