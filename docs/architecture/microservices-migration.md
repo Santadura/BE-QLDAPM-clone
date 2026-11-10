@@ -2,7 +2,7 @@
 
 ## Status (2026-11-10)
 
-This branch is **migration phase 8f-9 (Payroll reads independent Attendance evidence for private reconciliation)**, not
+This branch is **migration phase 8f-10 (Payroll-owned immutable Attendance evidence replay)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,46 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8f-10: independent Payroll teacher attendance history projection
+
+Attendance now exports a bounded, private, Payroll-key-protected
+`/internal/attendance/payroll/events?after=...&limit=...` historical feed
+from **Attendance's immutable PostgreSQL history**, including delivered
+UPSERT, ABSENT and DELETE tombstones. Its payload contains only schedule
+identity, event ID, status, operation and digest, not actor PII or rates.
+The endpoint verifies complete Core/Attendance history parity and writer
+fences around every page; it does not acknowledge new Core writes.
+
+Payroll persistently replicates that feed into **its own** PostgreSQL
+`payroll_attendance_reference_events`, a normalized latest-state table,
+and a separate keyset cursor. Each page's immutable event inserts, latest
+status/tombstone revisions and cursor advance are committed in ONE Payroll
+transaction. A restart replays prior history safely, never overwriting a
+newer revision. Payroll's PostgreSQL trigger blocks UPDATE/DELETE of
+historical events with SQLSTATE 55000. The importer is enabled in isolated
+microservices Compose but opt-in elsewhere. On outages it keeps the last
+durable cursor and retries; it cannot report readiness on absent data.
+
+Payroll's private `/internal/payroll/attendance-reference/verify` gate
+requires full history replay to the source's current revision and event
+count, same source generation across historical pages, a second verified
+source-read after the import, and exact latest-state parity against the
+immutable local event history. Missing events, changed source, ghost
+latest records, tampered hashes and incomplete import return non-200.
+It is NOT routed publicly through Gateway.
+
+**No salary source switch:** Public `/api/payroll/calculate` continues
+using Core's current attendance/schedules and HR salary ranks. This
+Attendance-derived evidence remains a preparatory reference projection,
+NOT a new authoritative payroll input and NOT Attendance write ownership.
+Actual migration of financial input still needs independently owned
+Academic/Scheduling teacher facts, HR rate history, transaction-fenced
+snapshot/lease or audited compensation, and a rehearsed one-way handoff.
+
+Docker tests verify private keys, full historical event ID/count parity,
+tombstone propagation, immutability, corruption fail-closed, cursor reset
+and replay without duplicates, and unchanged financial ledgers.
 
 ## Phase 8f-9: Payroll / Attendance read-only source evidence reconciliation
 

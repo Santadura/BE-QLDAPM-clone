@@ -1029,6 +1029,79 @@ printf '%s' "$verified_attendance" | python3 -c \
   'import json,sys; r=json.load(sys.stdin); assert r["ready"] is True and r["state"]=="READY",r'
 echo "PASS: disposable Payroll Attendance fixture cleaned up without affecting later domain tests"
 
+# Phase 8f-10: replay complete, independently verified Attendance source
+# history into Payroll's own PostgreSQL. This is ONLY an evidence read model:
+# salaries still use Core Work facts until an audited authority handoff.
+payroll_events_url="http://attendance-service:8100/internal/attendance/payroll/events?after=0&limit=100"
+payroll_reference_verify_url="http://payroll-service:8097/internal/payroll/attendance-reference/verify"
+if "${COMPOSE[@]}" exec -T attendance-postgres wget -qO- "$payroll_events_url" >/dev/null 2>&1; then
+  echo "Private Payroll source events accepted a missing key"; exit 1
+fi
+if "${COMPOSE[@]}" exec -T attendance-postgres wget -qO- "$payroll_reference_verify_url" >/dev/null 2>&1; then
+  echo "Payroll reference verifier accepted a missing private key"; exit 1
+fi
+if [ "$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/payroll/attendance-reference/verify")" != "404" ]; then
+  echo "Payroll reference verifier leaked via public Gateway"; exit 1
+fi
+payroll_history_page="$("${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${payroll_private_key}" "$payroll_events_url")"
+PAYROLL_HISTORY="$payroll_history_page" python3 -c \
+  'import os,json; p=json.loads(os.environ["PAYROLL_HISTORY"]); assert p["sourceRevision"]>0 and p["sourceEventCount"]>=4 and p["events"] and p["events"][0]["eventId"]>0 and len(p["events"][0]["sourceHash"])==64,p'
+payroll_reference_proof="$("${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${payroll_private_key}" "$payroll_reference_verify_url")"
+PAYROLL_REFERENCE="$payroll_reference_proof" python3 -c \
+  'import os,json; r=json.loads(os.environ["PAYROLL_REFERENCE"]); assert r["ready"] is True and r["eventCount"]>=4 and r["lastEventId"]>=r["eventCount"],r'
+attendance_event_count="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT count(*) FROM attendance_teacher_event_history" | tr -d '[:space:]')"
+payroll_event_count="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT count(*) FROM payroll_attendance_reference_events" | tr -d '[:space:]')"
+test "$attendance_event_count" = "$payroll_event_count" || {
+  echo "Payroll missing immutable source events after full catch-up"; exit 1
+}
+payroll_tombstone="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT count(*) FROM payroll_attendance_reference_latest WHERE teaching_schedule_id='teaching-001' AND event_kind='DELETE' AND status IS NULL" | tr -d '[:space:]')"
+test "$payroll_tombstone" = "1" || {
+  echo "Payroll mirror resurrected a deleted teacher attendance"; exit 1
+}
+# Imported history is immutable at PostgreSQL SQL level, not merely in API.
+history_rewrite="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll \
+  -v ON_ERROR_STOP=1 -v VERBOSITY=verbose \
+  -c "UPDATE payroll_attendance_reference_events SET source_hash=repeat('f',64) WHERE event_id=(SELECT MIN(event_id) FROM payroll_attendance_reference_events)" 2>&1 || true)"
+if ! printf '%s' "$history_rewrite" | grep -q '55000'; then
+  echo "Payroll could rewrite its immutable teacher evidence history"; exit 1
+fi
+# Corrupt latest evidence, leaving immutable history intact. The private
+# strong-readiness endpoint must reject even though counts and IDs match.
+payroll_latest_hash="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT source_hash FROM payroll_attendance_reference_latest WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+"${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -v ON_ERROR_STOP=1 \
+  -c "UPDATE payroll_attendance_reference_latest SET source_hash=repeat('f',64) WHERE teaching_schedule_id='teaching-001'"
+broken_payroll_reference="$("${COMPOSE[@]}" exec -T attendance-postgres wget -S -O /dev/null \
+  --header "X-Internal-Key: ${payroll_private_key}" "$payroll_reference_verify_url" 2>&1 || true)"
+if ! printf '%s' "$broken_payroll_reference" | grep -Eq 'HTTP/[0-9.]+ 409|409 Conflict'; then
+  echo "Payroll reference verifier accepted tampered independent latest status"; exit 1
+fi
+"${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -v ON_ERROR_STOP=1 \
+  -c "UPDATE payroll_attendance_reference_latest SET source_hash='${payroll_latest_hash}' WHERE teaching_schedule_id='teaching-001'"
+# Rewind only Payroll's disposable cursor, not Core's or Attendance's:
+# committed old events must replay idempotently without duplicate history.
+"${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -v ON_ERROR_STOP=1 \
+  -c "UPDATE payroll_attendance_reference_cursor SET last_event_id=0 WHERE singleton=TRUE"
+payroll_reference_proof="$("${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${payroll_private_key}" "$payroll_reference_verify_url")"
+PAYROLL_REFERENCE="$payroll_reference_proof" python3 -c \
+  'import os,json; r=json.loads(os.environ["PAYROLL_REFERENCE"]); assert r["ready"] is True,r'
+replayed_payroll_events="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT count(*) FROM payroll_attendance_reference_events" | tr -d '[:space:]')"
+test "$replayed_payroll_events" = "$attendance_event_count" || {
+  echo "Payroll replay duplicated or lost independent Attendance source events"; exit 1
+}
+test "$payroll_ledger_count_before" = "$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc "SELECT count(*) FROM payroll_ledgers" | tr -d '[:space:]')" && \
+  test "$payroll_item_count_before" = "$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc "SELECT count(*) FROM payroll_items" | tr -d '[:space:]')" || {
+  echo "Payroll evidence replay mutated the financial ledger or line items"; exit 1
+}
+echo "PASS: Payroll-owned immutable teacher evidence, full historical replay, tombstones, tamper rejection and no financial writes"
+
 echo "PASS: payroll ledger is owned by independent PostgreSQL and historical data preserved"
 
 # Payroll calculation is a management action, not a worker self-service write.
