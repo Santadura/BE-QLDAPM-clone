@@ -1,6 +1,6 @@
 package com.example.demo.controller;
 
-import com.example.demo.service.TeacherSessionAttendanceService;
+import com.example.demo.service.TeacherAttendanceCommandReceiptService;
 import com.example.demo.service.TeacherSessionAttendanceService.MarkRequest;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -20,11 +20,11 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/internal/attendance/commands")
 @ConditionalOnProperty(name="iig.attendance.bridge-enabled",havingValue="true")
 public class TeacherAttendancePrivateCommandController {
-    private final TeacherSessionAttendanceService attendance;
+    private final TeacherAttendanceCommandReceiptService attendance;
     private final byte[] secret;
 
     public TeacherAttendancePrivateCommandController(
-            TeacherSessionAttendanceService attendance,
+            TeacherAttendanceCommandReceiptService attendance,
             @Value("${iig.attendance.internal-key}") String key) {
         if(key==null || key.isBlank())
             throw new IllegalArgumentException("ATTENDANCE_INTERNAL_API_KEY required");
@@ -36,6 +36,7 @@ public class TeacherAttendancePrivateCommandController {
     public Map<String,Object> mark(
             @RequestHeader(value="X-Internal-Key",required=false) String key,
             @RequestHeader(value="Authorization",required=false) String bearer,
+            @RequestHeader(value="Idempotency-Key",required=false) String requestKey,
             @PathVariable String classId,
             @PathVariable String teachingScheduleId,
             @RequestBody MarkRequest request) {
@@ -50,6 +51,6 @@ public class TeacherAttendancePrivateCommandController {
                 bearer.substring(7).isBlank())
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
                 "A live CS bearer token is required");
-        return attendance.mark(classId,teachingScheduleId,request);
+        return attendance.mark(classId,teachingScheduleId,requestKey,request);
     }
 }

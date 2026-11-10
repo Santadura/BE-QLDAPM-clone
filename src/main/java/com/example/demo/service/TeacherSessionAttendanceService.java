@@ -89,6 +89,28 @@ public class TeacherSessionAttendanceService {
             actor.id(), classId);
     }
 
+    /**
+     * Replays may return a prior result but must not bypass the exact CS
+     * support/teacher/lesson scope. Lock the live CS row against cancellation.
+     */
+    public void requireCurrentSupportForReplay(String classId,String scheduleId,
+            String employeeId) {
+        List<Map<String,Object>> shifts=db.queryForList(
+            "SELECT s.staff_schedule_id FROM staff_schedules s " +
+            "JOIN teaching_schedules t ON t.teaching_schedule_id=? " +
+            "AND t.class_id=? AND t.status='ASSIGNED' " +
+            "JOIN class_sessions lesson ON lesson.class_id=t.class_id " +
+            "AND lesson.date=t.date AND lesson.start_time=t.start_time " +
+            "AND lesson.end_time=t.end_time AND lesson.status='PLANNED' " +
+            "WHERE s.employee_id=? AND s.class_id=t.class_id AND s.date=t.date " +
+            "AND s.start_time=t.start_time AND s.end_time=t.end_time " +
+            "AND s.work_type='CLASS_SUPPORT' AND s.status='ASSIGNED' " +
+            "LIMIT 1 FOR SHARE OF s",scheduleId,classId,employeeId);
+        if(shifts.isEmpty())
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                "CS no longer supports this exact active lesson");
+    }
+
     @Transactional
     public Map<String,Object> mark(String classId, String teachingScheduleId, MarkRequest request) {
         var actor = access.requireRole("CS");
