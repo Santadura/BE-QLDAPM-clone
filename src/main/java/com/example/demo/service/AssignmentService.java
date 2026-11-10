@@ -392,6 +392,26 @@ public class AssignmentService {
         var actor=access.requireRole("CM");
         Map<String,Object> old=staffSlot(id);
         access.lockEmployee((String)old.get("employeeId"));
+        if ("CLASS_SUPPORT".equals(old.get("workType")) && old.get("classId") != null
+                && "ASSIGNED".equals(old.get("status"))) {
+            // Serialize with range staffing and class lifecycle updates.
+            lockClass((String)old.get("classId"));
+            Integer uncoveredRunningLesson = db.queryForObject(
+                "SELECT count(*) FROM classes c JOIN class_sessions lesson " +
+                "ON lesson.class_id=c.class_id AND lesson.status='PLANNED' " +
+                "WHERE c.class_id=? AND c.status='RUNNING' " +
+                "AND lesson.date=? AND lesson.start_time=? AND lesson.end_time=? " +
+                "AND NOT EXISTS (SELECT 1 FROM staff_schedules other WHERE other.class_id=c.class_id " +
+                "AND other.date=lesson.date AND other.start_time=lesson.start_time " +
+                "AND other.end_time=lesson.end_time AND other.work_type='CLASS_SUPPORT' " +
+                "AND other.status='ASSIGNED' AND other.staff_schedule_id<>?)",
+                Integer.class, old.get("classId"), old.get("date"), old.get("startTime"),
+                old.get("endTime"), id);
+            if (uncoveredRunningLesson != null && uncoveredRunningLesson > 0) {
+                throw new ApiException(HttpStatus.CONFLICT,
+                    "Assign a replacement CS before cancelling the last support shift of a running lesson");
+            }
+        }
         db.update("UPDATE staff_schedules SET status='CANCELLED' WHERE staff_schedule_id=?",id);
         if ("CLASS_SUPPORT".equals(old.get("workType")) && old.get("classId") != null) {
             // A CM-assigned course manager who no longer supports any lesson
