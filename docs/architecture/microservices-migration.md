@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8e (immutable event history and exact Core receipt replay)**, not
+This branch is **migration phase 8f-1 (Core Attendance outbox to independent read source)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,43 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8f-1: durable Core-to-Attendance write-event replication
+
+The independent Attendance service now ingests a Core-owned, transactionally
+written **teacher attendance source outbox**. PostgreSQL triggers capture
+INSERT, UPDATE and DELETE of `teacher_session_attendance`, including
+tombstones and all existing Core mutation paths. The initial migration locks
+the source table while it backfills preexisting rows, preventing a
+snapshot/trigger gap. The outbox payload and event ID cannot be mutated or
+deleted; `delivered_at` advances only after an exact receipt.
+
+A service-key-protected Core feed `GET /internal/attendance/events` returns
+bounded pending events with SHA-256 hashes. Attendance validates each
+`eventId`, source schedule, status, JSON and hash, applies it to a
+per-schedule source projection, and persists an immutable import receipt in
+its own PostgreSQL transaction. Only **after that transaction commits**
+does it call `POST /internal/attendance/events/ack` using the exact
+event ID and digest. Core checks the stored JSONB source against the digest
+under a row lock before acknowledging. Retries are idempotent and a delayed
+older event can never replace a newer committed local revision. A missing
+Core service, bad hash or failed local DB transaction fails closed; the
+source event remains pending. The opt-in scheduled relay is enabled only
+in the microservices Compose, disabled by default in the service's
+standalone configuration.
+
+The disposable Docker smoke exercises actual INSERT, UPDATE and DELETE
+of teacher attendance, waits for independent Attendance projections,
+verifies the three Core delivery receipts, and checks the private feed is
+not reachable through Gateway.
+
+This phase **does not** route teacher-attendance PUT to Attendance. Core
+continues to enforce the active assigned teacher, exact CS support shift,
+planned lesson and lesson-start restrictions, and still holds salary/
+Payroll evidence. Transfer of write authority requires a Core-approved
+command lease or equivalent fencing, atomic outcome receipts,
+cross-service reconciliation and verified compatibility before routing
+the FE PUT away from Core.
 
 ## Attendance read-service extraction (Core still owns writes)
 
