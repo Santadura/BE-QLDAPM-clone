@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 class AttendanceEventRelayTest {
     private final AttendanceSourceClient core=mock(AttendanceSourceClient.class);
