@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8e (immutable Core reference event receipts; no public write cutover)**. Do not claim full migration before every
+> Architecture status: **Phase 8f-1 (Core Attendance source outbox replicated into independent service; public writes still Core-owned)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -171,6 +171,15 @@ service-key-protected projection API after bootstrap.
 - [ ] Verify the full event replay/recovery flow against real PostgreSQL,
   then finish independent Academic/Attendance and class-support mutation
   ownership before public API cutover.
+- [x] Phase 8f-1: durable transactional Core outbox for teacher attendance
+  insert/update/delete, including migration backfill and immutable deletion
+  tombstones, with a service-key private pending/ack protocol.
+- [x] Attendance independently persists per-schedule source state and
+  import receipts; source hashes are verified and only committed local
+  writes can receive a Core ack, with replay and out-of-order protection.
+- [ ] Attendance PUT cutover: relocate exact-CS, lesson-start and teacher
+  assignment guards with a versioned Academic/Scheduling lease plus
+  Core/Payroll reference projection and safe handback.
 - [x] Attendance teacher-attendance GET routed to a standalone service with
   private actor/class-scoped PostgreSQL snapshots and live Core CS class-access
   verification. FE response shape unchanged. PUT remains in Core, so this
