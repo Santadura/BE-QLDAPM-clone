@@ -32,15 +32,16 @@ public class AttendanceWriteClient {
         client=RestClient.builder().baseUrl(coreUrl).requestFactory(factory).build();
     }
 
-    public JsonNode mark(String classId,String scheduleId,String bearer,String status) {
+    public JsonNode mark(String classId,String scheduleId,String bearer,String status,String requestKey) {
         try {
-            JsonNode result=client.put()
+            RestClient.RequestBodySpec command=client.put()
                 .uri("/internal/attendance/commands/classes/{classId}/teacher-attendance/{id}",
                     classId,scheduleId)
                 .header("X-Internal-Key",secret)
                 .header("Authorization",bearer)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(new MarkRequest(status))
+                .contentType(MediaType.APPLICATION_JSON);
+            if(requestKey!=null)command.header("Idempotency-Key",requestKey);
+            JsonNode result=command.body(new MarkRequest(status))
                 .retrieve().body(JsonNode.class);
             if(result==null || !result.isObject())
                 throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,

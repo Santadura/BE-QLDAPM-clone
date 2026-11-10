@@ -16,8 +16,8 @@ import org.springframework.web.server.ResponseStatusException;
 @ConditionalOnProperty(name="iig.attendance.write-gateway-enabled",havingValue="true")
 public class AttendanceWriteController {
     private final AttendanceCoreClient core;
-    private final AttendanceWriteClient writer;
-    public AttendanceWriteController(AttendanceCoreClient core,AttendanceWriteClient writer) {
+    private final AttendanceCommandService writer;
+    public AttendanceWriteController(AttendanceCoreClient core,AttendanceCommandService writer) {
         this.core=core;
         this.writer=writer;
     }
@@ -27,7 +27,8 @@ public class AttendanceWriteController {
             @PathVariable String classId,
             @PathVariable String teachingScheduleId,
             @RequestHeader(value="Authorization",required=false) String bearer,
-            @RequestBody AttendanceWriteClient.MarkRequest request) {
+            @RequestBody AttendanceWriteClient.MarkRequest request,
+            @RequestHeader(value="Idempotency-Key",required=false) String requestKey) {
         if(classId==null || classId.isBlank() || classId.length()>50 ||
                 teachingScheduleId==null || teachingScheduleId.isBlank() ||
                 teachingScheduleId.length()>50)
@@ -42,7 +43,8 @@ public class AttendanceWriteController {
                 "Attendance status is required");
         // Core revalidates the same JWT and enforces active support/lesson
         // under its single original local database transaction.
-        JsonNode saved=writer.mark(classId,teachingScheduleId,bearer,request.status());
+        JsonNode saved=writer.mark(actor.username(),classId,teachingScheduleId,bearer,
+            request.status(),requestKey);
         return ResponseEntity.ok().body(saved);
     }
 }
