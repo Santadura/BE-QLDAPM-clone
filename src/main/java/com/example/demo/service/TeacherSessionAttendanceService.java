@@ -94,6 +94,13 @@ public class TeacherSessionAttendanceService {
         var actor = access.requireRole("CS");
         String status = checkedStatus(request == null ? null : request.status());
 
+        // Academic class/session mutations lock the owning class row first.
+        // Hold a shared class lock throughout this attendance transaction so
+        // lesson cancellation/rescheduling cannot race validation vs write.
+        // A missing class is handled by the teacher/lesson lookup below.
+        db.queryForList(
+            "SELECT class_id FROM classes WHERE class_id=? FOR SHARE", classId);
+
         List<Map<String,Object>> matches = db.queryForList(
             "SELECT t.date, t.start_time, t.end_time, t.status, a.status AS attendance_status " +
             "FROM teaching_schedules t " +
@@ -102,20 +109,24 @@ public class TeacherSessionAttendanceService {
             "AND lesson.end_time=t.end_time AND lesson.status='PLANNED' " +
             "LEFT JOIN teacher_session_attendance a ON a.teaching_schedule_id=t.teaching_schedule_id " +
             "WHERE t.teaching_schedule_id=? AND t.class_id=? AND t.status='ASSIGNED' " +
-            "FOR UPDATE OF t",
+            "FOR UPDATE OF t,lesson",
             teachingScheduleId, classId);
         if (matches.isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, "Active teacher assignment not found in a planned class lesson");
         }
 
-        Integer supportCount = db.queryForObject(
-            "SELECT count(*) FROM staff_schedules s " +
+        // Lock the *actual* CS support shift, not a count of a row that
+        // another transaction might cancel before attendance is recorded.
+        // This also serializes against AssignmentService.cancelStaff().
+        List<Map<String,Object>> activeSupport = db.queryForList(
+            "SELECT s.staff_schedule_id FROM staff_schedules s " +
             "JOIN teaching_schedules t ON t.teaching_schedule_id=? " +
             "WHERE s.employee_id=? AND s.class_id=t.class_id AND s.date=t.date " +
             "AND s.start_time=t.start_time AND s.end_time=t.end_time " +
-            "AND s.work_type='CLASS_SUPPORT' AND s.status='ASSIGNED'",
-            Integer.class, teachingScheduleId, actor.id());
-        if (supportCount == null || supportCount == 0) {
+            "AND s.work_type='CLASS_SUPPORT' AND s.status='ASSIGNED' " +
+            "LIMIT 1 FOR SHARE OF s",
+            teachingScheduleId, actor.id());
+        if (activeSupport.isEmpty()) {
             throw new ApiException(HttpStatus.FORBIDDEN,
                     "Only the CS assigned to support this exact lesson can mark attendance");
         }
