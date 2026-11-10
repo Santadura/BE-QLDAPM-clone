@@ -649,6 +649,39 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-4: cross-service teacher assignment admission (PRIVATE, OFF)
+
+A new **private, disabled-by-default** Scheduling teacher preflight checks a
+staged `ASSIGN_TEACHER` command before any independent teaching write.
+Its `POST /internal/scheduling/assignments/commands/teacher/{key}/preflight`
+requires the Scheduling service key and live TC principal from Core. It
+locks the actor-scoped STAGED command, confirms Core assignment writer is
+QUIESCED, scans Core's authoritative assignment manifest and Scheduling's
+normalized read/write stores for exact parity, and allows an exemption for
+only THIS non-applied STAGED request. All other STAGED, PENDING_REFERENCE
+or COMPENSATING commands still block the scan.
+
+It then verifies the exact Academic session ID, class/session revisions,
+date and times against Core, obtains or renews the generation-fenced
+Academic lease for that staged command, acquires an approved Scheduling
+availability reservation for the nominated TEACHER, and checks teacher
+and class overlaps against independently imported committed schedules
+and all in-flight assignment intents. The worker reservation and an
+actor-scoped preflight receipt are committed in one Scheduling transaction.
+Identical retries reuse the same live worker reservation; expired worker
+reservations are explicitly deleted and reallocated. An aborted local
+transaction leaves only a time-bounded Core Academic lease, safe for
+same-key re-acquisition.
+
+The only successful state is `PREFLIGHT_ONLY`. **It creates no teaching
+schedule, does not emit a domain outbox event, does not calculate wages,
+and does not route publicly through Gateway.** It is a mandatory
+building block for the later teacher writer, not a claim that the
+distributed assignment saga is complete. A true teacher write cutover
+still requires live identity, final lease renewal, authoritative
+Scheduling transaction, Core reference/Attendance/Payroll projection,
+durable compensation and E2E cutover tests.
+
 ## Phase 8g-3: fail-closed Academic lease recovery and PostgreSQL enforcement
 
 A staged teacher command may now **reacquire an expired** Academic
