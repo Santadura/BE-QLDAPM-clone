@@ -154,6 +154,22 @@ trả bản cache cũ khi Core lỗi. Phần ghi điểm danh và dữ liệu l�
 được chuyển sang Attendance**. Docker smoke kiểm tra quyền CS/ADMIN,
 đối chiếu phản hồi với Core và persistence ở DB mới.
 
+**Attendance Event Relay (Phase 8f-1):** Core đã có outbox giao dịch
+`teacher_attendance_source_outbox` ghi sự kiện mỗi lần điểm danh giáo viên
+được tạo, sửa hoặc xóa. Attendance service đọc feed qua API nội bộ
+`/internal/attendance/events`, xác minh SHA-256 rồi ghi bản ghi nguồn
+`attendance_teacher_source_records` cùng receipt trong PostgreSQL
+`iig_attendance`. Chỉ sau commit, Attendance mới gửi xác nhận
+`/internal/attendance/events/ack` cho Core. Nếu mất kết nối, event
+vẫn nằm trong Core và được gửi lại; dữ liệu/phiên bản cũ không được
+ghi đè bản mới. Smoke kiểm tra insert/update/delete, tombstone và
+receipt chính xác ở hai database. Feed bị ẩn khỏi Gateway.
+
+**Phạm vi:** Quyền `PUT` điểm danh vẫn ở Core, vẫn giữ kiểm tra CS
+đang hỗ trợ đúng buổi, thời điểm buổi học và ràng buộc Payroll.
+Đây là đồng bộ nguồn dữ liệu để chuẩn bị chuyển quyền ghi về Attendance,
+chưa phải cutover nghiệp vụ điểm danh.
+
 Dừng stack bằng `docker compose -f docker-compose.microservices.yml down` để giữ dữ liệu.
 
 
