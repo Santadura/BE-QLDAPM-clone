@@ -67,6 +67,31 @@ class SchedulingAssignmentReferenceReceiptControllerTest {
         verify(db,never()).update(anyString(),any(Object[].class));
     }
 
+    @SuppressWarnings({"rawtypes","unchecked"})
+    @Test void teacherHistoryRequiresCoreRowAndConfirmedWriterClaim() throws Exception {
+        when(db.query(startsWith("SELECT event_id,revision,payload_hash"),
+                any(RowMapper.class),eq("teacher-event-1"),eq("TEACHING"),eq("teacher-slot-1")))
+            .thenAnswer(inv->{
+                RowMapper mapper=inv.getArgument(1);
+                var rs=mock(java.sql.ResultSet.class);
+                when(rs.getString(1)).thenReturn("teacher-event-1");
+                when(rs.getLong(2)).thenReturn(1L);
+                when(rs.getString(3)).thenReturn("a".repeat(64));
+                return List.of(mapper.mapRow(rs,0));
+            });
+        when(db.queryForObject(startsWith("SELECT count(*) FROM teaching_schedules"),
+            eq(Long.class),eq("teacher-event-1"),eq("teacher-slot-1")))
+            .thenReturn(1L,0L);
+        var verified=controller.lookupEvent(
+            "private-reference-key","teacher-event-1","TEACHING","teacher-slot-1");
+        assertEquals(1L,verified.revision());
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->controller.lookupEvent("private-reference-key",
+                "teacher-event-1","TEACHING","teacher-slot-1")).getStatusCode());
+        verify(db,never()).update(anyString(),any(Object[].class));
+    }
+
     @Test void eventLookupRequiresServiceKeyAndExactScheduleIdentity() {
         assertEquals(HttpStatus.UNAUTHORIZED,
             assertThrows(ResponseStatusException.class,

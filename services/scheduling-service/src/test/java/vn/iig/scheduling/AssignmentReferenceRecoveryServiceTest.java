@@ -34,6 +34,49 @@ class AssignmentReferenceRecoveryServiceTest {
         sequence.verify(lifecycle).reconcileVerified(event,proof);
     }
 
+    @Test void confirmedTeacherCanBeRecoveredOnlyWithItsExactImmutableCoreEvent() {
+        var teaching=new AssignmentDomainOutboxRepository.Event(
+            "event-teacher","tc001","ASSIGN_TEACHER","tc-request-1",
+            "TEACHING","teaching-1",1,"UPSERT","{}","c".repeat(64),10);
+        var proof=new SchedulingCoreClient.DurableAssignmentReferenceReceipt(
+            "event-teacher",1,"c".repeat(64));
+        when(outbox.unresolvedEvent("event-teacher")).thenReturn(teaching);
+        when(core.committedAssignmentReceipt("TEACHING","teaching-1","event-teacher"))
+            .thenReturn(proof);
+        when(lifecycle.reconcileVerified(teaching,proof)).thenReturn(true);
+        var result=service.verifyAndRecover("event-teacher");
+        assertEquals("COMMITTED",result.state());
+        assertTrue(result.coreReceiptVerified());
+        verify(lifecycle).reconcileVerified(teaching,proof);
+    }
+
+    @Test void absentTeacherReceiptCannotFinalizeLocalSchedulingWork() {
+        var teaching=new AssignmentDomainOutboxRepository.Event(
+            "event-teacher","tc001","ASSIGN_TEACHER","tc-request-1",
+            "TEACHING","teaching-1",1,"UPSERT","{}","c".repeat(64),10);
+        when(outbox.unresolvedEvent("event-teacher")).thenReturn(teaching);
+        when(core.committedAssignmentReceipt("TEACHING","teaching-1","event-teacher"))
+            .thenThrow(new ResponseStatusException(HttpStatus.CONFLICT,
+                "Core does not confirm teacher reference"));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.verifyAndRecover("event-teacher")).getStatusCode());
+        verifyNoInteractions(lifecycle);
+    }
+
+    @Test void teacherEventAboveRevisionOneIsNotForgedIntoCoreRecovery() {
+        var editing=new AssignmentDomainOutboxRepository.Event(
+            "event-edit","tc001","ASSIGN_TEACHER","tc-request-1",
+            "TEACHING","teaching-1",2,"UPSERT","{}","c".repeat(64),10);
+        when(outbox.unresolvedEvent("event-edit")).thenReturn(editing);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.verifyAndRecover("event-edit")).getStatusCode());
+        verify(core,never()).committedAssignmentReceipt(
+            anyString(),anyString(),anyString());
+        verifyNoInteractions(lifecycle);
+    }
+
     @Test void differentCoreDigestNeverAdvancesSchedulingInbox() {
         when(outbox.unresolvedEvent("event-2")).thenReturn(event);
         when(core.committedAssignmentReceipt("STAFF","shift-1","event-2")).thenReturn(

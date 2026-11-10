@@ -649,6 +649,32 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-7: immutable TEACHING delivery replay and auditable recovery
+
+Core's TEACHING receiver now checks an exact previously committed
+`(eventId,revision,payloadHash,actor,operation,requestKey)` receipt
+*before* checking whether the TC, teacher or Academic lease are still
+live. This preserves safe at-least-once delivery after a lost HTTP
+response and later account revocation or lease expiry. The replay
+does NOT authorize a new teacher write: it additionally verifies the
+actual Core teacher schedule still matches the immutable payload's
+worker, class, session times, status and manager, and that the original
+Core TC claim was CONFIRMED. Divergence returns 409 instead of a false
+acknowledgement.
+
+Manual recovery of exhausted TEACHING relay events now requires the
+exact Core immutable event receipt, revision 1 and hash. The private
+Core historical receipt lookup additionally checks a live Core
+TEACHING reference row and the corresponding confirmed TC writer
+claim. This recovery does not invent a new source event, reinsert a
+teacher or bypass the current authoritative writer; it can only
+mark an already-committed source delivery as verified in Scheduling.
+
+**Not yet completed:** Core reference receipt handling is not a
+replacement for a Scheduling-owned TEACHING business transaction,
+availability lease renewal, source-of-truth switchover or handback
+protocol. All related private writer flags remain OFF by default.
+
 ## Phase 8g-6: narrow Core TEACHING reference receipt boundary (OFF)
 
 Core now has a separate, private, opt-in TEACHING reference receiver at
