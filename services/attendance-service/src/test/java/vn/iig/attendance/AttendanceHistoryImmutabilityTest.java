@@ -10,7 +10,7 @@ class AttendanceHistoryImmutabilityTest {
         JdbcTemplate db=mock(JdbcTemplate.class);
         new AttendanceHistoryImmutability(db).run(null);
         var order=inOrder(db);
-        order.verify(db).execute(argThat(sql->
+        order.verify(db).execute(org.mockito.ArgumentMatchers.<String>argThat(sql->
             sql.contains("CREATE OR REPLACE FUNCTION iig_attendance_block_history_mutations") &&
             sql.contains("ERRCODE='55000'") && sql.contains("$$;")));
         order.verify(db).execute(startsWith(
