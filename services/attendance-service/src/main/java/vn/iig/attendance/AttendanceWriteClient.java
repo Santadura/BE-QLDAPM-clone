@@ -19,13 +19,16 @@ import org.springframework.web.server.ResponseStatusException;
 public class AttendanceWriteClient {
     private final RestClient client;
     private final String secret;
+    private final AttendanceLessonFactsClient facts;
 
     public AttendanceWriteClient(
             @Value("${iig.core.url}") String coreUrl,
-            @Value("${iig.core.internal-key}") String key) {
+            @Value("${iig.core.internal-key}") String key,
+            AttendanceLessonFactsClient facts) {
         if(key==null || key.isBlank())
             throw new IllegalArgumentException("ATTENDANCE_INTERNAL_API_KEY required");
         secret=key;
+        this.facts=facts;
         SimpleClientHttpRequestFactory factory=new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2500);
         factory.setReadTimeout(8000);
@@ -33,12 +36,14 @@ public class AttendanceWriteClient {
     }
 
     public JsonNode mark(String classId,String scheduleId,String bearer,String status,String requestKey) {
+        String lessonToken=facts.currentToken(classId,scheduleId,bearer);
         try {
             RestClient.RequestBodySpec command=client.put()
                 .uri("/internal/attendance/commands/classes/{classId}/teacher-attendance/{id}",
                     classId,scheduleId)
                 .header("X-Internal-Key",secret)
                 .header("Authorization",bearer)
+                .header("X-Attendance-Lesson-Token",lessonToken)
                 .contentType(MediaType.APPLICATION_JSON);
             if(requestKey!=null)command.header("Idempotency-Key",requestKey);
             JsonNode result=command.body(new MarkRequest(status))
