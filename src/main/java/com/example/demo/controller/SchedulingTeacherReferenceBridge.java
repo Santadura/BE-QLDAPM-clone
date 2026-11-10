@@ -128,6 +128,51 @@ public class SchedulingTeacherReferenceBridge {
             "WHERE singleton=TRUE AND writer_mode='QUIESCED' FOR SHARE",
             (rs,i)->rs.getLong(1));
         if(mode.size()!=1 || mode.get(0)<1) deny("Core TEACHING writer is not quiesced");
+        // Check exact committed receipts BEFORE inspecting current account
+        // state or lease expiry. This recovers a successfully committed Core
+        // write after a lost HTTP response without authorizing a new one.
+        db.queryForList("SELECT pg_advisory_xact_lock(hashtext(?))",teacher);
+        db.queryForList("SELECT pg_advisory_xact_lock(hashtext(?))",
+            "assignment-class:"+cls);
+        List<Prior> receipts=db.query(
+            "SELECT last_revision,last_event_id,payload_hash FROM " +
+            "scheduling_assignment_reference_receipts WHERE source_type='TEACHING' " +
+            "AND schedule_id=? FOR UPDATE",
+            (rs,i)->new Prior(rs.getLong(1),rs.getString(2),rs.getString(3)),
+            event.scheduleId());
+        if(!receipts.isEmpty()) {
+            Prior prior=receipts.get(0);
+            Long exact=db.queryForObject(
+                "SELECT count(*) FROM scheduling_assignment_reference_event_receipts " +
+                "WHERE source_type='TEACHING' AND schedule_id=? AND revision=1 " +
+                "AND event_id=? AND payload_hash=? AND actor_username=? " +
+                "AND operation='ASSIGN_TEACHER' AND request_key=?",
+                Long.class,event.scheduleId(),event.eventId(),event.payloadHash(),
+                event.actorUsername(),event.requestKey());
+            if(prior.revision()==1 && prior.eventId().equals(event.eventId()) &&
+                    prior.hash().equals(event.payloadHash()) &&
+                    exact!=null && exact==1) {
+                // An HTTP timeout after Core COMMIT must be replayable even
+                // if the lease expires or TC/teacher are later deactivated.
+                // Only exact already-committed evidence is accepted; verify
+                // the Core reference row and permanently confirmed claim.
+                Long actual=db.queryForObject(
+                    "SELECT count(*) FROM teaching_schedules WHERE teaching_schedule_id=? " +
+                    "AND teacher_id=? AND class_id=? AND date=? " +
+                    "AND start_time=? AND end_time=? AND status='ASSIGNED' " +
+                    "AND assigned_by=?",
+                    Long.class,event.scheduleId(),teacher,cls,date,start,end,manager);
+                Long consumed=db.queryForObject(
+                    "SELECT count(*) FROM scheduling_assignment_writer_claims " +
+                    "WHERE actor_username=? AND operation='ASSIGN_TEACHER' " +
+                    "AND request_key=? AND manager_employee_id=? AND status='CONFIRMED'",
+                    Long.class,event.actorUsername(),event.requestKey(),manager);
+                if(actual==null || actual!=1 || consumed==null || consumed!=1)
+                    deny("Committed teacher reference, immutable receipt and claim diverged");
+                return new Receipt(event.eventId(),1,"ALREADY_APPLIED");
+            }
+            deny("Teaching event revision or immutable receipt differs");
+        }
         Long tc=db.queryForObject(
             "SELECT count(*) FROM employees e JOIN users u ON u.username=e.username " +
             "WHERE e.employee_id=? AND e.username=? AND e.status='ACTIVE' " +
@@ -149,30 +194,6 @@ public class SchedulingTeacherReferenceBridge {
             (rs,i)->rs.getString(1),event.actorUsername(),event.requestKey(),manager);
         if(claims.size()!=1) deny("Durable TC writer admission is missing");
 
-        db.queryForList("SELECT pg_advisory_xact_lock(hashtext(?))",teacher);
-        db.queryForList("SELECT pg_advisory_xact_lock(hashtext(?))",
-            "assignment-class:"+cls);
-        List<Prior> receipts=db.query(
-            "SELECT last_revision,last_event_id,payload_hash FROM " +
-            "scheduling_assignment_reference_receipts WHERE source_type='TEACHING' " +
-            "AND schedule_id=? FOR UPDATE",
-            (rs,i)->new Prior(rs.getLong(1),rs.getString(2),rs.getString(3)),
-            event.scheduleId());
-        if(!receipts.isEmpty()) {
-            Prior prior=receipts.get(0);
-            Long exact=db.queryForObject(
-                "SELECT count(*) FROM scheduling_assignment_reference_event_receipts " +
-                "WHERE source_type='TEACHING' AND schedule_id=? AND revision=1 " +
-                "AND event_id=? AND payload_hash=? AND actor_username=? " +
-                "AND operation='ASSIGN_TEACHER' AND request_key=?",
-                Long.class,event.scheduleId(),event.eventId(),event.payloadHash(),
-                event.actorUsername(),event.requestKey());
-            if(prior.revision()==1 && prior.eventId().equals(event.eventId()) &&
-                    prior.hash().equals(event.payloadHash()) &&
-                    exact!=null && exact==1)
-                return new Receipt(event.eventId(),1,"ALREADY_APPLIED");
-            deny("Teaching event revision or immutable receipt differs");
-        }
         if(!"PENDING".equals(claims.get(0)))
             deny("Teacher command claim has already been consumed");
         String scoped=digest("iig-academic-lease-v1\n"+event.actorUsername()+
