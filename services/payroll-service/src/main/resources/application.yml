@@ -12,6 +12,8 @@ spring:
       mode: always
       continue-on-error: false
 iig:
+  attendance:
+    url: ${ATTENDANCE_SERVICE_URL:http://localhost:8100}
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${PAYROLL_INTERNAL_API_KEY}
