@@ -131,8 +131,15 @@ public class SchedulingCoreClient {
         }
     }
 
-    public record DurableAssignmentReferenceReceipt(String eventId,
-                                                    long revision,String payloadHash) {}
+    public record DurableAssignmentReferenceReceipt(
+            String eventId,long revision,String payloadHash,
+            String teacherId,String classId,LocalDate date,
+            LocalTime startTime,LocalTime endTime,String status,String assignedBy) {
+        public DurableAssignmentReferenceReceipt(String eventId,long revision,
+                                                  String payloadHash) {
+            this(eventId,revision,payloadHash,null,null,null,null,null,null,null);
+        }
+    }
 
     /** Read-only exact Core receipt; never assume a 503/timeout means rollback. */
     public DurableAssignmentReferenceReceipt committedAssignmentReceipt(

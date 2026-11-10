@@ -1,6 +1,8 @@
 package com.example.demo.controller;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.security.MessageDigest;
 import java.util.List;
 
@@ -20,7 +22,14 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/internal/scheduling/assignments/reference/receipt")
 @ConditionalOnProperty(name="iig.scheduling.bridge-enabled",havingValue="true")
 public class SchedulingAssignmentReferenceReceiptController {
-    public record Receipt(String eventId,long revision,String payloadHash) {}
+    public record Receipt(String eventId,long revision,String payloadHash,
+                          String teacherId,String classId,LocalDate date,
+                          LocalTime startTime,LocalTime endTime,String status,
+                          String assignedBy) {
+        public Receipt(String eventId,long revision,String payloadHash) {
+            this(eventId,revision,payloadHash,null,null,null,null,null,null,null);
+        }
+    }
 
     private final JdbcTemplate db;
     private final byte[] internalKey;
@@ -58,25 +67,32 @@ public class SchedulingAssignmentReferenceReceiptController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                 "No immutable Core receipt for this event");
         if("TEACHING".equals(sourceType)) {
-            // A historical event receipt by itself is insufficient proof
-            // if the Core teacher row was deleted or its authorizing TC
-            // writer claim was never confirmed. These three facts must
-            // still agree before an exhausted Scheduling outbox is marked
-            // COMMITTED in manual recovery.
-            Long live=db.queryForObject(
-                "SELECT count(*) FROM teaching_schedules t " +
+            // Manual recovery must match the CURRENT Core reference fields
+            // with the Scheduling event, not merely prove some old receipt
+            // exists. A changed teacher, class, day, time or manager would
+            // otherwise be silently marked synchronized.
+            List<Receipt> current=db.query(
+                "SELECT t.teacher_id,t.class_id,t.date,t.start_time," +
+                "t.end_time,t.status,t.assigned_by " +
+                "FROM teaching_schedules t " +
                 "JOIN scheduling_assignment_reference_event_receipts e " +
                 "ON e.source_type='TEACHING' AND e.schedule_id=t.teaching_schedule_id " +
                 "AND e.event_id=? AND e.operation='ASSIGN_TEACHER' " +
                 "JOIN scheduling_assignment_writer_claims c ON " +
                 "c.actor_username=e.actor_username AND c.operation=e.operation " +
-                "AND c.request_key=e.request_key AND c.manager_employee_id=t.assigned_by " +
-                "AND c.status='CONFIRMED' " +
+                "AND c.request_key=e.request_key " +
+                "AND c.manager_employee_id=t.assigned_by AND c.status='CONFIRMED' " +
                 "WHERE t.teaching_schedule_id=? AND t.status='ASSIGNED'",
-                Long.class,eventId,scheduleId);
-            if(live==null || live!=1)
+                (rs,i)->new Receipt(rows.get(0).eventId(),rows.get(0).revision(),
+                    rows.get(0).payloadHash(),rs.getString(1),rs.getString(2),
+                    rs.getObject(3,LocalDate.class),rs.getObject(4,LocalTime.class),
+                    rs.getObject(5,LocalTime.class),rs.getString(6),
+                    rs.getString(7)),
+                eventId,scheduleId);
+            if(current.size()!=1)
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Immutable teacher receipt, Core reference and TC claim diverged");
+            return current.get(0);
         }
         return rows.get(0);
     }
