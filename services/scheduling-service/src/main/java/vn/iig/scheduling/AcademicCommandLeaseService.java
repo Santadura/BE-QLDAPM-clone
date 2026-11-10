@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.sql.Timestamp;
 import java.util.HexFormat;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -29,7 +30,7 @@ public class AcademicCommandLeaseService {
         long classVersion,long sessionVersion,String leaseId,Instant expiresAt) {}
     private record Command(String state,String payload) {}
     private record Claim(String classId,String sessionId,long classVersion,
-        long sessionVersion,String leaseId) {}
+        long sessionVersion,String leaseId,Instant expiresAt) {}
     private final JdbcTemplate db;
     private final SchedulingCoreClient core;
     private final ObjectMapper json;
@@ -98,11 +99,12 @@ public class AcademicCommandLeaseService {
 
     private List<Claim> claims(String actor,String key) {
         return db.query(
-            "SELECT class_id,session_id,class_version,session_version,core_lease_id " +
+            "SELECT class_id,session_id,class_version,session_version,core_lease_id,expires_at " +
             "FROM scheduling_academic_command_leases " +
             "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=? FOR UPDATE",
             (rs,i)->new Claim(rs.getString(1),rs.getString(2),
-                rs.getLong(3),rs.getLong(4),rs.getString(5)),actor,key);
+                rs.getLong(3),rs.getLong(4),rs.getString(5),
+                rs.getTimestamp(6).toInstant()),actor,key);
     }
 
     private Receipt check(String key,Expected expected,SchedulingCoreClient.AcademicLease live) {
@@ -134,11 +136,38 @@ public class AcademicCommandLeaseService {
                     wanted.sessionVersion()!=old.sessionVersion())
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Staged teacher evidence changed after Academic lease acquisition");
+            if(old.expiresAt()==null)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Academic lease expiry evidence is missing");
+            // Safe recovery is allowed ONLY for a STAGED command and an
+            // already expired local claim. The remote Core bridge independently
+            // rejects wrong Academic versions or retired writer generations.
+            // Reuse the exact actor-scoped request key so an ambiguous HTTP
+            // response cannot allocate a second live lease for this command.
+            if(!old.expiresAt().isAfter(Instant.now())) {
+                var renewed=core.reserveAcademicSession(wanted.classId(),
+                    wanted.sessionId(),wanted.classVersion(),wanted.sessionVersion(),
+                    scopedCoreCommandKey(actor,"ASSIGN_TEACHER",requestKey));
+                Receipt receipt=check(requestKey,wanted,renewed);
+                int updated=db.update("UPDATE scheduling_academic_command_leases " +
+                    "SET core_lease_id=?,expires_at=?,refreshed_at=NOW() " +
+                    "WHERE actor_username=? AND operation='ASSIGN_TEACHER' " +
+                    "AND request_key=? AND core_lease_id=? AND expires_at<=NOW()",
+                    receipt.leaseId(),Timestamp.from(receipt.expiresAt()),actor,
+                    requestKey,old.leaseId());
+                if(updated!=1)
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Expired Academic lease claim changed during recovery");
+                return receipt;
+            }
             Receipt receipt=check(requestKey,wanted,core.renewAcademicSession(old.leaseId()));
-            db.update("UPDATE scheduling_academic_command_leases " +
+            int updated=db.update("UPDATE scheduling_academic_command_leases " +
                 "SET expires_at=?,refreshed_at=NOW() WHERE actor_username=? " +
-                "AND operation='ASSIGN_TEACHER' AND request_key=?",
-                java.sql.Timestamp.from(receipt.expiresAt()),actor,requestKey);
+                "AND operation='ASSIGN_TEACHER' AND request_key=? AND core_lease_id=?",
+                Timestamp.from(receipt.expiresAt()),actor,requestKey,old.leaseId());
+            if(updated!=1)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Academic lease changed during replay");
             return receipt;
         }
         var live=core.reserveAcademicSession(wanted.classId(),wanted.sessionId(),
@@ -172,10 +201,13 @@ public class AcademicCommandLeaseService {
                 "Staged teacher evidence and Academic lease diverged");
         Receipt receipt=check(requestKey,wanted,
             core.renewAcademicSession(current.leaseId()));
-        db.update("UPDATE scheduling_academic_command_leases " +
+        int updated=db.update("UPDATE scheduling_academic_command_leases " +
             "SET expires_at=?,refreshed_at=NOW() WHERE actor_username=? " +
-            "AND operation='ASSIGN_TEACHER' AND request_key=?",
-            java.sql.Timestamp.from(receipt.expiresAt()),actor,requestKey);
+            "AND operation='ASSIGN_TEACHER' AND request_key=? AND core_lease_id=?",
+            Timestamp.from(receipt.expiresAt()),actor,requestKey,current.leaseId());
+        if(updated!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic lease changed during renewal");
         return receipt;
     }
 
