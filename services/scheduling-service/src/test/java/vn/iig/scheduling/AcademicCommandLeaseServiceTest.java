@@ -2,6 +2,7 @@ package vn.iig.scheduling;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.ResultSet;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,9 @@ class AcademicCommandLeaseServiceTest {
             });
     }
     private void claim(String classId,long version) throws Exception {
+        claim(classId,version,Instant.now().plusSeconds(240));
+    }
+    private void claim(String classId,long version,Instant expiry) throws Exception {
         when(db.query(startsWith("SELECT class_id,session_id,class_version"),
             any(RowMapper.class),eq("tc001"),eq("command-1")))
             .thenAnswer(inv->{
@@ -47,6 +51,7 @@ class AcademicCommandLeaseServiceTest {
                 when(rs.getLong(3)).thenReturn(version);
                 when(rs.getLong(4)).thenReturn(7L);
                 when(rs.getString(5)).thenReturn("lease-1");
+                when(rs.getTimestamp(6)).thenReturn(Timestamp.from(expiry));
                 return List.of(mapper.mapRow(rs,0));
             });
     }
@@ -74,18 +79,25 @@ class AcademicCommandLeaseServiceTest {
             throws Exception {
         staged("STAGED");claim("class-1",3);
         when(core.renewAcademicSession("lease-1")).thenReturn(live());
+        when(db.update(startsWith("UPDATE scheduling_academic_command_leases"),
+            any(Timestamp.class),eq("tc001"),eq("command-1"),eq("lease-1")))
+            .thenReturn(1);
         var receipt=svc.acquire("tc001","command-1");
         assertEquals("lease-1",receipt.leaseId());
         verify(core,never()).reserveAcademicSession(anyString(),anyString(),
             anyLong(),anyLong(),anyString());
         verify(db).update(startsWith("UPDATE scheduling_academic_command_leases"),
-            any(java.sql.Timestamp.class),eq("tc001"),eq("command-1"));
+            any(java.sql.Timestamp.class),eq("tc001"),eq("command-1"),
+            eq("lease-1"));
     }
 
     @Test void explicitRenewRequiresMatchingActorAndSameVersionedLease()
             throws Exception {
         staged("STAGED");claim("class-1",3);
         when(core.renewAcademicSession("lease-1")).thenReturn(live());
+        when(db.update(startsWith("UPDATE scheduling_academic_command_leases"),
+            any(Timestamp.class),eq("tc001"),eq("command-1"),eq("lease-1")))
+            .thenReturn(1);
         assertEquals("lease-1",svc.renew("tc001","command-1").leaseId());
         verify(core).renewAcademicSession("lease-1");
     }
@@ -101,6 +113,55 @@ class AcademicCommandLeaseServiceTest {
 
     @Test void nonStagedTeacherCommandCannotAcquireOrRenew() throws Exception {
         staged("PENDING_REFERENCE");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.acquire("tc001","command-1")).getStatusCode());
+        verifyNoInteractions(core);
+    }
+
+    @Test void expiredClaimIsReacquiredWithTheSameScopedCoreKey() throws Exception {
+        staged("STAGED");
+        claim("class-1",3,Instant.now().minusSeconds(30));
+        String key=AcademicCommandLeaseService.scopedCoreCommandKey(
+            "tc001","ASSIGN_TEACHER","command-1");
+        var successor=new SchedulingCoreClient.AcademicLease("lease-2",
+            "class-1","lesson-1",3,7,expires);
+        when(core.reserveAcademicSession("class-1","lesson-1",3,7,key))
+            .thenReturn(successor);
+        when(db.update(startsWith("UPDATE scheduling_academic_command_leases"),
+            eq("lease-2"),any(Timestamp.class),eq("tc001"),eq("command-1"),
+            eq("lease-1"))).thenReturn(1);
+        var recovered=svc.acquire("tc001","command-1");
+        assertEquals("lease-2",recovered.leaseId());
+        verify(core,never()).renewAcademicSession("lease-1");
+    }
+
+    @Test void expiredClaimCannotBeRecoveredIfAcademicSessionChanged() throws Exception {
+        staged("STAGED");
+        claim("class-1",3,Instant.now().minusSeconds(30));
+        when(core.reserveAcademicSession(anyString(),anyString(),anyLong(),anyLong(),
+            anyString())).thenThrow(new ResponseStatusException(HttpStatus.CONFLICT,
+                "writer generation changed"));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.acquire("tc001","command-1")).getStatusCode());
+        verify(db,never()).update(startsWith("UPDATE scheduling_academic_command_leases"),
+            any(Object[].class));
+    }
+
+    @Test void failedRecoveryCursorWriteNeverReportsAcademicLeaseSuccess() throws Exception {
+        staged("STAGED");
+        claim("class-1",3,Instant.now().minusSeconds(30));
+        when(core.reserveAcademicSession(anyString(),anyString(),anyLong(),anyLong(),
+            anyString())).thenReturn(new SchedulingCoreClient.AcademicLease(
+                "lease-2","class-1","lesson-1",3,7,expires));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.acquire("tc001","command-1")).getStatusCode());
+    }
+
+    @Test void alreadyCommittedTeacherCommandCannotReacquireExpiredLease() throws Exception {
+        staged("COMMITTED");
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,
             ()->svc.acquire("tc001","command-1")).getStatusCode());

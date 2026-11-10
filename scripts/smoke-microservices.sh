@@ -1818,6 +1818,42 @@ BEGIN
          (SELECT writer_generation FROM scheduling_assignment_writer_control WHERE singleton=TRUE)
   FROM classes c JOIN class_sessions s ON s.class_id=c.class_id
   WHERE c.class_id='${one}' AND s.class_session_id=lesson_id;
+  -- A raw SQL mutation cannot forge the Academic evidence envelope,
+  -- extend leases indefinitely, or bypass the exact lesson versions.
+  BEGIN
+    UPDATE scheduling_academic_session_leases
+       SET command_key='forged-command' WHERE lease_id='${fixture}-acad';
+    RAISE EXCEPTION 'Academic lease command key was rewritten';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    UPDATE scheduling_academic_session_leases
+       SET expected_session_version=expected_session_version+1
+     WHERE lease_id='${fixture}-acad';
+    RAISE EXCEPTION 'Academic lesson version in a lease was rewritten';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    UPDATE scheduling_academic_session_leases
+       SET expires_at=NOW()+interval '1 day'
+     WHERE lease_id='${fixture}-acad';
+    RAISE EXCEPTION 'Academic lease could be extended without bound';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO scheduling_academic_session_leases(
+      lease_id,class_id,class_session_id,expected_class_version,
+      expected_session_version,command_key,expires_at,expected_writer_generation)
+    SELECT '${fixture}-expired','${one}',lesson_id,
+           c.scheduling_version,s.scheduling_version,
+           'expired-command',NOW()-interval '1 second',
+           (SELECT writer_generation FROM scheduling_assignment_writer_control
+            WHERE singleton=TRUE)
+    FROM classes c JOIN class_sessions s ON s.class_id=c.class_id
+    WHERE c.class_id='${one}' AND s.class_session_id=lesson_id;
+    RAISE EXCEPTION 'Newly inserted Academic lease may already be expired';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
   BEGIN
     UPDATE class_sessions SET status=status WHERE class_session_id=lesson_id;
     RAISE EXCEPTION 'Active Academic lease failed to block timetable mutation';
@@ -1833,10 +1869,24 @@ BEGIN
    WHERE lease_id='${fixture}-acad';
   UPDATE scheduling_assignment_writer_control
     SET writer_mode='CORE',changed_at=NOW() WHERE singleton=TRUE;
+  BEGIN
+    INSERT INTO scheduling_academic_session_leases(
+      lease_id,class_id,class_session_id,expected_class_version,
+      expected_session_version,command_key,expires_at,expected_writer_generation)
+    SELECT '${fixture}-invalid-mode','${one}',lesson_id,
+           c.scheduling_version,s.scheduling_version,
+           'writer-active-command',NOW()+interval '5 minutes',
+           (SELECT writer_generation FROM scheduling_assignment_writer_control
+            WHERE singleton=TRUE)
+    FROM classes c JOIN class_sessions s ON s.class_id=c.class_id
+    WHERE c.class_id='${one}' AND s.class_session_id=lesson_id;
+    RAISE EXCEPTION 'Academic lease was issued while Core writer was active';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
 END
 \$\$;
 SQL
-echo "PASS: leased Academic sessions block timetable edits and premature Core writer resume"
+echo "PASS: Academic SQL blocks lease tampering, stale versions, active-Core writes and unbounded renewal"
 
 
 

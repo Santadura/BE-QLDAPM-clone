@@ -649,6 +649,34 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-3: fail-closed Academic lease recovery and PostgreSQL enforcement
+
+A staged teacher command may now **reacquire an expired** Academic
+session lease using its original actor-scoped SHA-256 command key.
+Scheduling serializes the original STAGED receipt and its existing lease
+row, verifies the same class/session versions, asks Core to reserve again,
+and atomically replaces the expired local lease ID and deadline. The
+Core side independently checks current Academic versions and QUIESCED
+writer generation, so an expired pre-handoff lease can never authorize
+a new session after an ABA/mode change. A locally committed,
+PENDING_REFERENCE, COMPENSATING, REJECTED or otherwise non-STAGED
+command cannot silently re-acquire a new lease. An ambiguous HTTP
+response is safe to retry; failure to update the local claim is NOT
+reported as success.
+
+A separate additive Core PostgreSQL migration guards EVERY Academic
+lease INSERT/UPDATE against active Core writer mode, wrong generation,
+stale class/session status and versions, changed immutable command
+identity, renewal after expiry, and extensions beyond the bounded
+five-minute lease. These protections apply to direct SQL as well as
+HTTP controllers. Docker smoke explicitly attempts illegal changes
+and verifies SQLSTATE 55000; no live service is cut over.
+
+This remains preparatory. **A complete teacher/class-support saga still
+needs a separately owned command writer, exact worker conflict/availability
+lease, Core reference handoff, Payroll/Attendance protection, compensating
+actions and public Gateway cutover.**
+
 ## Phase 8g-2: durable Scheduling-side Academic lease coordination
 
 A private Scheduling-only, opt-in coordinator now binds a planned
