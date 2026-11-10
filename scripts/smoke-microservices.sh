@@ -167,6 +167,11 @@ for i in $(seq 1 60); do
 done
 test "$attendance_imported" = "1" || { echo "Attendance did not import Core INSERT event"; exit 1; }
 
+first_attendance_view="$(curl -fsS -H "Authorization: Bearer ${cs_token}" "$attendance_api")"
+ATTENDANCE_VIEW="$first_attendance_view" python3 -c \
+  'import json,os; rows=json.loads(os.environ["ATTENDANCE_VIEW"]); assert any(x.get("id")=="teaching-001" and x.get("attendanceStatus")=="PRESENT" for x in rows)'
+
+
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
   -c "UPDATE teacher_session_attendance SET status='LATE',updated_at=NOW() WHERE attendance_id='${attendance_fixture}'"
 updated_imported=0
@@ -178,6 +183,23 @@ for i in $(seq 1 60); do
 done
 test "$updated_imported" = "1" || { echo "Attendance did not apply the updated source revision"; exit 1; }
 
+latest_attendance_view="$(curl -fsS -H "Authorization: Bearer ${cs_token}" "$attendance_api")"
+ATTENDANCE_VIEW="$latest_attendance_view" python3 -c \
+  'import json,os; rows=json.loads(os.environ["ATTENDANCE_VIEW"]); assert any(x.get("id")=="teaching-001" and x.get("attendanceStatus")=="LATE" for x in rows)'
+
+# If a local projection is corrupted or lags Core, Attendance MUST fail
+# closed instead of serving the last cached value. Repair the CI-only row.
+"${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "UPDATE attendance_teacher_source_records SET payload=jsonb_set(payload,'{status}','\"ABSENT\"'::jsonb) WHERE teaching_schedule_id='teaching-001'"
+mismatch_http="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer ${cs_token}" "$attendance_api")"
+if [ "$mismatch_http" != "503" ]; then
+  echo "Attendance served a corrupted local projection instead of refusing: HTTP ${mismatch_http}"; exit 1
+fi
+"${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "UPDATE attendance_teacher_source_records SET payload=jsonb_set(payload,'{status}','\"LATE\"'::jsonb) WHERE teaching_schedule_id='teaching-001'"
+
+
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
   -c "DELETE FROM teacher_session_attendance WHERE attendance_id='${attendance_fixture}'"
 deleted_imported=0
@@ -188,6 +210,11 @@ for i in $(seq 1 60); do
   sleep 2
 done
 test "$deleted_imported" = "1" || { echo "Attendance failed to retain the source deletion tombstone"; exit 1; }
+
+deleted_attendance_view="$(curl -fsS -H "Authorization: Bearer ${cs_token}" "$attendance_api")"
+ATTENDANCE_VIEW="$deleted_attendance_view" python3 -c \
+  'import json,os; rows=json.loads(os.environ["ATTENDANCE_VIEW"]); assert any(x.get("id")=="teaching-001" and x.get("attendanceStatus") is None for x in rows)'
+
 
 source_confirmed="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db \
   -tAc "SELECT count(*) FROM teacher_attendance_source_outbox WHERE payload->>'attendance_id'='${attendance_fixture}' AND delivered_at IS NOT NULL" | tr -d '[:space:]')"
@@ -204,7 +231,7 @@ fi
 if [ "$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/attendance/events")" != "404" ]; then
   echo "Attendance source feed was exposed through public Gateway"; exit 1
 fi
-echo "PASS: Attendance imports Core INSERT/UPDATE/DELETE with exact receipts and private source feed"
+echo "PASS: Attendance-owned status read stays Core-consistent across INSERT/UPDATE/DELETE, rejects projection drift and confirms immutable receipts"
 
 
 
