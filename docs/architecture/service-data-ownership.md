@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8f-1 (Core Attendance source outbox replicated into independent service; public writes still Core-owned)**. Do not claim full migration before every
+> Architecture status: **Phase 8f-2 (Attendance owns verified status reads; all attendance writes still Core-owned)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -171,6 +171,13 @@ service-key-protected projection API after bootstrap.
 - [ ] Verify the full event replay/recovery flow against real PostgreSQL,
   then finish independent Academic/Attendance and class-support mutation
   ownership before public API cutover.
+- [x] Phase 8f-2: GET teacher attendance status is now read from the
+  independently replicated Attendance PostgreSQL projection, guarded by
+  a complete Core event relay barrier and live CS/class source parity.
+  An event race can retry; persistent divergence fails closed with 503.
+- [x] Smoke tests intentionally corrupt a test-only Attendance status,
+  prove it cannot be served as current, then restore the fixture and
+  verify deletion tombstone status is null.
 - [x] Phase 8f-1: durable transactional Core outbox for teacher attendance
   insert/update/delete, including migration backfill and immutable deletion
   tombstones, with a service-key private pending/ack protocol.
