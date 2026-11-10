@@ -149,7 +149,7 @@ public class AcademicCommandLeaseService {
             "INSERT INTO scheduling_academic_command_leases (" +
             "actor_username,operation,request_key,class_id,session_id," +
             "class_version,session_version,core_lease_id,expires_at) " +
-            "VALUES(?,'ASSIGN_TEACHER',?,?,?,?,?,?,?,?)",
+            "VALUES(?,'ASSIGN_TEACHER',?,?,?,?,?,?,?)",
             actor,requestKey,wanted.classId(),wanted.sessionId(),
             wanted.classVersion(),wanted.sessionVersion(),receipt.leaseId(),
             java.sql.Timestamp.from(receipt.expiresAt()));
