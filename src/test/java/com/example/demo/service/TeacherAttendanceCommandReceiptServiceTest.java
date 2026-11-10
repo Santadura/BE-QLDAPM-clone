@@ -100,6 +100,18 @@ class TeacherAttendanceCommandReceiptServiceTest {
         // Real PostgreSQL @Transactional rollback is verified by Docker smoke.
     }
 
+    @Test void noKeyCoreCommandAlsoVerifiesVersionAfterBusinessLock() {
+        cs();
+        String token="a".repeat(64);
+        when(attendance.mark(eq("class-1"),eq("teach-1"),any(MarkRequest.class)))
+            .thenReturn(Map.of("status","PRESENT"));
+        assertEquals("PRESENT",receipts.mark("class-1","teach-1",null,token,
+            new MarkRequest("PRESENT")).get("status"));
+        var order=inOrder(attendance,facts);
+        order.verify(attendance).mark(eq("class-1"),eq("teach-1"),any(MarkRequest.class));
+        order.verify(facts).requireUnchanged("class-1","teach-1",token);
+    }
+
     @Test void disabledOrWrongRoleNeverReadsReceipts() {
         when(access.requireRole("CS")).thenThrow(new ApiException(HttpStatus.FORBIDDEN,"Role revoked"));
         assertEquals(HttpStatus.FORBIDDEN,assertThrows(ApiException.class,

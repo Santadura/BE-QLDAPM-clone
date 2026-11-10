@@ -34,6 +34,16 @@ class TeacherAttendancePrivateCommandControllerTest {
         verifyNoInteractions(receipts);
     }
 
+    @Test void forwardsExpectedVersionTokenToLockedCoreTransaction() {
+        MarkRequest request=new MarkRequest("PRESENT");
+        String token="a".repeat(64);
+        when(receipts.mark("class-1","teach-1","request-2",token,request))
+            .thenReturn(Map.of("status","PRESENT"));
+        assertEquals("PRESENT",bridge.mark("secret-key","Bearer cs","request-2",
+            token,"class-1","teach-1",request).get("status"));
+        verify(receipts).mark("class-1","teach-1","request-2",token,request);
+    }
+
     @Test void authorizedIngressForwardsStableKeyToTransactionalCoreReceipt() {
         MarkRequest request=new MarkRequest("PRESENT");
         when(receipts.mark("class-1","teach-1","request-1",null,request))
