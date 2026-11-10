@@ -2,7 +2,7 @@
 
 ## Status (2026-11-10)
 
-This branch is **migration phase 8f-8 (Attendance normalized ledger + immutable full history)**, not
+This branch is **migration phase 8f-9 (Payroll reads independent Attendance evidence for private reconciliation)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,51 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8f-9: Payroll / Attendance read-only source evidence reconciliation
+
+The independent Attendance database from 8f-8 now serves narrowly scoped
+teacher-session source evidence (schedule ID, status, UPSERT/DELETE,
+source event ID and digest) to **Payroll using Payroll's separate private
+service key**. `GET /internal/attendance/payroll/evidence?ids=...` validates
+1–100 distinct schedule IDs and a successful full 8f-8 source/ledger/history
+manifest verification before returning any evidence. It double-checks Core
+source summary and both generation-stamped writer fences around the read;
+changes or source outage fail closed. For a period with no teacher works,
+`/internal/attendance/payroll/readiness` runs the same complete parity
+without requesting a fabricated schedule ID.
+
+Payroll exposes a **private read-only**
+`GET /internal/payroll/attendance-reconciliation?period=YYYY-MM`, also
+protected by the Payroll key. It reads the current Core Payroll Work
+contract, selects **only active TEACHER / TEACHING** work (those presently
+filtered by Core to assigned, recorded PRESENT/LATE sessions), pages the
+requested schedule IDs through Attendance's verified reference API, and
+requires each payable schedule to have an independent UPSERT with
+PRESENT/LATE. Evidence pages must agree on source event count, revision
+and both writer generations. The service re-reads Core teacher work IDs
+after comparing evidence, rejecting a changed Core work set. Only a full,
+consistent match returns HTTP 200; missing/nonpayable events return 409
+with a bounded mismatch list; outages and invalid payloads return 503.
+Both `/internal` paths stay OFF public Gateway routing.
+
+**Crucially, this is NOT a Payroll source switch.**
+`/api/payroll/calculate` still reads Core's roster, teacher work facts,
+staff shifts and salary rank history. Payroll owns the same exclusive
+financial ledger, with no formula, amounts, or authorization changes.
+The independent Attendance evidence is only a private preflight to build
+a trustworthy future teacher-payroll source. CS/Sale shift compensation,
+teacher assignment source ownership, rate/rank ownership, source fact
+immutability across actual payroll commit, and a fenced handoff remain.
+
+Docker regression verifies the source evidence for seeded 2026-10
+teacher attendance, that the wrong/missing key and public Gateway cannot
+retrieve it, that Payroll reports parity without writing any financial
+ledger, and that corrupting the independent Attendance digest prevents
+both direct evidence and Payroll reconciliation until the disposable
+fixture is restored. A live verification is not a distributed snapshot
+or a guarantee of future immutability: source leasing and handoff are
+still prerequisites before independently calculating money.
 
 ## Phase 8f-8: normalized independent Attendance ledger and complete immutable history
 

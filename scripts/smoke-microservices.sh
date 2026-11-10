@@ -923,6 +923,79 @@ test "$historical_count" -ge 2 || { echo "Historical salaries were not imported"
 detail="$(curl -fsS "${BASE}/api/payroll/teacher-001/2026-10" \
   -H "Authorization: Bearer ${TOKEN}")"
 printf '%s' "$detail" | python3 -c 'import sys,json; x=json.load(sys.stdin); assert x["employeeId"]=="teacher-001" and isinstance(x["items"],list)'
+# Phase 8f-9: Payroll may inspect independent Attendance evidence, but
+# must keep the current Core-derived teacher/CS work facts and salary formula.
+# The new contracts are private, service-key protected and NEVER Gateway API.
+payroll_private_key="${PAYROLL_INTERNAL_API_KEY:-local-dev-payroll-key-change-before-deployment}"
+payroll_evidence_url="http://attendance-service:8100/internal/attendance/payroll/evidence?ids=teaching-001"
+payroll_ready_url="http://attendance-service:8100/internal/attendance/payroll/readiness"
+payroll_reconcile_url="http://payroll-service:8097/internal/payroll/attendance-reconciliation?period=2026-10"
+if "${COMPOSE[@]}" exec -T attendance-postgres wget -qO- "$payroll_evidence_url" >/dev/null 2>&1; then
+  echo "Private Attendance Payroll evidence accepted missing service key"; exit 1
+fi
+if "${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${attendance_private_key}" "$payroll_evidence_url" >/dev/null 2>&1; then
+  echo "Attendance Payroll evidence accepted the wrong (Attendance) service key"; exit 1
+fi
+if "${COMPOSE[@]}" exec -T attendance-postgres wget -qO- "$payroll_reconcile_url" >/dev/null 2>&1; then
+  echo "Private Payroll reconciliation accepted missing service key"; exit 1
+fi
+for private_path in "/internal/attendance/payroll/evidence?ids=teaching-001" \
+  "/internal/payroll/attendance-reconciliation?period=2026-10"; do
+  test "$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}${private_path}")" = "404" || {
+    echo "Private Attendance/Payroll evidence leaked via public Gateway"; exit 1
+  }
+done
+payroll_reference="$("${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${payroll_private_key}" "$payroll_evidence_url")"
+PAYROLL_REFERENCE="$payroll_reference" python3 -c \
+  'import os,json; r=json.loads(os.environ["PAYROLL_REFERENCE"]); x=r["evidence"]; assert r["sourceRevision"]>=1 and r["sourceEventCount"]>=3 and len(x)==1 and x[0]["teachingScheduleId"]=="teaching-001" and x[0]["eventKind"]=="UPSERT" and x[0]["status"]=="PRESENT" and len(x[0]["sourceHash"])==64,r'
+payroll_global="$("${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${payroll_private_key}" "$payroll_ready_url")"
+PAYROLL_REFERENCE="$payroll_global" python3 -c \
+  'import os,json; r=json.loads(os.environ["PAYROLL_REFERENCE"]); assert r["sourceRevision"]>=1 and r["evidence"]==[],r'
+payroll_ledger_count_before="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT count(*) FROM payroll_ledgers" | tr -d '[:space:]')"
+payroll_item_count_before="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT count(*) FROM payroll_items" | tr -d '[:space:]')"
+payroll_reconciliation="$("${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${payroll_private_key}" "$payroll_reconcile_url")"
+PAYROLL_RECONCILIATION="$payroll_reconciliation" python3 -c \
+  'import os,json; x=json.loads(os.environ["PAYROLL_RECONCILIATION"]); assert x["ready"] is True and x["state"]=="MATCH" and x["period"]=="2026-10" and x["teacherShifts"]>=1 and x["mismatches"]==0 and x["sourceRevision"]>=1,x'
+echo "PASS: Payroll verifies Core teacher work against independently imported Attendance source evidence"
+
+# Simulated corrupt local ledger must fail closed at BOTH service boundaries;
+# no fallback to unaudited Payroll evidence is permitted.
+payroll_original_digest="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT source_hash FROM attendance_teacher_ledger WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+"${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "UPDATE attendance_teacher_ledger SET source_hash=repeat('f',64) WHERE teaching_schedule_id='teaching-001'"
+broken_evidence="$("${COMPOSE[@]}" exec -T attendance-postgres wget -S -O /dev/null \
+  --header "X-Internal-Key: ${payroll_private_key}" "$payroll_evidence_url" 2>&1 || true)"
+if ! printf '%s' "$broken_evidence" | grep -Eq 'HTTP/[0-9.]+ 409|409 Conflict'; then
+  echo "Attendance exposed tampered Payroll reference evidence as verified"; exit 1
+fi
+broken_reconciliation="$("${COMPOSE[@]}" exec -T attendance-postgres wget -S -O /dev/null \
+  --header "X-Internal-Key: ${payroll_private_key}" "$payroll_reconcile_url" 2>&1 || true)"
+if ! printf '%s' "$broken_reconciliation" | grep -Eq 'HTTP/[0-9.]+ 503|503 Service Unavailable'; then
+  echo "Payroll accepted unavailable or corrupt Attendance source evidence"; exit 1
+fi
+"${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "UPDATE attendance_teacher_ledger SET source_hash='${payroll_original_digest}' WHERE teaching_schedule_id='teaching-001'"
+payroll_reconciliation="$("${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${payroll_private_key}" "$payroll_reconcile_url")"
+PAYROLL_RECONCILIATION="$payroll_reconciliation" python3 -c \
+  'import os,json; r=json.loads(os.environ["PAYROLL_RECONCILIATION"]); assert r["ready"] is True and r["mismatches"]==0,r'
+payroll_ledger_count_after="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT count(*) FROM payroll_ledgers" | tr -d '[:space:]')"
+payroll_item_count_after="$("${COMPOSE[@]}" exec -T payroll-postgres psql -U iig_payroll -d iig_payroll -tAc \
+  "SELECT count(*) FROM payroll_items" | tr -d '[:space:]')"
+test "$payroll_ledger_count_before" = "$payroll_ledger_count_after" && \
+  test "$payroll_item_count_before" = "$payroll_item_count_after" || {
+    echo "Private reconciliation modified Payroll financial ledger"; exit 1
+}
+echo "PASS: Payroll fail-closed mismatch, recovery, key isolation, private API and financial non-mutation"
+
 echo "PASS: payroll ledger is owned by independent PostgreSQL and historical data preserved"
 
 # Payroll calculation is a management action, not a worker self-service write.
