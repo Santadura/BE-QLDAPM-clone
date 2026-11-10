@@ -24,6 +24,12 @@ public class PayrollAttendanceEvidenceClient {
                            long attendanceGeneration,long schedulingGeneration,
                            List<Evidence> evidence) {}
 
+    public record HistoryEvent(long eventId,String teachingScheduleId,
+                               String eventKind,String status,String sourceHash) {}
+    public record HistoryPage(long sourceRevision,long sourceEventCount,
+                              long attendanceGeneration,long schedulingGeneration,
+                              List<HistoryEvent> events) {}
+
     private final RestClient client;
     private final String key;
 
@@ -38,6 +44,44 @@ public class PayrollAttendanceEvidenceClient {
         http.setReadTimeout(20000);
         client=RestClient.builder().baseUrl(attendanceUrl)
             .requestFactory(http).build();
+    }
+
+    public HistoryPage history(long cursor,int limit) {
+        if(cursor<0 || limit<1 || limit>100)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Invalid Payroll Attendance history cursor");
+        try {
+            HistoryPage page=client.get()
+                .uri(uri->uri.path("/internal/attendance/payroll/events")
+                    .queryParam("after",cursor).queryParam("limit",limit).build())
+                .header("X-Internal-Key",key)
+                .retrieve().body(HistoryPage.class);
+            if(page==null || page.events()==null || page.events().size()>limit ||
+                    page.sourceRevision()<0 || page.sourceEventCount()<0 ||
+                    page.attendanceGeneration()<1 || page.schedulingGeneration()<1)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Invalid Attendance Payroll event history page");
+            long last=cursor;
+            for(HistoryEvent event:page.events()) {
+                if(event==null || event.eventId()<=last ||
+                        event.eventId()>page.sourceRevision() ||
+                        event.teachingScheduleId()==null ||
+                        !event.teachingScheduleId().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
+                        !Set.of("UPSERT","DELETE").contains(event.eventKind()) ||
+                        event.sourceHash()==null ||
+                        !event.sourceHash().matches("[0-9a-f]{64}") ||
+                        ("UPSERT".equals(event.eventKind()) ?
+                            !Set.of("PRESENT","ABSENT","LATE").contains(event.status()) :
+                            event.status()!=null))
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Invalid or out-of-order Attendance reference event");
+                last=event.eventId();
+            }
+            return page;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Independent Attendance history unavailable",ex);
+        }
     }
 
     public Snapshot readiness() {

@@ -39,3 +39,49 @@ CREATE TABLE IF NOT EXISTS payroll_meta (
   key VARCHAR(80) PRIMARY KEY,
   value VARCHAR(200) NOT NULL
 );
+
+
+-- Phase 8f-10: Payroll-owned teacher attendance evidence projection.
+-- Financial amounts are NOT derived from it until the later signed writer
+-- handoff. Source IDs/digests refer to Attendance immutable history; no
+-- employee or financial PII is copied with an event.
+CREATE TABLE IF NOT EXISTS payroll_attendance_reference_events (
+  event_id BIGINT PRIMARY KEY CHECK(event_id>0),
+  teaching_schedule_id VARCHAR(50) NOT NULL,
+  event_kind VARCHAR(10) NOT NULL CHECK(event_kind IN ('UPSERT','DELETE')),
+  status VARCHAR(20),
+  source_hash CHAR(64) NOT NULL CHECK(source_hash ~ '^[0-9a-f]{64}$'),
+  ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT payroll_attendance_event_status CHECK (
+    (event_kind='UPSERT' AND status IN ('PRESENT','ABSENT','LATE'))
+    OR (event_kind='DELETE' AND status IS NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_payroll_attendance_reference_history
+  ON payroll_attendance_reference_events(teaching_schedule_id,event_id);
+
+CREATE TABLE IF NOT EXISTS payroll_attendance_reference_latest (
+  teaching_schedule_id VARCHAR(50) PRIMARY KEY,
+  event_id BIGINT NOT NULL CHECK(event_id>0),
+  event_kind VARCHAR(10) NOT NULL CHECK(event_kind IN ('UPSERT','DELETE')),
+  status VARCHAR(20),
+  source_hash CHAR(64) NOT NULL CHECK(source_hash ~ '^[0-9a-f]{64}$'),
+  ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT payroll_attendance_latest_status CHECK (
+    (event_kind='UPSERT' AND status IN ('PRESENT','ABSENT','LATE'))
+    OR (event_kind='DELETE' AND status IS NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_payroll_attendance_reference_payable
+  ON payroll_attendance_reference_latest(status)
+  WHERE event_kind='UPSERT';
+
+-- Separate history cursor, never MAX(latest.event_id): a later live event
+-- must not cause an old historical page to be silently skipped.
+CREATE TABLE IF NOT EXISTS payroll_attendance_reference_cursor (
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton),
+  last_event_id BIGINT NOT NULL DEFAULT 0 CHECK(last_event_id>=0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO payroll_attendance_reference_cursor(singleton,last_event_id)
+VALUES(TRUE,0) ON CONFLICT(singleton) DO NOTHING;
