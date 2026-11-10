@@ -113,7 +113,9 @@ class TeacherAssignmentExecutorTest {
                 "existing-teach","PENDING_REFERENCE",1)));
         var original=executor.execute("tc001","tc-1","TC","cmd-1");
         assertEquals("existing-teach",original.scheduleId());
-        verifyNoInteractions(preflight,academic,projection,conflict,outbox,lifecycle);
+        verifyNoInteractions(preflight,academic,conflict,outbox,lifecycle);
+        verify(projection).requireReady();
+        verify(projection,never()).project(any(AssignmentProjectionRepository.AssignmentSnapshot.class));
         verify(core,never()).acquireAssignmentWriterClaim(
             anyString(),anyString(),anyString(),anyString());
     }
@@ -134,7 +136,9 @@ class TeacherAssignmentExecutorTest {
             ()->executor.execute("tc001","tc-1","TC","cmd-1")).getStatusCode());
         verify(core,never()).acquireAssignmentWriterClaim(
             anyString(),anyString(),anyString(),anyString());
-        verifyNoInteractions(projection,outbox,lifecycle);
+        verify(projection).requireReady();
+        verify(projection,never()).project(any(AssignmentProjectionRepository.AssignmentSnapshot.class));
+        verifyNoInteractions(outbox,lifecycle);
     }
 
     @Test void tcWriterAdmissionFailurePrecedesEveryIndependentTeachingWrite()
@@ -147,7 +151,9 @@ class TeacherAssignmentExecutorTest {
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,
             ()->executor.execute("tc001","tc-1","TC","cmd-1")).getStatusCode());
-        verifyNoInteractions(projection,outbox,lifecycle);
+        verify(projection).requireReady();
+        verify(projection,never()).project(any(AssignmentProjectionRepository.AssignmentSnapshot.class));
+        verifyNoInteractions(outbox,lifecycle);
     }
 
     @Test void invalidOrNearExpiredAcademicLeaseNeverProducesTeacherReference()
@@ -160,7 +166,9 @@ class TeacherAssignmentExecutorTest {
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,
             ()->executor.execute("tc001","tc-1","TC","cmd-1")).getStatusCode());
-        verifyNoInteractions(projection,outbox,lifecycle);
+        verify(projection).requireReady();
+        verify(projection,never()).project(any(AssignmentProjectionRepository.AssignmentSnapshot.class));
+        verifyNoInteractions(outbox,lifecycle);
     }
 
     @Test void revokedTeacherReservationCannotBeReportedAsLocallyApplied()
@@ -173,7 +181,9 @@ class TeacherAssignmentExecutorTest {
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,
             ()->executor.execute("tc001","tc-1","TC","cmd-1")).getStatusCode());
-        verifyNoInteractions(projection,outbox,lifecycle);
+        verify(projection).requireReady();
+        verify(projection,never()).project(any(AssignmentProjectionRepository.AssignmentSnapshot.class));
+        verifyNoInteractions(outbox,lifecycle);
     }
 
     @Test void failedWorkerReleaseAbortsTheEntireTeachingSourceTransaction()
