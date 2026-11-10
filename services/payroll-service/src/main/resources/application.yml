@@ -14,6 +14,9 @@ spring:
 iig:
   attendance:
     url: ${ATTENDANCE_SERVICE_URL:http://localhost:8100}
+    reference-relay-enabled: ${PAYROLL_ATTENDANCE_REFERENCE_RELAY_ENABLED:false}
+    initial-delay-ms: 10000
+    poll-ms: 6000
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${PAYROLL_INTERNAL_API_KEY}

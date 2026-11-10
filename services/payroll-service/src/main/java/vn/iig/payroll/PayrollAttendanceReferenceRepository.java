@@ -83,6 +83,21 @@ public class PayrollAttendanceReferenceRepository {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Attendance history page includes stale or invalid revision");
 
+            // Detect an event-ID reuse even if an existing receipt somehow
+            // survived a failed migration or was forged before trigger setup.
+            List<Reference> previous=db.query(
+                "SELECT teaching_schedule_id,event_id,event_kind,status,source_hash " +
+                "FROM payroll_attendance_reference_events WHERE event_id=?",
+                (rs,i)->new Reference(rs.getString(1),rs.getLong(2),
+                    rs.getString(3),rs.getString(4),rs.getString(5)),event.eventId());
+            if(!previous.isEmpty() && (previous.size()!=1 ||
+                    !previous.get(0).teachingScheduleId().equals(event.teachingScheduleId()) ||
+                    !previous.get(0).eventKind().equals(event.eventKind()) ||
+                    !java.util.Objects.equals(previous.get(0).status(),event.status()) ||
+                    !previous.get(0).sourceHash().equals(event.sourceHash())))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Payroll Attendance event ID reused with different content");
+
             db.update(
                 "INSERT INTO payroll_attendance_reference_events " +
                 "(event_id,teaching_schedule_id,event_kind,status,source_hash) " +
@@ -101,11 +116,15 @@ public class PayrollAttendanceReferenceRepository {
                 event.status(),event.sourceHash());
             last=event.eventId();
         }
-        if(last>cursor)
-            db.update(
+        if(last>cursor) {
+            int updated=db.update(
                 "UPDATE payroll_attendance_reference_cursor " +
                 "SET last_event_id=?,updated_at=NOW() " +
                 "WHERE singleton=TRUE AND last_event_id=?",
                 last,cursor);
+            if(updated!=1)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Payroll Attendance evidence cursor was not durably advanced");
+        }
     }
 }

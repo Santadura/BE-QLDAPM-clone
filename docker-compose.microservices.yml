@@ -265,6 +265,7 @@ services:
       PAYROLL_DB_PASSWORD: ${PAYROLL_DB_PASSWORD:-local-dev-payroll-password}
       PAYROLL_INTERNAL_API_KEY: ${PAYROLL_INTERNAL_API_KEY:-local-dev-payroll-key-change-before-deployment}
       ATTENDANCE_SERVICE_URL: http://attendance-service:8100
+      PAYROLL_ATTENDANCE_REFERENCE_RELAY_ENABLED: "true"
       CORE_INTERNAL_URL: http://backend:8081
     expose:
       - "8097"
