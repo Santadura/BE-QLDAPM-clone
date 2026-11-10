@@ -118,6 +118,27 @@ public class AttendanceEventProjectionRepository {
     public record PayrollEvidence(String teachingScheduleId,String eventKind,
                                   String status,long sourceEventId,String sourceHash) {}
 
+    public record PayrollHistoryEvent(long eventId,String teachingScheduleId,
+                                     String eventKind,String status,String sourceHash) {}
+
+    /**
+     * History source for Payroll's separate PostgreSQL inbox, including
+     * acknowledged events and DELETE tombstones. Never gives Payroll actor
+     * identity, full JSON payload, CS metadata or financial amounts.
+     */
+    public List<PayrollHistoryEvent> payrollHistory(long after,int limit) {
+        if(after<0 || limit<1 || limit>100)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Invalid Payroll event cursor");
+        return db.query(
+            "SELECT event_id,teaching_schedule_id,event_kind," +
+            "CASE WHEN event_kind='UPSERT' THEN source_payload->>'status' ELSE NULL END," +
+            "payload_hash FROM attendance_teacher_event_history " +
+            "WHERE event_id>? ORDER BY event_id LIMIT ?",
+            (rs,i)->new PayrollHistoryEvent(rs.getLong(1),rs.getString(2),
+                rs.getString(3),rs.getString(4),rs.getString(5)),after,limit);
+    }
+
     public List<PayrollEvidence> payrollEvidence(List<String> scheduleIds) {
         if(scheduleIds==null || scheduleIds.isEmpty() || scheduleIds.size()>100)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,

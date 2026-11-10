@@ -32,6 +32,10 @@ public class AttendancePayrollEvidenceController {
                            long attendanceGeneration,long schedulingGeneration,
                            List<AttendanceEventProjectionRepository.PayrollEvidence> evidence) {}
 
+    public record HistoryPage(long sourceRevision,long sourceEventCount,
+                              long attendanceGeneration,long schedulingGeneration,
+                              List<AttendanceEventProjectionRepository.PayrollHistoryEvent> events) {}
+
     public AttendancePayrollEvidenceController(
             AttendanceEventProjectionRepository projection,
             AttendanceCutoverVerifier verifier,AttendanceSourceClient source,
@@ -57,6 +61,58 @@ public class AttendancePayrollEvidenceController {
             @RequestHeader(value="X-Internal-Key",required=false) String provided) {
         authenticate(provided);
         return ResponseEntity.ok(verifyAndRead(List.of()));
+    }
+
+    /**
+     * Ordered, immutable Attendance-owned event history. Payroll must keep a
+     * separate cursor; it must not infer history from current live statuses.
+     * Verifies full Core/Attendance parity before emitting each bounded page.
+     */
+    @GetMapping("/events")
+    public ResponseEntity<HistoryPage> events(
+            @RequestHeader(value="X-Internal-Key",required=false) String provided,
+            @RequestParam(defaultValue="0") long after,
+            @RequestParam(defaultValue="100") int limit) {
+        authenticate(provided);
+        if(after<0 || limit<1 || limit>100)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Invalid private Payroll history cursor");
+        var fenceBefore=source.writerFence();
+        var before=source.manifestSummary();
+        var parity=verifier.verify();
+        if(!parity.ready())
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Attendance historical source parity incomplete");
+
+        var events=projection.payrollHistory(after,limit);
+        long prior=after;
+        for(var event:events) {
+            if(event==null || event.eventId()<=prior || event.eventId()>before.maxEventId() ||
+                    event.teachingScheduleId()==null ||
+                    !event.teachingScheduleId().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
+                    !Set.of("UPSERT","DELETE").contains(event.eventKind()) ||
+                    event.sourceHash()==null ||
+                    !event.sourceHash().matches("[0-9a-f]{64}") ||
+                    ("UPSERT".equals(event.eventKind()) ?
+                        !Set.of("PRESENT","ABSENT","LATE").contains(event.status()) :
+                        event.status()!=null))
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Invalid Attendance Payroll historical event");
+            prior=event.eventId();
+        }
+        if(events.size()>limit)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Oversized Attendance Payroll event page");
+
+        var fenceAfter=source.writerFence();
+        var afterScan=source.manifestSummary();
+        if(!fenceBefore.equals(fenceAfter) ||
+                !before.equals(afterScan) || afterScan.pendingEvents()!=0)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Attendance event source changed during Payroll replay scan");
+        return ResponseEntity.ok(new HistoryPage(afterScan.maxEventId(),
+            afterScan.eventCount(),fenceAfter.attendanceGeneration(),
+            fenceAfter.schedulingGeneration(),List.copyOf(events)));
     }
 
     @GetMapping("/evidence")
