@@ -649,6 +649,23 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-10: opt-in Compose wiring and safe default smoke
+
+Both TEACHING migration feature toggles are now correctly wired from
+Docker Compose: `SCHEDULING_TEACHER_EXECUTOR_ENABLED` in Scheduling and
+`SCHEDULING_TEACHER_REFERENCE_WRITES_ENABLED` in Core. The private
+Academic lease coordination and teacher preflight toggles are wired as
+well; **every new toggle defaults to false**. CI's PostgreSQL topology
+validator checks they are in the correct containers with explicit
+disabled defaults, and distributed smoke verifies that the private
+TEACHING preflight/executor/reference mutation routes are unavailable
+in the default stack and are not published via Gateway.
+
+These controls make explicit opt-in possible but do not constitute
+production cutover approval. The writer must remain OFF in normal
+traffic until the entire Academic/Attendance/Payroll/rollback saga has
+been validated with an enabled integration stack.
+
 ## Phase 8g-9: lease renewal during immutable teacher event relay
 
 The Scheduling assignment reference relay now renews the original,

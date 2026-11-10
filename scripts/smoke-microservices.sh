@@ -1603,6 +1603,32 @@ if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
   echo "Standalone Scheduling executor became active without a cutover"; exit 1
 fi
 echo "PASS: Core remains writer and private standalone executor is disabled by default"
+
+# Phase 8g: despite independently implemented teacher writer and reference
+# receiver, the default Core-authoritative microservices stack must never
+# register either mutation endpoint. This is checked over the container
+# network, not just through the public Gateway.
+teacher_execute_url="http://scheduling-service:8098/internal/scheduling/assignments/commands/teacher/${stage_key}/execute"
+teacher_preflight_url="http://scheduling-service:8098/internal/scheduling/assignments/commands/teacher/${stage_key}/preflight"
+core_teacher_reference_url="http://backend:8081/internal/scheduling/assignments/reference/teaching"
+for private_url in "$teacher_execute_url" "$teacher_preflight_url" "$core_teacher_reference_url"; do
+  if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    --header "X-Internal-Key: ${scheduling_key}" \
+    --header "Authorization: Bearer ${cm_token}" \
+    --header "Content-Type: application/json" \
+    --post-data '{}' "$private_url" >/dev/null 2>&1; then
+    echo "Teacher migration-only mutation route active without cutover: $private_url"
+    exit 1
+  fi
+done
+teacher_gateway_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/internal/scheduling/assignments/commands/teacher/${stage_key}/execute")"
+test "$teacher_gateway_status" = "404" || {
+  echo "Private TEACHING command unexpectedly exposed through public Gateway"
+  exit 1
+}
+echo "PASS: private TEACHING preflight, writer and Core reference are OFF by default and isolated from Gateway"
+
 cancel_executor_url="http://scheduling-service:8098/internal/scheduling/assignments/commands/standalone/${stage_key}/cancel"
 if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
   --header "X-Internal-Key: ${scheduling_key}" \

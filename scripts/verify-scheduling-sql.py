@@ -16,6 +16,9 @@ COMPOSE = ROOT / "docker-compose.microservices.yml"
 FLAGS = (
     "SCHEDULING_REFERENCE_RELAY_ENABLED",
     "SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED",
+    "SCHEDULING_ACADEMIC_LEASE_COORDINATOR_ENABLED",
+    "SCHEDULING_TEACHER_PREFLIGHT_ENABLED",
+    "SCHEDULING_TEACHER_EXECUTOR_ENABLED",
     "SCHEDULING_RECOVERY_ENABLED",
 )
 
@@ -117,11 +120,23 @@ def main() -> None:
     catalog = compose.split("\n  catalog-service:\n", 1)[1].split(
         "\n  identity-postgres:\n", 1
     )[0]
+    backend = compose.split("\n  backend:\n", 1)[1].split(
+        "\n  audit-postgres:\n", 1
+    )[0]
     for flag in FLAGS:
         if f"      {flag}:" not in service:
             raise AssertionError(f"{flag} is not configured in scheduling-service")
         if f"      {flag}:" in catalog:
             raise AssertionError(f"{flag} is incorrectly configured in catalog-service")
+        if f"      {flag}: ${{{flag}:-false}}" not in service:
+            raise AssertionError(f"{flag} must be disabled by default in Compose")
+    if (
+        "      SCHEDULING_TEACHER_REFERENCE_WRITES_ENABLED: "
+        "${SCHEDULING_TEACHER_REFERENCE_WRITES_ENABLED:-false}"
+    ) not in backend:
+        raise AssertionError("Core TEACHING receiver flag must be OFF by default")
+    if "SCHEDULING_TEACHER_EXECUTOR_ENABLED:false" not in app:
+        raise AssertionError("Scheduling TEACHING executor default is not OFF")
     print(
         f"PASS: Scheduling SQL parser: {len(parsed)} top-level SQL statements; "
         "PL/pgSQL function bodies preserved; control flags wired to Scheduling"
