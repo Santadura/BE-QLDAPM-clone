@@ -40,7 +40,8 @@ public class TeacherAssignmentPreflightService {
     public record Receipt(String state,String requestKey,String teacherId,
         String classId,String sessionId,LocalDate date,LocalTime startTime,
         LocalTime endTime,String academicLeaseId,Instant academicExpiresAt,
-        String workerReservationId,Instant workerExpiresAt) {}
+        String workerReservationId,Instant workerExpiresAt,
+        String classCode,String className) {}
     private record Command(String state,String payload) {}
     private record Request(String teacherId,String classId,String sessionId,
         long classVersion,long sessionVersion,LocalDate date,LocalTime start,
@@ -105,7 +106,7 @@ public class TeacherAssignmentPreflightService {
         }
     }
 
-    private void checkAcademicFacts(Request p) {
+    private SchedulingCoreClient.AcademicSessionFacts checkAcademicFacts(Request p) {
         var facts=core.academicSession(p.classId(),p.date(),p.start(),p.end());
         if(facts==null || !p.classId().equals(facts.classId()) ||
                 !p.sessionId().equals(facts.sessionId()) ||
@@ -121,6 +122,7 @@ public class TeacherAssignmentPreflightService {
                 p.date().isAfter(facts.classEnd()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Academic class and exact teacher lesson version changed");
+        return facts;
     }
 
     private List<Existing> existing(String actor,String key) {
@@ -157,7 +159,7 @@ public class TeacherAssignmentPreflightService {
         if(!readiness.ready())
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Core/Scheduling assignment source not reconciled: "+readiness.state());
-        checkAcademicFacts(p);
+        var classFacts=checkAcademicFacts(p);
         // This renews or safely recovers the exact staged command's Academic
         // lease. No assignment changes are performed by the Core lease port.
         var course=academic.acquire(actor,key);
@@ -217,6 +219,7 @@ public class TeacherAssignmentPreflightService {
         // writing an assignment. PREFLIGHT_ONLY is never business success.
         return new Receipt("PREFLIGHT_ONLY",key,p.teacherId(),p.classId(),
             p.sessionId(),p.date(),p.start(),p.end(),course.leaseId(),
-            course.expiresAt(),workerReservation,worker.expiresAt());
+            course.expiresAt(),workerReservation,worker.expiresAt(),
+            classFacts.classCode(),classFacts.className());
     }
 }

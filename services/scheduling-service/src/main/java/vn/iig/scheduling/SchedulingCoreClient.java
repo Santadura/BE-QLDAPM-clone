@@ -198,7 +198,17 @@ public class SchedulingCoreClient {
     public record AcademicSessionFacts(String classId,long classVersion,String classStatus,
             LocalDate classStart,LocalDate classEnd,String sessionId,
             long sessionVersion,String sessionStatus,LocalDate date,
-            LocalTime startTime,LocalTime endTime) {}
+            LocalTime startTime,LocalTime endTime,String classCode,String className) {
+        // Compatibility for unit fixtures that only exercise session
+        // revisions; real Core responses include the class display names.
+        public AcademicSessionFacts(String classId,long classVersion,
+            String classStatus,LocalDate classStart,LocalDate classEnd,
+            String sessionId,long sessionVersion,String sessionStatus,
+            LocalDate date,LocalTime startTime,LocalTime endTime) {
+            this(classId,classVersion,classStatus,classStart,classEnd,
+                 sessionId,sessionVersion,sessionStatus,date,startTime,endTime,null,null);
+        }
+    }
 
     /** Versioned Academic session facts: diagnostic, never a mutation lease. */
     public AcademicSessionFacts academicSession(String classId,LocalDate date,
