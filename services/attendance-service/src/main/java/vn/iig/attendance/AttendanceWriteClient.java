@@ -47,11 +47,11 @@ public class AttendanceWriteClient {
                     "Invalid Core attendance command response");
             return result;
         } catch(RestClientResponseException ex) {
-            HttpStatus status=HttpStatus.resolve(ex.getStatusCode().value());
-            if(status==HttpStatus.BAD_REQUEST || status==HttpStatus.UNAUTHORIZED ||
-                    status==HttpStatus.FORBIDDEN || status==HttpStatus.NOT_FOUND ||
-                    status==HttpStatus.CONFLICT)
-                throw new ResponseStatusException(status,
+            HttpStatus upstreamStatus=HttpStatus.resolve(ex.getStatusCode().value());
+            if(upstreamStatus==HttpStatus.BAD_REQUEST || upstreamStatus==HttpStatus.UNAUTHORIZED ||
+                    upstreamStatus==HttpStatus.FORBIDDEN || upstreamStatus==HttpStatus.NOT_FOUND ||
+                    upstreamStatus==HttpStatus.CONFLICT)
+                throw new ResponseStatusException(upstreamStatus,
                     "Core rejected teacher attendance command",ex);
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Core attendance writer unavailable",ex);
