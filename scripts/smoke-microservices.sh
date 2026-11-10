@@ -923,6 +923,32 @@ test "$historical_count" -ge 2 || { echo "Historical salaries were not imported"
 detail="$(curl -fsS "${BASE}/api/payroll/teacher-001/2026-10" \
   -H "Authorization: Bearer ${TOKEN}")"
 printf '%s' "$detail" | python3 -c 'import sys,json; x=json.load(sys.stdin); assert x["employeeId"]=="teacher-001" and isinstance(x["items"],list)'
+# The earlier Attendance suite deliberately deleted teaching-001 to verify
+# tombstones. Create a NEW isolated payable lesson evidence fixture for this
+# section, then remove it afterward so later regression state is unchanged.
+payroll_evidence_fixture="ms-payroll-attendance-${GITHUB_RUN_ID:-local}"
+payroll_preexisting_attendance="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM teacher_session_attendance WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+test "$payroll_preexisting_attendance" = "0" || {
+  echo "Unexpected attendance left by the previous tombstone smoke"; exit 1
+}
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "INSERT INTO teacher_session_attendance(attendance_id,teaching_schedule_id,status,recorded_by) VALUES('${payroll_evidence_fixture}','teaching-001','PRESENT','cs-001')"
+payroll_fixture_synced=0
+for i in $(seq 1 60); do
+  source_status="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+    "SELECT status FROM attendance_teacher_ledger WHERE teaching_schedule_id='teaching-001' AND event_kind='UPSERT' AND attendance_id='${payroll_evidence_fixture}'" | tr -d '[:space:]')"
+  undelivered="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT count(*) FROM teacher_attendance_source_outbox WHERE teaching_schedule_id='teaching-001' AND delivered_at IS NULL" | tr -d '[:space:]')"
+  if [ "$source_status" = "PRESENT" ] && [ "$undelivered" = "0" ]; then
+    payroll_fixture_synced=1; break
+  fi
+  sleep 2
+done
+test "$payroll_fixture_synced" = "1" || {
+  echo "Payroll Attendance test fixture was not durably imported"; exit 1
+}
+
 # Phase 8f-9: Payroll may inspect independent Attendance evidence, but
 # must keep the current Core-derived teacher/CS work facts and salary formula.
 # The new contracts are private, service-key protected and NEVER Gateway API.
@@ -995,6 +1021,13 @@ test "$payroll_ledger_count_before" = "$payroll_ledger_count_after" && \
     echo "Private reconciliation modified Payroll financial ledger"; exit 1
 }
 echo "PASS: Payroll fail-closed mismatch, recovery, key isolation, private API and financial non-mutation"
+# Restore the Core lesson to its original unmarked/tombstone state.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "DELETE FROM teacher_session_attendance WHERE attendance_id='${payroll_evidence_fixture}'"
+verified_attendance="$(verify_attendance)"
+printf '%s' "$verified_attendance" | python3 -c \
+  'import json,sys; r=json.load(sys.stdin); assert r["ready"] is True and r["state"]=="READY",r'
+echo "PASS: disposable Payroll Attendance fixture cleaned up without affecting later domain tests"
 
 echo "PASS: payroll ledger is owned by independent PostgreSQL and historical data preserved"
 
