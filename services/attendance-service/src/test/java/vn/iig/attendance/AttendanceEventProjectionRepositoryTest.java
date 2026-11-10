@@ -42,17 +42,33 @@ class AttendanceEventProjectionRepositoryTest {
             any(RowMapper.class),eq(7L))).thenReturn(List.of());
         repo.apply(event(7,"UPSERT",JSON));
         verify(db).update(
+            startsWith("INSERT INTO attendance_teacher_event_history"),
+            eq(7L),eq("teach-1"),eq("UPSERT"),eq(hash(JSON)),eq(JSON));
+        verify(db).update(
+            startsWith("INSERT INTO attendance_teacher_ledger"),
+            eq("teach-1"),eq(7L),eq("UPSERT"),
+            eq("UPSERT"),eq("att-1"),eq("UPSERT"),eq("PRESENT"),
+            eq("UPSERT"),eq("cs-001"),eq(hash(JSON)),eq(JSON));
+        verify(db).update(
             startsWith("INSERT INTO attendance_teacher_source_records"),
             eq("teach-1"),eq(7L),eq("UPSERT"),eq(JSON));
         verify(db).update(startsWith("INSERT INTO attendance_import_receipts"),
             eq(7L),eq("teach-1"),eq(hash(JSON)));
     }
 
-    @Test void replayedSameEventIsAnIdempotentNoop() throws Exception {
+    @Test void historicalReplayHydratesLedgerWithoutDuplicatingReceipt()
+            throws Exception {
         when(db.query(startsWith("SELECT payload_hash"),
             any(RowMapper.class),eq(7L))).thenReturn(List.of(hash(JSON)));
         repo.apply(event(7,"UPSERT",JSON));
-        verify(db,never()).update(anyString(),any(Object[].class));
+        verify(db).update(startsWith("INSERT INTO attendance_teacher_event_history"),
+            any(Object[].class));
+        verify(db).update(startsWith("INSERT INTO attendance_teacher_ledger"),
+            any(Object[].class));
+        verify(db,never()).update(startsWith("INSERT INTO attendance_teacher_source_records"),
+            any(Object[].class));
+        verify(db,never()).update(startsWith("INSERT INTO attendance_import_receipts"),
+            any(Object[].class));
     }
 
     @Test void duplicateEventIdWithDifferentDigestIsRejected() throws Exception {

@@ -113,6 +113,19 @@ class TeacherAttendanceSourceBridgeTest {
         verifyNoInteractions(db);
     }
 
+    @Test void historicalFeedRequiresServiceKeyAndBoundedCursor() {
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.history(null,0L,100)).getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.history("private-attendance-key",-1L,100)).getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.history("private-attendance-key",0L,201)).getStatusCode());
+        verifyNoInteractions(db);
+    }
+
     @Test void missingCoreEventCannotBeAcknowledged() throws Exception {
         when(db.query(startsWith("SELECT payload::text"),
             any(RowMapper.class),eq(999L))).thenReturn(List.of());

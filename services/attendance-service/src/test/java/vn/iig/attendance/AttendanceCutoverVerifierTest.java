@@ -17,6 +17,9 @@ class AttendanceCutoverVerifierTest {
     private final AttendanceSourceClient.ManifestRow row=
         new AttendanceSourceClient.ManifestRow(7,"teach-1","UPSERT",
             "{\"teaching_schedule_id\":\"teach-1\",\"status\":\"PRESENT\"}",true);
+    private final AttendanceSourceClient.Event historicalEvent=
+        new AttendanceSourceClient.Event(7,"teach-1","UPSERT",
+            "{\"teaching_schedule_id\":\"teach-1\",\"status\":\"PRESENT\"}","a".repeat(64));
     private final AttendanceSourceClient.ManifestSummary clean=
         new AttendanceSourceClient.ManifestSummary(1,1,1,1,7,0,0);
 
@@ -24,7 +27,13 @@ class AttendanceCutoverVerifierTest {
         when(source.manifestSummary()).thenReturn(clean);
         when(source.manifest("",250)).thenReturn(List.of(row));
         when(projection.matchesManifest(row)).thenReturn(true);
+        when(projection.matchesLedgerManifest(row)).thenReturn(true);
         when(projection.projectedRowCount()).thenReturn(1L);
+        when(projection.ledgerRowCount()).thenReturn(1L);
+        when(projection.historicalEventCount()).thenReturn(1L);
+        when(projection.historyCursor()).thenReturn(7L);
+        when(source.history(0L,200)).thenReturn(List.of(historicalEvent));
+        when(projection.matchesHistoricalEvent(historicalEvent)).thenReturn(true);
     }
 
     @Test void returnsReadyOnlyForFullStableSourceAndIndependentProjection() {
@@ -35,6 +44,7 @@ class AttendanceCutoverVerifierTest {
         assertEquals(1,report.sourceRows());
         assertEquals(1,report.verifiedRows());
         verify(relay).requireCaughtUp();
+        verify(relay).requireHistoryCaughtUp();
         verify(source,times(2)).manifestSummary();
     }
 
@@ -45,6 +55,31 @@ class AttendanceCutoverVerifierTest {
         assertFalse(report.ready());
         assertEquals("MISMATCH",report.state());
         assertTrue(report.mismatchKeys().contains("teach-1"));
+    }
+
+    @Test void normalizedLedgerDivergencePreventsCutoverReadiness() {
+        matching();
+        when(projection.matchesLedgerManifest(row)).thenReturn(false);
+        var report=verifier.verify();
+        assertFalse(report.ready());
+        assertTrue(report.mismatchKeys().contains("teach-1"));
+    }
+
+    @Test void missingOrTamperedHistoricalEventPreventsReadiness() {
+        matching();
+        when(projection.matchesHistoricalEvent(historicalEvent)).thenReturn(false);
+        var report=verifier.verify();
+        assertFalse(report.ready());
+        assertTrue(report.mismatchKeys().contains("ATTENDANCE_EVENT_HISTORY_MISMATCH"));
+    }
+
+    @Test void missingHistoricalReceiptBlocksCutoverEvenWithLatestRow() {
+        matching();
+        when(projection.historicalReceiptDivergence()).thenReturn(1L);
+        var report=verifier.verify();
+        assertFalse(report.ready());
+        assertTrue(report.mismatchKeys().contains(
+            "INCOMPLETE_OR_DIVERGENT_ATTENDANCE_EVENT_HISTORY"));
     }
 
     @Test void sourceTableWithoutCommittedEventIsNotReady() {
