@@ -151,6 +151,62 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
 }
 echo "PASS: independent Attendance GET matches Core, scopes CS snapshots, protects JWT and leaves PUT in Core"
 
+# Phase 8f: all Core attendance writes must publish a durable source event.
+# Attendance imports into its own PostgreSQL before acknowledging the
+# precise event/hash back to Core. Disposable fixture exercises all three
+# event types (insert, update, delete) and duplicate-safe delivery.
+attendance_fixture="ms-attendance-${GITHUB_RUN_ID:-local}"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "INSERT INTO teacher_session_attendance(attendance_id,teaching_schedule_id,status,recorded_by) VALUES('${attendance_fixture}','teaching-001','PRESENT','cs-001')"
+attendance_imported=0
+for i in $(seq 1 60); do
+  attendance_imported="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance \
+    -d iig_attendance -tAc "SELECT count(*) FROM attendance_teacher_source_records WHERE teaching_schedule_id='teaching-001' AND event_kind='UPSERT' AND payload->>'attendance_id'='${attendance_fixture}' AND payload->>'status'='PRESENT'" | tr -d '[:space:]')"
+  [ "$attendance_imported" = "1" ] && break
+  sleep 2
+done
+test "$attendance_imported" = "1" || { echo "Attendance did not import Core INSERT event"; exit 1; }
+
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "UPDATE teacher_session_attendance SET status='LATE',updated_at=NOW() WHERE attendance_id='${attendance_fixture}'"
+updated_imported=0
+for i in $(seq 1 60); do
+  updated_imported="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance \
+    -d iig_attendance -tAc "SELECT count(*) FROM attendance_teacher_source_records WHERE teaching_schedule_id='teaching-001' AND event_kind='UPSERT' AND payload->>'attendance_id'='${attendance_fixture}' AND payload->>'status'='LATE'" | tr -d '[:space:]')"
+  [ "$updated_imported" = "1" ] && break
+  sleep 2
+done
+test "$updated_imported" = "1" || { echo "Attendance did not apply the updated source revision"; exit 1; }
+
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "DELETE FROM teacher_session_attendance WHERE attendance_id='${attendance_fixture}'"
+deleted_imported=0
+for i in $(seq 1 60); do
+  deleted_imported="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance \
+    -d iig_attendance -tAc "SELECT count(*) FROM attendance_teacher_source_records WHERE teaching_schedule_id='teaching-001' AND event_kind='DELETE' AND payload->>'attendance_id'='${attendance_fixture}'" | tr -d '[:space:]')"
+  [ "$deleted_imported" = "1" ] && break
+  sleep 2
+done
+test "$deleted_imported" = "1" || { echo "Attendance failed to retain the source deletion tombstone"; exit 1; }
+
+source_confirmed="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db \
+  -tAc "SELECT count(*) FROM teacher_attendance_source_outbox WHERE payload->>'attendance_id'='${attendance_fixture}' AND delivered_at IS NOT NULL" | tr -d '[:space:]')"
+import_receipts="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance \
+  -d iig_attendance -tAc "SELECT count(*) FROM attendance_import_receipts WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+if [ "$source_confirmed" != "3" ] || ! [[ "$import_receipts" =~ ^[0-9]+$ ]] || [ "$import_receipts" -lt 3 ]; then
+  echo "Attendance event receipt mismatch: Core confirmed=${source_confirmed}, imported=${import_receipts}"; exit 1
+fi
+attendance_private_url="http://backend:8081/internal/attendance/events?limit=10"
+if "${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  "$attendance_private_url" >/dev/null 2>&1; then
+  echo "Core Attendance outbox did not enforce its private service key"; exit 1
+fi
+if [ "$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/attendance/events")" != "404" ]; then
+  echo "Attendance source feed was exposed through public Gateway"; exit 1
+fi
+echo "PASS: Attendance imports Core INSERT/UPDATE/DELETE with exact receipts and private source feed"
+
+
 
 
 # Course Catalog is a separate Spring service with independent storage.
