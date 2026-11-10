@@ -1799,6 +1799,10 @@ echo "PASS: Scheduling can read a versioned Academic planned-session contract ov
 # one disposable Core DB transaction, so even an assertion failure rolls the
 # QUIESCED state back automatically. The API has separate private-key tests.
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+-- The smoke-created class is DRAFT by design. Prepare an eligible
+-- Academic class state only inside this disposable transaction.
+UPDATE classes SET status='READY' WHERE class_id='${one}';
 DO \$\$
 DECLARE
   lesson_id VARCHAR(50);
@@ -1885,6 +1889,7 @@ BEGIN
   END;
 END
 \$\$;
+ROLLBACK;
 SQL
 echo "PASS: Academic SQL blocks lease tampering, stale versions, active-Core writes and unbounded renewal"
 
