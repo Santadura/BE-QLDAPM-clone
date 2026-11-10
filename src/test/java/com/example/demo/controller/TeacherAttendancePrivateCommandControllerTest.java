@@ -40,6 +40,6 @@ class TeacherAttendancePrivateCommandControllerTest {
             .thenReturn(Map.of("status","PRESENT"));
         assertEquals("PRESENT",bridge.mark("secret-key","Bearer cs","request-1",null,
             "class-1","teach-1",request).get("status"));
-        verify(receipts).mark("class-1","teach-1","request-1",request);
+        verify(receipts).mark("class-1","teach-1","request-1",null,request);
     }
 }
