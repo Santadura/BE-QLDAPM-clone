@@ -25,16 +25,19 @@ import org.springframework.transaction.annotation.Transactional;
 public class TeacherAttendanceCommandReceiptService {
     private static final Pattern SAFE_KEY=Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}");
     private final TeacherSessionAttendanceService attendance;
+    private final TeacherAttendanceLiveFactsService liveFacts;
     private final SchedulingAccess access;
     private final JdbcTemplate db;
     private final ObjectMapper mapper;
 
     public TeacherAttendanceCommandReceiptService(TeacherSessionAttendanceService attendance,
-            SchedulingAccess access,JdbcTemplate db,ObjectMapper mapper) {
+            SchedulingAccess access,JdbcTemplate db,ObjectMapper mapper,
+            TeacherAttendanceLiveFactsService liveFacts) {
         this.attendance=attendance;
         this.access=access;
         this.db=db;
         this.mapper=mapper;
+        this.liveFacts=liveFacts;
     }
 
     static String fingerprint(String classId,String scheduleId,String status) {
@@ -49,13 +52,16 @@ public class TeacherAttendanceCommandReceiptService {
 
     @Transactional
     public Map<String,Object> mark(String classId,String scheduleId,String requestKey,
-            MarkRequest request) {
+            String expectedFactsToken,MarkRequest request) {
         // Current JWT + active employee CS role is checked on EVERY attempt.
         var actor=access.requireRole("CS");
         String status=TeacherSessionAttendanceService.checkedStatus(
             request==null?null:request.status());
-        if(requestKey==null)
-            return attendance.mark(classId,scheduleId,new MarkRequest(status));
+        if(requestKey==null) {
+            Map<String,Object> result=attendance.mark(classId,scheduleId,new MarkRequest(status));
+            liveFacts.requireUnchanged(classId,scheduleId,expectedFactsToken);
+            return result;
+        }
         if(!SAFE_KEY.matcher(requestKey).matches())
             throw new ApiException(HttpStatus.BAD_REQUEST,
                 "Idempotency-Key must be 1-128 safe ASCII characters");
@@ -91,6 +97,10 @@ public class TeacherAttendanceCommandReceiptService {
         }
 
         Map<String,Object> result=attendance.mark(classId,scheduleId,new MarkRequest(status));
+        // Original mark() held class, lesson, teacher and exact CS row locks.
+        // This validation is inside the SAME transaction, so a changed
+        // Academic/Scheduling version rolls back attendance, audit and outbox.
+        liveFacts.requireUnchanged(classId,scheduleId,expectedFactsToken);
         try {
             int changed=db.update("UPDATE teacher_attendance_command_receipts " +
                 "SET response_payload=CAST(? AS JSONB),completed_at=NOW() " +

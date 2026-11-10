@@ -16,29 +16,29 @@ class TeacherAttendancePrivateCommandControllerTest {
 
     @Test void wrongOrMissingKeyRejectsBeforeMutation() {
         assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(ResponseStatusException.class,
-            ()->bridge.mark("wrong","Bearer cs","request-1","class-1","teach-1",
+            ()->bridge.mark("wrong","Bearer cs","request-1",null,"class-1","teach-1",
                 new MarkRequest("PRESENT"))).getStatusCode());
         assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(ResponseStatusException.class,
-            ()->bridge.mark(null,"Bearer cs","request-1","class-1","teach-1",
+            ()->bridge.mark(null,"Bearer cs","request-1",null,"class-1","teach-1",
                 new MarkRequest("PRESENT"))).getStatusCode());
         verifyNoInteractions(receipts);
     }
 
     @Test void serviceKeyAloneNeverImpersonatesCs() {
         assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(ResponseStatusException.class,
-            ()->bridge.mark("secret-key",null,"request-1","class-1","teach-1",
+            ()->bridge.mark("secret-key",null,"request-1",null,"class-1","teach-1",
                 new MarkRequest("PRESENT"))).getStatusCode());
         assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(ResponseStatusException.class,
-            ()->bridge.mark("secret-key","Bearer   ","request-1","class-1","teach-1",
+            ()->bridge.mark("secret-key","Bearer   ","request-1",null,"class-1","teach-1",
                 new MarkRequest("PRESENT"))).getStatusCode());
         verifyNoInteractions(receipts);
     }
 
     @Test void authorizedIngressForwardsStableKeyToTransactionalCoreReceipt() {
         MarkRequest request=new MarkRequest("PRESENT");
-        when(receipts.mark("class-1","teach-1","request-1",request))
+        when(receipts.mark("class-1","teach-1","request-1",null,request))
             .thenReturn(Map.of("status","PRESENT"));
-        assertEquals("PRESENT",bridge.mark("secret-key","Bearer cs","request-1",
+        assertEquals("PRESENT",bridge.mark("secret-key","Bearer cs","request-1",null,
             "class-1","teach-1",request).get("status"));
         verify(receipts).mark("class-1","teach-1","request-1",request);
     }

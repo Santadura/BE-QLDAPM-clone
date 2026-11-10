@@ -37,6 +37,7 @@ public class TeacherAttendancePrivateCommandController {
             @RequestHeader(value="X-Internal-Key",required=false) String key,
             @RequestHeader(value="Authorization",required=false) String bearer,
             @RequestHeader(value="Idempotency-Key",required=false) String requestKey,
+            @RequestHeader(value="X-Attendance-Lesson-Token",required=false) String expectedFactsToken,
             @PathVariable String classId,
             @PathVariable String teachingScheduleId,
             @RequestBody MarkRequest request) {
@@ -51,6 +52,6 @@ public class TeacherAttendancePrivateCommandController {
                 bearer.substring(7).isBlank())
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
                 "A live CS bearer token is required");
-        return attendance.mark(classId,teachingScheduleId,requestKey,request);
+        return attendance.mark(classId,teachingScheduleId,requestKey,expectedFactsToken,request);
     }
 }

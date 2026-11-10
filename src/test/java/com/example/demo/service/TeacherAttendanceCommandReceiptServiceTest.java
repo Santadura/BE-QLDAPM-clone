@@ -17,8 +17,9 @@ class TeacherAttendanceCommandReceiptServiceTest {
     private final JdbcTemplate db=mock(JdbcTemplate.class);
     private final SchedulingAccess access=mock(SchedulingAccess.class);
     private final TeacherSessionAttendanceService attendance=mock(TeacherSessionAttendanceService.class);
+    private final TeacherAttendanceLiveFactsService facts=mock(TeacherAttendanceLiveFactsService.class);
     private final TeacherAttendanceCommandReceiptService receipts=
-        new TeacherAttendanceCommandReceiptService(attendance,access,db,new ObjectMapper());
+        new TeacherAttendanceCommandReceiptService(attendance,access,db,new ObjectMapper(),facts);
 
     private void cs() {
         when(access.requireRole("CS")).thenReturn(
@@ -40,8 +41,8 @@ class TeacherAttendanceCommandReceiptServiceTest {
             any(Object[].class))).thenReturn(1);
         when(attendance.mark(eq("class-1"),eq("teach-1"),any(MarkRequest.class)))
             .thenReturn(Map.of("status","PRESENT"));
-        var first=receipts.mark("class-1","teach-1","request-1",new MarkRequest(" present "));
-        var retry=receipts.mark("class-1","teach-1","request-1",new MarkRequest("PRESENT"));
+        var first=receipts.mark("class-1","teach-1","request-1",null,new MarkRequest(" present "));
+        var retry=receipts.mark("class-1","teach-1","request-1",null,new MarkRequest("PRESENT"));
         assertEquals(first,retry);
         verify(attendance,times(1)).mark(eq("class-1"),eq("teach-1"),any(MarkRequest.class));
         verify(attendance).requireCurrentSupportForReplay("class-1","teach-1","cs-001");
@@ -55,7 +56,7 @@ class TeacherAttendanceCommandReceiptServiceTest {
         when(db.queryForMap(startsWith("SELECT request_hash"),any(Object[].class)))
             .thenReturn(row(first,"{\"status\":\"PRESENT\"}"));
         var error=assertThrows(ApiException.class,
-            ()->receipts.mark("class-1","teach-1","request-1",new MarkRequest("ABSENT")));
+            ()->receipts.mark("class-1","teach-1","request-1",null,new MarkRequest("ABSENT")));
         assertEquals(HttpStatus.CONFLICT,error.getStatus());
         verifyNoInteractions(attendance);
     }
@@ -63,9 +64,9 @@ class TeacherAttendanceCommandReceiptServiceTest {
     @Test void invalidKeyOrStatusCannotCreateReceipt() {
         cs();
         assertEquals(HttpStatus.BAD_REQUEST,assertThrows(ApiException.class,
-            ()->receipts.mark("class-1","teach-1","bad key",new MarkRequest("PRESENT"))).getStatus());
+            ()->receipts.mark("class-1","teach-1","bad key",null,new MarkRequest("PRESENT"))).getStatus());
         assertEquals(HttpStatus.BAD_REQUEST,assertThrows(ApiException.class,
-            ()->receipts.mark("class-1","teach-1","request-1",new MarkRequest("UNKNOWN"))).getStatus());
+            ()->receipts.mark("class-1","teach-1","request-1",null,new MarkRequest("UNKNOWN"))).getStatus());
         verifyNoInteractions(db,attendance);
     }
 
@@ -77,14 +78,32 @@ class TeacherAttendanceCommandReceiptServiceTest {
         doThrow(new ApiException(HttpStatus.FORBIDDEN,"No active CS shift"))
             .when(attendance).requireCurrentSupportForReplay("class-1","teach-1","cs-001");
         assertEquals(HttpStatus.FORBIDDEN,assertThrows(ApiException.class,
-            ()->receipts.mark("class-1","teach-1","request-1",new MarkRequest("PRESENT"))).getStatus());
+            ()->receipts.mark("class-1","teach-1","request-1",null,new MarkRequest("PRESENT"))).getStatus());
         verify(attendance,never()).mark(anyString(),anyString(),any(MarkRequest.class));
+    }
+
+    @Test void staleVersionAfterLockedAttendanceMarkRollsBackCoreTransaction() {
+        cs();
+        String token="a".repeat(64);
+        when(db.queryForMap(startsWith("SELECT request_hash"),any(Object[].class)))
+            .thenReturn(row(TeacherAttendanceCommandReceiptService.fingerprint(
+                "class-1","teach-1","PRESENT"),null));
+        when(attendance.mark(eq("class-1"),eq("teach-1"),any(MarkRequest.class)))
+            .thenReturn(Map.of("status","PRESENT"));
+        doThrow(new ApiException(HttpStatus.CONFLICT,"Lesson changed"))
+            .when(facts).requireUnchanged("class-1","teach-1",token);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(ApiException.class,
+            ()->receipts.mark("class-1","teach-1","request-1",token,
+                new MarkRequest("PRESENT"))).getStatus());
+        verify(db,never()).update(startsWith("UPDATE teacher_attendance_command_receipts"),
+            any(Object[].class));
+        // Real PostgreSQL @Transactional rollback is verified by Docker smoke.
     }
 
     @Test void disabledOrWrongRoleNeverReadsReceipts() {
         when(access.requireRole("CS")).thenThrow(new ApiException(HttpStatus.FORBIDDEN,"Role revoked"));
         assertEquals(HttpStatus.FORBIDDEN,assertThrows(ApiException.class,
-            ()->receipts.mark("class-1","teach-1","request-1",new MarkRequest("PRESENT"))).getStatus());
+            ()->receipts.mark("class-1","teach-1","request-1",null,new MarkRequest("PRESENT"))).getStatus());
         verifyNoInteractions(db,attendance);
     }
 }
