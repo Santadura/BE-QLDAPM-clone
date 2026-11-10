@@ -415,6 +415,91 @@ printf '%s' "$verified_attendance" | python3 -c \
   'import json,sys; assert json.load(sys.stdin)["ready"] is True'
 echo "PASS: Attendance manifest fails closed on tampering, ghost data and unauthorized access"
 
+# Phase 8f-6: write-mode coordination with Scheduling. The normal live
+# parity endpoint may return READY while Core is still writable; frozen
+# verification MUST not do so until BOTH existing writer controls are held.
+frozen_verify_url="${attendance_verify_url}/frozen"
+frozen_http="$("${COMPOSE[@]}" exec -T attendance-postgres wget -S -O /dev/null \
+  --header "X-Internal-Key: ${attendance_private_key}" "$frozen_verify_url" 2>&1 || true)"
+if ! printf '%s' "$frozen_http" | grep -Eq 'HTTP/[0-9.]+ 409|409 Conflict'; then
+  echo "Attendance frozen cutover preflight incorrectly accepted active Core writers"; exit 1
+fi
+if [ "$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/attendance/verify/frozen")" != "404" ]; then
+  echo "Attendance frozen preflight leaked through public Gateway"; exit 1
+fi
+schedule_mode_before="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT writer_mode FROM scheduling_assignment_writer_control WHERE singleton=TRUE" | tr -d '[:space:]')"
+attendance_mode_before="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT writer_mode FROM teacher_attendance_writer_control WHERE singleton=TRUE" | tr -d '[:space:]')"
+test "$schedule_mode_before" = "CORE" && test "$attendance_mode_before" = "CORE" || {
+  echo "Unexpected writer control mode before isolated freeze smoke"; exit 1
+}
+# Enforce ordering even against a direct SQL operator mistake.
+if "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "UPDATE teacher_attendance_writer_control SET writer_mode='QUIESCED' WHERE singleton=TRUE" >/dev/null 2>&1; then
+  echo "Attendance froze without quiescing Scheduling first"; exit 1
+fi
+fence_fixture="ms-fence-attendance-${GITHUB_RUN_ID:-local}"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "INSERT INTO teacher_session_attendance(attendance_id,teaching_schedule_id,status,recorded_by) VALUES('${fence_fixture}','teaching-001','PRESENT','cs-001')"
+schedule_generation_before="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT writer_generation FROM scheduling_assignment_writer_control WHERE singleton=TRUE" | tr -d '[:space:]')"
+attendance_generation_before="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT generation FROM teacher_attendance_writer_control WHERE singleton=TRUE" | tr -d '[:space:]')"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "UPDATE scheduling_assignment_writer_control SET writer_mode='QUIESCED' WHERE singleton=TRUE"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "UPDATE teacher_attendance_writer_control SET writer_mode='QUIESCED' WHERE singleton=TRUE"
+frozen_report="$("${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+  --header "X-Internal-Key: ${attendance_private_key}" "$frozen_verify_url")"
+printf '%s' "$frozen_report" | python3 -c \
+  'import json,sys; r=json.load(sys.stdin); assert r["ready"] is True and r["state"]=="READY" and r["sourceRows"]==r["verifiedRows"],r'
+
+for blocked_sql in \
+  "INSERT INTO teacher_session_attendance(attendance_id,teaching_schedule_id,status,recorded_by) VALUES('${fence_fixture}-new','teaching-001','ABSENT','cs-001')" \
+  "UPDATE teacher_session_attendance SET status='ABSENT' WHERE attendance_id='${fence_fixture}'" \
+  "DELETE FROM teacher_session_attendance WHERE attendance_id='${fence_fixture}'"; do
+  blocked_output="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db \
+    -v ON_ERROR_STOP=1 -v VERBOSITY=verbose -c "$blocked_sql" 2>&1 || true)"
+  if ! printf '%s' "$blocked_output" | grep -q '55000'; then
+    echo "Quiesced Core Attendance accepted a row write or failed for the wrong reason: $blocked_sql"
+    printf '%s\n' "$blocked_output"
+    exit 1
+  fi
+done
+# TRUNCATE is a distinct statement trigger, not a row-level DELETE.
+truncate_trigger="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM pg_trigger WHERE tgname='trg_iig_attendance_domain_truncate_fence' AND tgenabled='O'" | tr -d '[:space:]')"
+test "$truncate_trigger" = "1" || {
+  echo "Core Attendance TRUNCATE fence is not enabled"; exit 1
+}
+if "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "UPDATE scheduling_assignment_writer_control SET writer_mode='CORE' WHERE singleton=TRUE" >/dev/null 2>&1; then
+  echo "Scheduling resumed while Attendance was still frozen"; exit 1
+fi
+# Never automatically turn on an independent Attendance writer here: only
+# return the disposable Core-owned stack to its original safe CORE state.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "UPDATE teacher_attendance_writer_control SET writer_mode='CORE' WHERE singleton=TRUE"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "UPDATE scheduling_assignment_writer_control SET writer_mode='CORE' WHERE singleton=TRUE"
+schedule_generation_after="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT writer_generation FROM scheduling_assignment_writer_control WHERE singleton=TRUE" | tr -d '[:space:]')"
+attendance_generation_after="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT generation FROM teacher_attendance_writer_control WHERE singleton=TRUE" | tr -d '[:space:]')"
+test "$schedule_generation_after" -eq "$((schedule_generation_before+2))" && \
+  test "$attendance_generation_after" -eq "$((attendance_generation_before+2))" || {
+  echo "Attendance/Scheduling writer generation did not advance on both transitions"; exit 1
+}
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "DELETE FROM teacher_session_attendance WHERE attendance_id='${fence_fixture}'"
+frozen_http="$("${COMPOSE[@]}" exec -T attendance-postgres wget -S -O /dev/null \
+  --header "X-Internal-Key: ${attendance_private_key}" "$frozen_verify_url" 2>&1 || true)"
+if ! printf '%s' "$frozen_http" | grep -Eq 'HTTP/[0-9.]+ 409|409 Conflict'; then
+  echo "Frozen preflight accepted resumed Core writers"; exit 1
+fi
+echo "PASS: coordinated Attendance/Scheduling writer freeze, SQL mutation fences and generation-bound frozen parity"
+
 # Course Catalog is a separate Spring service with independent storage.
 # The initial import must preserve all legacy course options for React.
 catalog_ready=0

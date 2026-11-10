@@ -2,7 +2,7 @@
 
 ## Status (2026-11-10)
 
-This branch is **migration phase 8f-5 (independent Attendance manifest parity gate)**, not
+This branch is **migration phase 8f-6 (coordinated Attendance/Scheduling writer freeze preflight)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,45 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8f-6: coordinated Attendance + Scheduling writer quiescence
+
+The existing Scheduling writer fence already blocks Core attendance writes
+when assignments are quiesced. This milestone adds an **independent**
+`teacher_attendance_writer_control` singleton with only `CORE` (default)
+and `QUIESCED` modes. PostgreSQL BEFORE row and TRUNCATE triggers enforce
+the Attendance lock for Core SQL writers, including direct SQL, independently
+of public API routing. No `ATTENDANCE` writer mode is enabled yet.
+
+A guarded transition into or out of Attendance QUIESCED requires Scheduling
+to already be QUIESCED. Scheduling cannot return to CORE while Attendance
+remains frozen. Both controls use monotonically increasing generations
+that are forced by PostgreSQL triggers, so an operator's freeze->resume->freeze
+cycle changes the proof even when the final mode reads the same. Writer
+triggers hold shared control-row locks while the transaction is active; mode
+updates wait for in-flight writes to complete before admitting new state.
+
+A separate private, read-only `/internal/attendance/verify/frozen`
+(endpoint hosted ONLY by Attendance and protected by its service key)
+requires BOTH Core controls in QUIESCED mode with unchanged mode generations
+across the complete 8f-5 source manifest check. It returns HTTP 409
+`NOT_FROZEN` unless the sources are actually quiesced. A transition
+during verification rejects the proof even if both modes later become
+QUIESCED again. The previous `/internal/attendance/verify` remains a
+live data-*parity* check, not permission to change writer ownership.
+
+**Disposable CI-only smoke sequence**: reject Attendance freeze before
+Scheduling; quiesce Scheduling then Attendance; verify full frozen parity;
+reject Core SQL INSERT/UPDATE/DELETE and premature Scheduling resume;
+restore Attendance then Scheduling in reverse order; prove both generations
+advanced twice and all public FE endpoints still work. None of these
+steps is automatically performed in a live environment.
+
+This is a **safety prerequisite, not a production cutover**. Academic
+class/session writes and Scheduling/Attendance cross-service leases still
+need an independently authoritative, versioned saga and a durable
+one-way handoff/reconciliation protocol. Do not start a second Attendance
+writer because a frozen manifest returned READY.
 
 ## Phase 8f-5: complete Attendance manifest parity (read-only cutover gate)
 

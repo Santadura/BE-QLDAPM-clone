@@ -91,6 +91,46 @@ class AttendanceCutoverVerifierTest {
         verify(source,never()).manifest(anyString(),anyInt());
     }
 
+    private AttendanceSourceClient.WriterFence frozen(long generation) {
+        return new AttendanceSourceClient.WriterFence(
+            "QUIESCED",generation,"QUIESCED",generation);
+    }
+
+    @Test void ordinaryParityIsInsufficientForFrozenCutoverPreflight() {
+        when(source.writerFence()).thenReturn(
+            new AttendanceSourceClient.WriterFence("CORE",1,"CORE",1));
+        var report=verifier.verifyFrozen();
+        assertFalse(report.ready());
+        assertEquals("NOT_FROZEN",report.state());
+        assertTrue(report.mismatchKeys().contains("CORE_WRITERS_NOT_QUIESCED"));
+        verify(source,never()).manifestSummary();
+        verifyNoInteractions(projection,relay);
+    }
+
+    @Test void stableFrozenGenerationsAndCompleteParityCanPassPreflight() {
+        matching();
+        when(source.writerFence()).thenReturn(frozen(7));
+        var result=verifier.verifyFrozen();
+        assertTrue(result.ready());
+        assertEquals("READY",result.state());
+        verify(source,times(2)).writerFence();
+    }
+
+    @Test void attendanceOrSchedulingModeAbaDuringScanIsNotSafe() {
+        matching();
+        when(source.writerFence()).thenReturn(frozen(7),frozen(9));
+        var report=verifier.verifyFrozen();
+        assertFalse(report.ready());
+        assertTrue(report.mismatchKeys().contains("WRITER_MODE_CHANGED_DURING_SCAN"));
+    }
+
+    @Test void unfrozenCoreAfterScanCannotAccidentallyPass() {
+        matching();
+        when(source.writerFence()).thenReturn(frozen(7),
+            new AttendanceSourceClient.WriterFence("CORE",8,"QUIESCED",7));
+        assertFalse(verifier.verifyFrozen().ready());
+    }
+
     @Test void sourceOutageIsFailClosed() {
         doThrow(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"core offline"))
             .when(relay).requireCaughtUp();

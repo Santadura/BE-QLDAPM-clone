@@ -105,6 +105,14 @@ class TeacherAttendanceSourceBridgeTest {
         verifyNoInteractions(db);
     }
 
+    @Test void writerFenceCannotBeReadWithoutThePrivateKey() {
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,()->bridge.writerFence(null)).getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,()->bridge.writerFence("bad")).getStatusCode());
+        verifyNoInteractions(db);
+    }
+
     @Test void missingCoreEventCannotBeAcknowledged() throws Exception {
         when(db.query(startsWith("SELECT payload::text"),
             any(RowMapper.class),eq(999L))).thenReturn(List.of());
