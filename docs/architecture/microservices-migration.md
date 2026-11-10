@@ -649,6 +649,32 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-2: durable Scheduling-side Academic lease coordination
+
+A private Scheduling-only, opt-in coordinator now binds a planned
+`ASSIGN_TEACHER` command (actor username, operation, request key and
+canonical staged payload) to its exact Academic class/session versions.
+The new Scheduling-owned `scheduling_academic_command_leases` table
+persists the Core lease ID, versions and deadline. Only a live TC
+(checked by the existing Core identity boundary) can acquire/renew it.
+The private key is required and the endpoint remains OFF in normal
+Compose and hidden behind Gateway isolation.
+
+The remote Academic command key is deterministic SHA-256 over actor,
+operation and request key; a lost HTTP response can be safely retried
+without taking a different lesson lease. Every repeated acquire or
+explicit renewal rechecks the Core generation-fenced Academic lease
+from 8g-1, with the staged command still STAGED and all versions equal.
+A rejected or unexecuted staged command may release it; a command that
+has already entered PENDING_REFERENCE or COMMITTED cannot silently
+surrender the lease. No class/teacher schedule is written.
+
+**Boundary remains:** the complete teacher/class-support assignment
+executor is not yet implemented. It must call renew before each local
+commit, Core reference handoff and finalization, and stop safely if any
+Academic/worker/Scheduling lease expires. The private coordinator does
+not by itself authorize a production public writer cutover.
+
 ## Phase 8g-1: generation-fenced Academic session lease and renewal
 
 Before transferring class-linked Scheduling assignments, the Academic
