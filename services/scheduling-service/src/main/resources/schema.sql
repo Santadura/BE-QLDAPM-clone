@@ -284,3 +284,24 @@ ON CONFLICT(source_type,schedule_id) DO UPDATE SET
   end_time=EXCLUDED.end_time,work_type=EXCLUDED.work_type,
   status=EXCLUDED.status,assigned_by=EXCLUDED.assigned_by,updated_at=NOW()
 WHERE scheduling_assignment_write_shadow.version<EXCLUDED.version@@
+
+-- Phase 8g-2: bounded, actor-scoped Academic lease receipt for a staged
+-- teacher command. The remote Core Academic lease is authoritative; this
+-- Scheduling row is merely a durable retry/renewal binding, not a class write.
+CREATE TABLE IF NOT EXISTS scheduling_academic_command_leases (
+  actor_username VARCHAR(100) NOT NULL,
+  operation VARCHAR(40) NOT NULL CHECK(operation='ASSIGN_TEACHER'),
+  request_key VARCHAR(128) NOT NULL,
+  class_id VARCHAR(50) NOT NULL,
+  session_id VARCHAR(50) NOT NULL,
+  class_version BIGINT NOT NULL CHECK(class_version>0),
+  session_version BIGINT NOT NULL CHECK(session_version>0),
+  core_lease_id VARCHAR(50) NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(actor_username,operation,request_key),
+  FOREIGN KEY(actor_username,operation,request_key)
+    REFERENCES scheduling_assignment_command_inbox(actor_username,operation,request_key)
+)@@
+CREATE INDEX IF NOT EXISTS idx_scheduling_academic_claim_expiry
+  ON scheduling_academic_command_leases(expires_at)@@

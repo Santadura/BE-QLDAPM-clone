@@ -23,6 +23,8 @@ iig:
     assignment-reference-relay-enabled: ${SCHEDULING_REFERENCE_RELAY_ENABLED:false}
     # Internal-only standalone CS/Sale writer: opt in under controlled cutover.
     assignment-executor-enabled: ${SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED:false}
+    # Staged teacher Academic lease coordination is private and disabled by default.
+    academic-lease-coordinator-enabled: ${SCHEDULING_ACADEMIC_LEASE_COORDINATOR_ENABLED:false}
     # Admin-only exact receipt reconciliation, never an automatic rollback.
     recovery-enabled: ${SCHEDULING_RECOVERY_ENABLED:false}
 management:
