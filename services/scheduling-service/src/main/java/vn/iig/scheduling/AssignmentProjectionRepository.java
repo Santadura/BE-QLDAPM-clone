@@ -190,6 +190,29 @@ public class AssignmentProjectionRepository {
         return count==null?0:count;
     }
 
+    /**
+     * A diagnostic preflight has a single STAGED command that is provably
+     * not yet a business write. Exempt ONLY that exact actor/key, and keep
+     * every other staged, unacknowledged or compensating command as a strict
+     * cutover blocker. Normal verify() never uses this exemption.
+     */
+    public long pendingCommandsExceptStaged(String actor,String operation,String key) {
+        requireReady();
+        if(actor==null || actor.isBlank() || operation==null || operation.isBlank() ||
+                key==null || key.isBlank())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Exact staged command required for source parity");
+        Long count=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_command_inbox " +
+            "WHERE state IN ('STAGED','PENDING_REFERENCE','COMPENSATING') " +
+            "AND NOT(state='STAGED' AND actor_username=? AND operation=? AND request_key=?)",
+            Long.class,actor,operation,key);
+        if(count==null || count<0)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Scheduling pending command count unavailable");
+        return count;
+    }
+
     public long countShadowAssignments() {
         requireReady();
         Long count=db.queryForObject(

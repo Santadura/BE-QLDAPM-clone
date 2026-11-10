@@ -25,6 +25,7 @@ iig:
     assignment-executor-enabled: ${SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED:false}
     # Staged teacher Academic lease coordination is private and disabled by default.
     academic-lease-coordinator-enabled: ${SCHEDULING_ACADEMIC_LEASE_COORDINATOR_ENABLED:false}
+    teacher-preflight-enabled: ${SCHEDULING_TEACHER_PREFLIGHT_ENABLED:false}
     # Admin-only exact receipt reconciliation, never an automatic rollback.
     recovery-enabled: ${SCHEDULING_RECOVERY_ENABLED:false}
 management:

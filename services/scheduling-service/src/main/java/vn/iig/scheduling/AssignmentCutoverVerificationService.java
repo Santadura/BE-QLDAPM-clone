@@ -37,6 +37,22 @@ public class AssignmentCutoverVerificationService {
     }
 
     public Report verify() {
+        return verifyInternal(null,null,null);
+    }
+
+    /**
+     * Narrowly scoped preflight source scan while one specific teacher
+     * command is still STAGED. This is NOT a general cutover approval and
+     * does not exempt any PENDING_REFERENCE or COMPENSATING command.
+     */
+    public Report verifyStaged(String actor,String operation,String requestKey) {
+        if(!"ASSIGN_TEACHER".equals(operation))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Only a staged teacher command may request preflight parity");
+        return verifyInternal(actor,operation,requestKey);
+    }
+
+    private Report verifyInternal(String actor,String operation,String requestKey) {
         readModel.requireReady();
         var before=core.assignmentManifestSummary();
         String afterSource="";
@@ -79,7 +95,8 @@ public class AssignmentCutoverVerificationService {
 
         long localRows=readModel.countAllAssignments();
         long shadowRows=readModel.countShadowAssignments();
-        long unresolved=readModel.pendingAssignmentCommands();
+        long unresolved=actor==null?readModel.pendingAssignmentCommands():
+            readModel.pendingCommandsExceptStaged(actor,operation,requestKey);
         var current=core.assignmentManifestSummary();
         boolean unchanged=before.rowCount()==current.rowCount() &&
             before.versionSum()==current.versionSum() &&

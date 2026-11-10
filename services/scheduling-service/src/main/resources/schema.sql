@@ -305,3 +305,30 @@ CREATE TABLE IF NOT EXISTS scheduling_academic_command_leases (
 )@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_academic_claim_expiry
   ON scheduling_academic_command_leases(expires_at)@@
+
+-- Phase 8g-4: actor/command-bound teacher slot preflight. This stores
+-- ONLY verified temporary Scheduling worker lease identity, NOT a teaching
+-- schedule or successful assignment. Expired lease cleanup cascades to the
+-- preflight receipt so a retry cannot resurrect a stale worker allocation.
+CREATE TABLE IF NOT EXISTS scheduling_teacher_command_preflights (
+  actor_username VARCHAR(100) NOT NULL,
+  operation VARCHAR(40) NOT NULL DEFAULT 'ASSIGN_TEACHER'
+    CHECK(operation='ASSIGN_TEACHER'),
+  request_key VARCHAR(128) NOT NULL,
+  employee_id VARCHAR(50) NOT NULL,
+  class_id VARCHAR(50) NOT NULL,
+  session_id VARCHAR(50) NOT NULL,
+  work_date DATE NOT NULL,
+  start_time TIME NOT NULL,
+  end_time TIME NOT NULL CHECK(end_time>start_time),
+  campus VARCHAR(100),
+  reservation_id VARCHAR(50) NOT NULL UNIQUE
+    REFERENCES scheduling_availability_reservations(reservation_id)
+    ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(actor_username,operation,request_key),
+  FOREIGN KEY(actor_username,operation,request_key)
+    REFERENCES scheduling_assignment_command_inbox(actor_username,operation,request_key)
+)@@
+CREATE INDEX IF NOT EXISTS idx_scheduling_teacher_preflight_employee
+  ON scheduling_teacher_command_preflights(employee_id,work_date,start_time,end_time)@@
