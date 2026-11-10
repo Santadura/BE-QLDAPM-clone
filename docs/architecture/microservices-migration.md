@@ -649,6 +649,44 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-8: private Scheduling-owned teacher create transaction (OFF)
+
+Scheduling now includes an **independent transactional TEACHING CREATE
+executor** and a separate internal controller, both controlled by
+`SCHEDULING_TEACHER_EXECUTOR_ENABLED` (default OFF). The controller
+requires the Scheduling service key, live TC bearer and an exact
+actor-scoped STAGED `ASSIGN_TEACHER` inbox command. Identical
+PENDING_REFERENCE/COMMITTED retries return the original persisted
+outbox schedule, never a new teaching row.
+
+In a single Scheduling PostgreSQL transaction, the service verifies
+Core's QUIESCED assignment writer, initial Core/Scheduling source parity,
+exact versioned Academic class/session and display metadata, a live
+approved teacher availability reservation, and committed/in-flight
+teacher/class conflicts. Core takes a **non-expiring durable TC writer
+claim BEFORE local teacher mutation**, blocking unsafe Core handback
+after ambiguous HTTP/network failures. Academic lease renewal and worker
+lease expiry are rechecked after claim acquisition. The service then
+writes the version-1 TEACHING read projection and normalized write
+shadow, appends a SHA-256 immutable TEACHING UPSERT event with the exact
+Academic lease/revision evidence, moves the command to
+PENDING_REFERENCE and consumes the worker reservation, all atomically.
+A pending reference is NOT public business success.
+
+The existing Scheduling relay delivers TEACHING events to the
+new Core generation-fenced receiver (8g-6), which idempotently commits
+the Core teaching reference and writer claim confirmation; exact old
+receipts can be replayed (8g-7). After 10 failures, the event requires
+manual receipt-verified reconciliation, NOT blind compensation.
+
+**Production cutover remains blocked:** the Core TEACHING receiver,
+teacher executor, Scheduling relay and public Gateway routes are all
+OFF by default. Academic lease renewal across long-lived reference
+delivery, teacher/source evidence parity for Attendance and Payroll,
+operational handback migrations and full Docker test of an enabled
+independent TEACHING writer remain prerequisites. No live assignment
+is rerouted by these changes.
+
 ## Phase 8g-7: immutable TEACHING delivery replay and auditable recovery
 
 Core's TEACHING receiver now checks an exact previously committed
