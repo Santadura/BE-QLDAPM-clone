@@ -649,6 +649,25 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-5: Core admission for future TC-owned teacher assignment writes
+
+The Core durable Scheduling claim bridge now accepts
+`ASSIGN_TEACHER` **only from an active TC employee/user**, independently
+of the CM/CS-Sale claim scope. Both role checks are performed against
+current Core account and employment state under Core's QUIESCED
+singleton writer lock. A claim survives transport ambiguity and is
+idempotent by actor, operation and command key. It permanently prevents
+an unsafe Core writer handback until independently reconciled with
+Scheduling and a future teaching reference receipt; it is not a lease
+that can silently expire.
+
+This is one prerequisite of a real independent Scheduling TEACHING
+command, NOT authority to create teaching rows yet. Core still handles
+normal teaching writes in CORE mode and no public Gateway assignment
+route changes. The next step must implement a separately audited
+TEACHING reference receiver and local Scheduling writer with exact
+Academic/worker reservations and compensating recovery.
+
 ## Phase 8g-4: cross-service teacher assignment admission (PRIVATE, OFF)
 
 A new **private, disabled-by-default** Scheduling teacher preflight checks a

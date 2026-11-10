@@ -35,7 +35,7 @@ public class SchedulingAssignmentWriterClaimBridge {
     private record Stored(String managerEmployeeId,String status) {}
 
     private static final Set<String> SUPPORTED=
-        Set.of("ASSIGN_STAFF","EDIT_STAFF","CANCEL_STAFF");
+        Set.of("ASSIGN_STAFF","EDIT_STAFF","CANCEL_STAFF","ASSIGN_TEACHER");
 
     private final JdbcTemplate db;
     private final byte[] secret;
@@ -81,14 +81,19 @@ public class SchedulingAssignmentWriterClaimBridge {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Core assignment writes must be QUIESCED");
 
+        // Only TC may reserve a teacher source write; CM remains the only
+        // permitted manager for standalone staff. The role is rechecked
+        // against the live Core user + employee for EVERY retry, not merely
+        // inferred from the caller's JWT or supplied operation.
+        String requiredRole="ASSIGN_TEACHER".equals(request.operation())?"TC":"CM";
         Long activeManager=db.queryForObject(
             "SELECT count(*) FROM employees e JOIN users u ON u.username=e.username " +
             "WHERE e.employee_id=? AND e.username=? AND e.status='ACTIVE' " +
-            "AND u.status='ACTIVE' AND u.role_id='CM'",
-            Long.class,request.managerEmployeeId(),request.actorUsername());
+            "AND u.status='ACTIVE' AND u.role_id=?",
+            Long.class,request.managerEmployeeId(),request.actorUsername(),requiredRole);
         if(activeManager==null || activeManager!=1)
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                "An active CM is required for this command claim");
+                "Active "+requiredRole+" required for independent Scheduling writer claim");
 
         db.update(
             "INSERT INTO scheduling_assignment_writer_claims " +

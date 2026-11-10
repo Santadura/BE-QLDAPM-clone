@@ -24,8 +24,8 @@ class SchedulingAssignmentWriterClaimBridgeTest {
     private void allowed() {
         when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
             .thenReturn("QUIESCED");
-        when(db.queryForObject(contains("AND u.role_id='CM'"),
-            eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(1L);
+        when(db.queryForObject(contains("AND u.role_id=?"),
+            eq(Long.class),eq("cm-001"),eq("cm001"),eq("CM"))).thenReturn(1L);
     }
 
     @SuppressWarnings({"rawtypes","unchecked"})
@@ -60,8 +60,8 @@ class SchedulingAssignmentWriterClaimBridgeTest {
     @Test void InactiveManagerCanNeverReserveIndependentWriterSlot() {
         when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
             .thenReturn("QUIESCED");
-        when(db.queryForObject(contains("AND u.role_id='CM'"),
-            eq(Long.class),eq("cm-001"),eq("cm001"))).thenReturn(0L);
+        when(db.queryForObject(contains("AND u.role_id=?"),
+            eq(Long.class),eq("cm-001"),eq("cm001"),eq("CM"))).thenReturn(0L);
         assertEquals(HttpStatus.FORBIDDEN,
             assertThrows(ResponseStatusException.class,
                 ()->controller.acquire("private-writer-key",command())).getStatusCode());
@@ -79,8 +79,8 @@ class SchedulingAssignmentWriterClaimBridgeTest {
         order.verify(db).queryForObject(
             contains("FOR UPDATE"),eq(String.class));
         order.verify(db).queryForObject(
-            contains("AND u.role_id='CM'"),
-            eq(Long.class),eq("cm-001"),eq("cm001"));
+            contains("AND u.role_id=?"),
+            eq(Long.class),eq("cm-001"),eq("cm001"),eq("CM"));
         order.verify(db).update(
             startsWith("INSERT INTO scheduling_assignment_writer_claims"),
             eq("cm001"),eq("ASSIGN_STAFF"),eq("cmd-1"),eq("cm-001"));
@@ -104,12 +104,53 @@ class SchedulingAssignmentWriterClaimBridgeTest {
                 ()->controller.acquire("private-writer-key",command())).getStatusCode());
     }
 
-    @Test void TeacherOrClassAssignmentsAreNotAdmittedThroughStaffOnlyClaim() {
-        var teacher=new SchedulingAssignmentWriterClaimBridge.ClaimRequest(
-            "cm001","cm-001","ASSIGN_TEACHER","teacher-1");
-        assertEquals(HttpStatus.BAD_REQUEST,
-            assertThrows(ResponseStatusException.class,
-                ()->controller.acquire("private-writer-key",teacher)).getStatusCode());
-        verifyNoInteractions(db);
+    @SuppressWarnings({"rawtypes","unchecked"})
+    @Test void liveTcMayReserveIndependentTeacherClaimBeforeLocalWrite()
+            throws Exception {
+        var command=new SchedulingAssignmentWriterClaimBridge.ClaimRequest(
+            "tc001","tc-001","ASSIGN_TEACHER","teacher-command-1");
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        when(db.queryForObject(contains("AND u.role_id=?"),
+            eq(Long.class),eq("tc-001"),eq("tc001"),eq("TC"))).thenReturn(1L);
+        when(db.query(startsWith("SELECT manager_employee_id,status"),
+            any(RowMapper.class),eq("tc001"),eq("ASSIGN_TEACHER"),
+            eq("teacher-command-1"))).thenAnswer(inv->{
+                RowMapper mapper=inv.getArgument(1);
+                var rs=mock(java.sql.ResultSet.class);
+                when(rs.getString(1)).thenReturn("tc-001");
+                when(rs.getString(2)).thenReturn("PENDING");
+                return List.of(mapper.mapRow(rs,0));
+            });
+        var receipt=controller.acquire("private-writer-key",command);
+        assertEquals("PENDING",receipt.status());
+        verify(db).update(startsWith("INSERT INTO scheduling_assignment_writer_claims"),
+            eq("tc001"),eq("ASSIGN_TEACHER"),eq("teacher-command-1"),eq("tc-001"));
+    }
+
+    @Test void aCmCannotUseATeacherWriterClaimToAcquireTcPrivileges() {
+        var command=new SchedulingAssignmentWriterClaimBridge.ClaimRequest(
+            "cm001","cm-001","ASSIGN_TEACHER","teacher-command-1");
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        when(db.queryForObject(contains("AND u.role_id=?"),
+            eq(Long.class),eq("cm-001"),eq("cm001"),eq("TC"))).thenReturn(0L);
+        assertEquals(HttpStatus.FORBIDDEN,assertThrows(
+            ResponseStatusException.class,
+            ()->controller.acquire("private-writer-key",command)).getStatusCode());
+        verify(db,never()).update(startsWith("INSERT INTO scheduling_assignment_writer_claims"),
+            any(Object[].class));
+    }
+
+    @Test void aTcCannotUseAStaffWriteClaimToAssumeCmPrivileges() {
+        var command=new SchedulingAssignmentWriterClaimBridge.ClaimRequest(
+            "tc001","tc-001","ASSIGN_STAFF","teacher-command-1");
+        when(db.queryForObject(startsWith("SELECT writer_mode"),eq(String.class)))
+            .thenReturn("QUIESCED");
+        assertEquals(HttpStatus.FORBIDDEN,assertThrows(
+            ResponseStatusException.class,
+            ()->controller.acquire("private-writer-key",command)).getStatusCode());
+        verify(db,never()).update(startsWith("INSERT INTO scheduling_assignment_writer_claims"),
+            any(Object[].class));
     }
 }
