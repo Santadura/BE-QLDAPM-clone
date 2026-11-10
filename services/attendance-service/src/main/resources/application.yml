@@ -14,6 +14,11 @@ spring:
 iig:
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
+    internal-key: ${ATTENDANCE_INTERNAL_API_KEY:}
+  attendance:
+    source-relay-enabled: ${ATTENDANCE_SOURCE_RELAY_ENABLED:false}
+    initial-delay-ms: 8000
+    poll-ms: 5000
 management:
   endpoints:
     web:
