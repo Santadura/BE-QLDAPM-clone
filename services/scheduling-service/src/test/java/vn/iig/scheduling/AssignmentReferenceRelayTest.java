@@ -91,6 +91,58 @@ class AssignmentReferenceRelayTest {
             anyString(),anyString(),anyString(),anyString(),anyString());
     }
 
+    @Test void teacherEventRenewsAcademicLeaseBeforeCoreReferenceDelivery() {
+        var academic=mock(AcademicCommandLeaseService.class);
+        var teacher=new AssignmentDomainOutboxRepository.Event(
+            "event-teacher","tc001","ASSIGN_TEACHER","cmd-teacher",
+            "TEACHING","teach-1",1,"UPSERT","{}","d".repeat(64),0);
+        when(outbox.pending(50)).thenReturn(List.of(teacher));
+        when(core.applyAssignmentReference(teacher)).thenReturn(
+            new SchedulingCoreClient.AssignmentReferenceReceipt(
+                "event-teacher",1,"APPLIED"));
+        new AssignmentReferenceRelay(outbox,lifecycle,core,academic,true).relay();
+        var order=inOrder(academic,core,lifecycle);
+        order.verify(academic).renewForReference("tc001","cmd-teacher");
+        order.verify(core).applyAssignmentReference(teacher);
+        order.verify(lifecycle).confirmReference(
+            "tc001","ASSIGN_TEACHER","cmd-teacher","event-teacher","d".repeat(64));
+    }
+
+    @Test void expiredLeaseStillAllowsOnlyExactPreviouslyCommittedCoreReplay() {
+        var academic=mock(AcademicCommandLeaseService.class);
+        var teacher=new AssignmentDomainOutboxRepository.Event(
+            "event-teacher","tc001","ASSIGN_TEACHER","cmd-teacher",
+            "TEACHING","teach-1",1,"UPSERT","{}","d".repeat(64),3);
+        when(outbox.pending(50)).thenReturn(List.of(teacher));
+        when(academic.renewForReference("tc001","cmd-teacher"))
+            .thenThrow(new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT,"Lease expired"));
+        when(core.applyAssignmentReference(teacher)).thenReturn(
+            new SchedulingCoreClient.AssignmentReferenceReceipt(
+                "event-teacher",1,"ALREADY_APPLIED"));
+        new AssignmentReferenceRelay(outbox,lifecycle,core,academic,true).relay();
+        verify(lifecycle).confirmReference(
+            "tc001","ASSIGN_TEACHER","cmd-teacher","event-teacher","d".repeat(64));
+        verify(outbox,never()).retryLater(anyString(),anyString());
+    }
+
+    @Test void newTeacherReferenceAfterLeaseExpiryMustRemainUnresolved() {
+        var academic=mock(AcademicCommandLeaseService.class);
+        var teacher=new AssignmentDomainOutboxRepository.Event(
+            "event-teacher","tc001","ASSIGN_TEACHER","cmd-teacher",
+            "TEACHING","teach-1",1,"UPSERT","{}","d".repeat(64),3);
+        when(outbox.pending(50)).thenReturn(List.of(teacher));
+        when(academic.renewForReference("tc001","cmd-teacher"))
+            .thenThrow(new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT,"Lease expired"));
+        when(core.applyAssignmentReference(teacher))
+            .thenThrow(new IllegalStateException("No live Academic lease"));
+        new AssignmentReferenceRelay(outbox,lifecycle,core,academic,true).relay();
+        verify(outbox).retryLater(eq("event-teacher"),anyString());
+        verify(lifecycle,never()).confirmReference(
+            anyString(),anyString(),anyString(),anyString(),anyString());
+    }
+
     @Test void coreMayHaveCommittedEvenIfLocalAckFailsSoRetrySameEvent() {
         when(outbox.pending(50)).thenReturn(List.of(event));
         when(core.applyAssignmentReference(event)).thenReturn(

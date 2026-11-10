@@ -168,6 +168,38 @@ class AcademicCommandLeaseServiceTest {
         verifyNoInteractions(core);
     }
 
+    @Test void pendingReferenceMayOnlyRenewItsOriginalUnexpiredLease() throws Exception {
+        staged("PENDING_REFERENCE");
+        claim("class-1",3);
+        when(core.renewAcademicSession("lease-1")).thenReturn(live());
+        when(db.update(startsWith("UPDATE scheduling_academic_command_leases"),
+            any(Timestamp.class),eq("tc001"),eq("command-1"),eq("lease-1")))
+            .thenReturn(1);
+        var response=svc.renewForReference("tc001","command-1");
+        assertEquals("lease-1",response.leaseId());
+        verify(core).renewAcademicSession("lease-1");
+        verify(core,never()).reserveAcademicSession(
+            anyString(),anyString(),anyLong(),anyLong(),anyString());
+    }
+
+    @Test void expiredPendingLeaseCannotReacquireAnotherLesson() throws Exception {
+        staged("PENDING_REFERENCE");
+        claim("class-1",3,Instant.now().minusSeconds(25));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.renewForReference("tc001","command-1")).getStatusCode());
+        verifyNoInteractions(core);
+    }
+
+    @Test void stagedTeacherCommandCannotPretendToBePendingCoreDelivery()
+            throws Exception {
+        staged("STAGED");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.renewForReference("tc001","command-1")).getStatusCode());
+        verifyNoInteractions(core);
+    }
+
     @Test void rejectedCommandCanReleaseButNeverAcquireOrRenew() throws Exception {
         staged("REJECTED");claim("class-1",3);
         svc.release("tc001","command-1");

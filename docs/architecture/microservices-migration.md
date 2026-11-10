@@ -649,6 +649,26 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-9: lease renewal during immutable teacher event relay
+
+The Scheduling assignment reference relay now renews the original,
+generation-fenced Core Academic lease before each TEACHING event delivery.
+It accepts only a locally committed `PENDING_REFERENCE` command with
+the original actor/key, identical session/class versions and unchanged
+Core lease ID. An expired lease is NEVER silently replaced with a fresh
+lease after the Scheduling business transaction committed.
+
+If renewal fails, the relay still submits ONLY the exact immutable
+event ID and digest. Core may respond ALREADY_APPLIED when the original
+reference had committed before an HTTP timeout, even after actor
+revocation or lease expiry. Otherwise Core rejects the now-unleased
+CREATE and the source event stays pending for retry or explicit audited
+reconciliation; this avoids double writes and fictitious success.
+
+This improves transient Core outage tolerance but is not yet sufficient
+for unattended disaster recovery after a lease has fully expired.
+No public TEACHING writer cutover is enabled.
+
 ## Phase 8g-8: private Scheduling-owned teacher create transaction (OFF)
 
 Scheduling now includes an **independent transactional TEACHING CREATE
