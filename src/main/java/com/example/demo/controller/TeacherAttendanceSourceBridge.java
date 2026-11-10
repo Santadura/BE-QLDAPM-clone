@@ -101,6 +101,24 @@ public class TeacherAttendanceSourceBridge {
                 rs.getString(3),rs.getString(4),rs.getBoolean(5)),after,limit);
     }
 
+    /** Immutable mode generations detect freeze/unfreeze cycles during a scan. */
+    public record WriterFence(String attendanceMode,long attendanceGeneration,
+                              String schedulingMode,long schedulingGeneration) {}
+
+    @GetMapping("/fence")
+    @Transactional(readOnly=true)
+    public WriterFence writerFence(
+            @RequestHeader(value="X-Internal-Key",required=false) String key) {
+        authenticate(key);
+        return db.queryForObject(
+            "SELECT a.writer_mode,a.generation,s.writer_mode,s.writer_generation " +
+            "FROM teacher_attendance_writer_control a " +
+            "JOIN scheduling_assignment_writer_control s ON s.singleton=TRUE " +
+            "WHERE a.singleton=TRUE",
+            (rs,i)->new WriterFence(rs.getString(1),rs.getLong(2),
+                rs.getString(3),rs.getLong(4)));
+    }
+
     private final JdbcTemplate db;
     private final byte[] secret;
 

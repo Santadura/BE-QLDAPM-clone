@@ -25,6 +25,8 @@ public class AttendanceSourceClient {
                                   long pendingEvents,long divergentRows) {}
     public record ManifestRow(long eventId,String teachingScheduleId,
                               String eventKind,String payloadJson,boolean sourceMatches) {}
+    public record WriterFence(String attendanceMode,long attendanceGeneration,
+                              String schedulingMode,long schedulingGeneration) {}
     private final RestClient client;
     private final String secret;
 
@@ -41,6 +43,24 @@ public class AttendanceSourceClient {
             .requestFactory(factory).build();
     }
 
+
+    public WriterFence writerFence() {
+        try {
+            WriterFence fence=client.get()
+                .uri("/internal/attendance/events/fence")
+                .header("X-Internal-Key",secret)
+                .retrieve().body(WriterFence.class);
+            if(fence==null || fence.attendanceMode()==null ||
+                    fence.schedulingMode()==null ||
+                    fence.attendanceGeneration()<1 || fence.schedulingGeneration()<1)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Invalid Core Attendance writer fence");
+            return fence;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core Attendance writer fence unavailable",ex);
+        }
+    }
 
     public ManifestSummary manifestSummary() {
         try {

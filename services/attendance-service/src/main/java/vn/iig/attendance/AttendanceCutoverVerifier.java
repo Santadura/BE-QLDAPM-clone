@@ -33,6 +33,35 @@ public class AttendanceCutoverVerifier {
         this.relay=relay;
     }
 
+    /**
+     * Stronger preflight than ordinary live parity. Both existing Core
+     * writers must be QUIESCED, with unchanged monotonically increasing
+     * generations across the entire scan. This still does NOT freeze
+     * Academic class mutations or authorize Attendance independent writes.
+     */
+    public Report verifyFrozen() {
+        var before=source.writerFence();
+        if(!isFrozen(before))
+            return new Report(false,"NOT_FROZEN",0,0,1,
+                List.of("CORE_WRITERS_NOT_QUIESCED"));
+        var report=verify();
+        var after=source.writerFence();
+        if(!before.equals(after) || !isFrozen(after)) {
+            List<String> errors=new ArrayList<>(report.mismatchKeys());
+            if(errors.size()<MAX_MISMATCH_KEYS)
+                errors.add("WRITER_MODE_CHANGED_DURING_SCAN");
+            return new Report(false,"MISMATCH",report.sourceRows(),
+                report.verifiedRows(),report.mismatchCount()+1,List.copyOf(errors));
+        }
+        return report;
+    }
+
+    private static boolean isFrozen(AttendanceSourceClient.WriterFence fence) {
+        return fence!=null && "QUIESCED".equals(fence.attendanceMode()) &&
+            "QUIESCED".equals(fence.schedulingMode()) &&
+            fence.attendanceGeneration()>0 && fence.schedulingGeneration()>0;
+    }
+
     public Report verify() {
         // Never serve a successful report while the committed Core feed is
         // backlogged. Outages propagate 503, not false readiness.

@@ -24,14 +24,27 @@ public class AttendanceCutoverController {
         this.secret=key.getBytes(StandardCharsets.UTF_8);
     }
 
-    @GetMapping("/verify")
-    public ResponseEntity<AttendanceCutoverVerifier.Report> verify(
-            @RequestHeader(value="X-Internal-Key",required=false) String key) {
+    private void authenticate(String key) {
         byte[] provided=(key==null?"":key).getBytes(StandardCharsets.UTF_8);
         if(!MessageDigest.isEqual(secret,provided))
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
                 "Invalid private Attendance verification key");
+    }
+
+    @GetMapping("/verify")
+    public ResponseEntity<AttendanceCutoverVerifier.Report> verify(
+            @RequestHeader(value="X-Internal-Key",required=false) String key) {
+        authenticate(key);
         var report=verifier.verify();
+        return ResponseEntity.status(report.ready()?HttpStatus.OK:HttpStatus.CONFLICT)
+            .body(report);
+    }
+
+    @GetMapping("/verify/frozen")
+    public ResponseEntity<AttendanceCutoverVerifier.Report> verifyFrozen(
+            @RequestHeader(value="X-Internal-Key",required=false) String key) {
+        authenticate(key);
+        var report=verifier.verifyFrozen();
         return ResponseEntity.status(report.ready()?HttpStatus.OK:HttpStatus.CONFLICT)
             .body(report);
     }
