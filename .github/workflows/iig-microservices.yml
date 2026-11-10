@@ -155,6 +155,10 @@ jobs:
           E2E_API_URL: http://localhost:8080/api
           E2E_SEED_PASSWORD: '123456'
         run: ./e2e/node_modules/.bin/playwright test --config=e2e/playwright.config.mjs
+      - name: Exercise explicitly enabled private teacher writer on disposable databases
+        env:
+          CI: 'true'
+        run: bash scripts/smoke-teacher-cutover.sh
       - name: Print service logs when smoke fails
         if: failure()
         run: docker compose -f docker-compose.microservices.yml logs --no-color --tail=160 db-init postgres backend api-gateway attendance-service attendance-postgres academic-service academic-postgres audit-service catalog-service identity-service reporting-service hr-service payroll-service scheduling-service
