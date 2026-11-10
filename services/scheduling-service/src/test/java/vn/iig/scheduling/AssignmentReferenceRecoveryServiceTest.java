@@ -34,12 +34,27 @@ class AssignmentReferenceRecoveryServiceTest {
         sequence.verify(lifecycle).reconcileVerified(event,proof);
     }
 
-    @Test void confirmedTeacherCanBeRecoveredOnlyWithItsExactImmutableCoreEvent() {
-        var teaching=new AssignmentDomainOutboxRepository.Event(
+    private static final String TEACHER_PAYLOAD="""
+        {"id":"teaching-1","teacherId":"teacher-1","classId":"class-1",
+         "date":"2027-02-11","startTime":"09:00","endTime":"11:00",
+         "status":"ASSIGNED","assignedBy":"tc-1"}""";
+
+    private AssignmentDomainOutboxRepository.Event teacher(String payload) {
+        return new AssignmentDomainOutboxRepository.Event(
             "event-teacher","tc001","ASSIGN_TEACHER","tc-request-1",
-            "TEACHING","teaching-1",1,"UPSERT","{}","c".repeat(64),10);
-        var proof=new SchedulingCoreClient.DurableAssignmentReferenceReceipt(
-            "event-teacher",1,"c".repeat(64));
+            "TEACHING","teaching-1",1,"UPSERT",payload,"c".repeat(64),10);
+    }
+    private SchedulingCoreClient.DurableAssignmentReferenceReceipt teacherProof(
+        String teacherId) {
+        return new SchedulingCoreClient.DurableAssignmentReferenceReceipt(
+            "event-teacher",1,"c".repeat(64),teacherId,"class-1",
+            java.time.LocalDate.of(2027,2,11),java.time.LocalTime.of(9,0),
+            java.time.LocalTime.of(11,0),"ASSIGNED","tc-1");
+    }
+
+    @Test void confirmedTeacherCanBeRecoveredOnlyWithItsExactImmutableCoreEvent() {
+        var teaching=teacher(TEACHER_PAYLOAD);
+        var proof=teacherProof("teacher-1");
         when(outbox.unresolvedEvent("event-teacher")).thenReturn(teaching);
         when(core.committedAssignmentReceipt("TEACHING","teaching-1","event-teacher"))
             .thenReturn(proof);
@@ -50,10 +65,34 @@ class AssignmentReferenceRecoveryServiceTest {
         verify(lifecycle).reconcileVerified(teaching,proof);
     }
 
+    @Test void unchangedImmutableReceiptCannotHideChangedCoreTeacher() {
+        var teaching=teacher(TEACHER_PAYLOAD);
+        when(outbox.unresolvedEvent("event-teacher")).thenReturn(teaching);
+        when(core.committedAssignmentReceipt("TEACHING","teaching-1","event-teacher"))
+            .thenReturn(teacherProof("teacher-2"));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.verifyAndRecover("event-teacher")).getStatusCode());
+        verifyNoInteractions(lifecycle);
+    }
+
+    @Test void unchangedImmutableReceiptCannotHideChangedTeacherTime() {
+        var teaching=teacher(TEACHER_PAYLOAD);
+        var evidence=new SchedulingCoreClient.DurableAssignmentReferenceReceipt(
+            "event-teacher",1,"c".repeat(64),"teacher-1","class-1",
+            java.time.LocalDate.of(2027,2,11),java.time.LocalTime.of(10,0),
+            java.time.LocalTime.of(12,0),"ASSIGNED","tc-1");
+        when(outbox.unresolvedEvent("event-teacher")).thenReturn(teaching);
+        when(core.committedAssignmentReceipt("TEACHING","teaching-1","event-teacher"))
+            .thenReturn(evidence);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.verifyAndRecover("event-teacher")).getStatusCode());
+        verifyNoInteractions(lifecycle);
+    }
+
     @Test void absentTeacherReceiptCannotFinalizeLocalSchedulingWork() {
-        var teaching=new AssignmentDomainOutboxRepository.Event(
-            "event-teacher","tc001","ASSIGN_TEACHER","tc-request-1",
-            "TEACHING","teaching-1",1,"UPSERT","{}","c".repeat(64),10);
+        var teaching=teacher(TEACHER_PAYLOAD);
         when(outbox.unresolvedEvent("event-teacher")).thenReturn(teaching);
         when(core.committedAssignmentReceipt("TEACHING","teaching-1","event-teacher"))
             .thenThrow(new ResponseStatusException(HttpStatus.CONFLICT,

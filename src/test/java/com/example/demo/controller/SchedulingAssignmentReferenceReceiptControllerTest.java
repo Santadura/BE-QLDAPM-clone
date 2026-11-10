@@ -5,6 +5,8 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -79,12 +81,27 @@ class SchedulingAssignmentReferenceReceiptControllerTest {
                 when(rs.getString(3)).thenReturn("a".repeat(64));
                 return List.of(mapper.mapRow(rs,0));
             });
-        when(db.queryForObject(startsWith("SELECT count(*) FROM teaching_schedules"),
-            eq(Long.class),eq("teacher-event-1"),eq("teacher-slot-1")))
-            .thenReturn(1L,0L);
+        when(db.query(startsWith("SELECT t.teacher_id,t.class_id,t.date"),
+            any(RowMapper.class),eq("teacher-event-1"),eq("teacher-slot-1")))
+            .thenAnswer(inv->{
+                RowMapper mapper=inv.getArgument(1);
+                var rs=mock(java.sql.ResultSet.class);
+                when(rs.getString(1)).thenReturn("teacher-1");
+                when(rs.getString(2)).thenReturn("class-1");
+                when(rs.getObject(3,LocalDate.class)).thenReturn(LocalDate.of(2027,2,11));
+                when(rs.getObject(4,LocalTime.class)).thenReturn(LocalTime.of(9,0));
+                when(rs.getObject(5,LocalTime.class)).thenReturn(LocalTime.of(11,0));
+                when(rs.getString(6)).thenReturn("ASSIGNED");
+                when(rs.getString(7)).thenReturn("tc-1");
+                return List.of(mapper.mapRow(rs,0));
+            },inv->List.of());
         var verified=controller.lookupEvent(
             "private-reference-key","teacher-event-1","TEACHING","teacher-slot-1");
         assertEquals(1L,verified.revision());
+        assertEquals("teacher-1",verified.teacherId());
+        assertEquals("class-1",verified.classId());
+        assertEquals(LocalTime.of(9,0),verified.startTime());
+        assertEquals("tc-1",verified.assignedBy());
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,
             ()->controller.lookupEvent("private-reference-key",

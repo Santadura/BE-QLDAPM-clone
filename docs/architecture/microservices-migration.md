@@ -649,6 +649,20 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-11: exact current Core TEACHING evidence during recovery
+
+A verified historical TEACHING receipt is not sufficient if an
+operator, legacy path or later mutation has since changed the Core
+teacher schedule. The read-only private Core receipt lookup now
+returns the current teacher, class, date, start/end times, status and
+assigning TC for a TEACHING event **only when** the immutable event
+receipt and a CONFIRMED Core TC writer claim both exist. Scheduling's
+manual recovery compares every field with the immutable source event
+before acknowledging any exhausted outbox delivery. Changed worker,
+shift times, class, status or manager return 409 and preserve the
+COMPENSATING command for audit. STAFF receipt lookup behavior stays
+unchanged; no new writer mutation endpoint is enabled.
+
 ## Phase 8g-10: opt-in Compose wiring and safe default smoke
 
 Both TEACHING migration feature toggles are now correctly wired from
