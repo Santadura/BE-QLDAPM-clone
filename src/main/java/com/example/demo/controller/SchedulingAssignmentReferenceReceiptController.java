@@ -57,6 +57,27 @@ public class SchedulingAssignmentReferenceReceiptController {
         if(rows.size()!=1)
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                 "No immutable Core receipt for this event");
+        if("TEACHING".equals(sourceType)) {
+            // A historical event receipt by itself is insufficient proof
+            // if the Core teacher row was deleted or its authorizing TC
+            // writer claim was never confirmed. These three facts must
+            // still agree before an exhausted Scheduling outbox is marked
+            // COMMITTED in manual recovery.
+            Long live=db.queryForObject(
+                "SELECT count(*) FROM teaching_schedules t " +
+                "JOIN scheduling_assignment_reference_event_receipts e " +
+                "ON e.source_type='TEACHING' AND e.schedule_id=t.teaching_schedule_id " +
+                "AND e.event_id=? AND e.operation='ASSIGN_TEACHER' " +
+                "JOIN scheduling_assignment_writer_claims c ON " +
+                "c.actor_username=e.actor_username AND c.operation=e.operation " +
+                "AND c.request_key=e.request_key AND c.manager_employee_id=t.assigned_by " +
+                "AND c.status='CONFIRMED' " +
+                "WHERE t.teaching_schedule_id=? AND t.status='ASSIGNED'",
+                Long.class,eventId,scheduleId);
+            if(live==null || live!=1)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Immutable teacher receipt, Core reference and TC claim diverged");
+        }
         return rows.get(0);
     }
 

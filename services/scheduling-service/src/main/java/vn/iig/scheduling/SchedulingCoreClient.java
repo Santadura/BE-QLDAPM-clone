@@ -167,8 +167,9 @@ public class SchedulingCoreClient {
     /**
      * Private, feature-gated Core reference receiver. This must return only
      * after the Core projection and receipt have committed together. It can
-     * currently consume standalone STAFF UPSERT events ONLY; teaching and
-     * class-linked schedules still require a separate Academic/attendance saga.
+     * consume standalone STAFF events or the guarded revision-1 TEACHING
+     * reference endpoint. A TEACHING domain writer and public cutover are
+     * still disabled; this client is only a private reference transport.
      */
     public AssignmentReferenceReceipt applyAssignmentReference(
             AssignmentDomainOutboxRepository.Event event) {

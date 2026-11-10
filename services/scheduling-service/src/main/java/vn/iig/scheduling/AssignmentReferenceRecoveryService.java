@@ -29,9 +29,12 @@ public class AssignmentReferenceRecoveryService {
         // Never recover under concurrent, uncontrolled legacy Core writes.
         core.requireCoreWriterQuiesced();
         var event=outbox.unresolvedEvent(eventId);
-        if(!"STAFF".equals(event.sourceType()) || !"UPSERT".equals(event.eventKind()))
+        boolean staff="STAFF".equals(event.sourceType());
+        boolean teacher="TEACHING".equals(event.sourceType()) &&
+            "ASSIGN_TEACHER".equals(event.operation()) && event.revision()==1;
+        if((!staff && !teacher) || !"UPSERT".equals(event.eventKind()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Only independent standalone staff events can be reconciled here");
+                "Only immutable staff or version-1 teacher reference events qualify");
 
         var receipt=core.committedAssignmentReceipt(
             event.sourceType(),event.scheduleId(),event.eventId());
