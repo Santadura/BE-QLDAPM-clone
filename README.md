@@ -154,6 +154,18 @@ trả bản cache cũ khi Core lỗi. Phần ghi điểm danh và dữ liệu l�
 được chuyển sang Attendance**. Docker smoke kiểm tra quyền CS/ADMIN,
 đối chiếu phản hồi với Core và persistence ở DB mới.
 
+**Attendance Phase 8f-2 — quyền đọc trạng thái:** GET điểm danh hiện
+sử dụng `attendance_teacher_source_records` trong PostgreSQL Attendance
+để xác nhận và trả trường `attendanceStatus`. Core vẫn cung cấp roster
+giáo viên, lớp học và quyền CS hiện hành. Trước khi trả dữ liệu, Attendance
+đồng bộ cho hết các event Core đang chờ, so khớp trạng thái với nguồn
+hiện hành; nếu lệch phiên bản hoặc có lỗi nguồn, trả `503` thay vì
+trả bản snapshot cũ. Smoke sẽ cố tình sửa sai một bản projection trong
+database test để xác minh API từ chối, sau đó phục hồi dữ liệu test.
+
+**PUT điểm danh vẫn ở Core** — chỉ chuyển read source, chưa chuyển
+quyền ghi hoặc dữ liệu tính lương.
+
 **Attendance Event Relay (Phase 8f-1):** Core đã có outbox giao dịch
 `teacher_attendance_source_outbox` ghi sự kiện mỗi lần điểm danh giáo viên
 được tạo, sửa hoặc xóa. Attendance service đọc feed qua API nội bộ
