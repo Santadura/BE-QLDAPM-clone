@@ -649,6 +649,26 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-1: generation-fenced Academic session lease and renewal
+
+Before transferring class-linked Scheduling assignments, the Academic
+session lease now permanently binds the *writer generation* of Core's
+`scheduling_assignment_writer_control` to the class/session versions
+and command key. PostgreSQL rejects an INSERT that does not match
+the current QUIESCED generation, even when an operator attempts direct
+SQL. Renewals take a shared lock on that writer-state row; they reject
+inactive Core mode, ABA mode rotations, expired leases, deleted class
+references, changed session/class versions or cancelled lessons. A retry
+with the same command key cannot reuse a lease from a retired generation.
+
+The explicit 8g migration initializes older leases with an invalid
+generation 0 rather than silently upgrading ambiguous in-flight work.
+The existing five-minute expiry and SQL mutation fences remain. Public
+Core/Gateway assignment writes are unchanged; no Academic or Attendance
+independent writer is enabled. Scheduling class-linked executor and
+cross-service renewal/compensation are still required to make this
+a complete saga.
+
 ## Phase 8f-10: independent Payroll teacher attendance history projection
 
 Attendance now exports a bounded, private, Payroll-key-protected

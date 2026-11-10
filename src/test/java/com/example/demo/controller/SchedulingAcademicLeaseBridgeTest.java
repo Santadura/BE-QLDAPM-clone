@@ -23,6 +23,18 @@ class SchedulingAcademicLeaseBridgeTest {
         new SchedulingAcademicLeaseBridge.Request("class-1","lesson-1",3,7,"command-1");
 
     @SuppressWarnings({"rawtypes","unchecked"})
+    private void writerMode(String name,long generation) {
+        when(db.queryForObject(startsWith("SELECT writer_mode,writer_generation"),
+            any(RowMapper.class))).thenAnswer(invocation -> {
+                RowMapper mapper=invocation.getArgument(1);
+                var rs=mock(java.sql.ResultSet.class);
+                when(rs.getString(1)).thenReturn(name);
+                when(rs.getLong(2)).thenReturn(generation);
+                return mapper.mapRow(rs,0);
+            });
+    }
+
+    @SuppressWarnings({"rawtypes","unchecked"})
     private void classAndLesson(long cv,long sv,String status,String lessonStatus)
             throws Exception {
         when(db.query(contains("FROM classes WHERE class_id=? FOR UPDATE"),
@@ -59,8 +71,7 @@ class SchedulingAcademicLeaseBridgeTest {
     }
 
     @Test void normalCoreWriterModeCannotLeaseAcademicData() {
-        when(db.queryForObject(contains("SELECT writer_mode"),eq(String.class)))
-            .thenReturn("CORE");
+        writerMode("CORE",2);
         assertEquals(HttpStatus.CONFLICT,
             assertThrows(ResponseStatusException.class,
                 ()->bridge.reserve("trusted-academic-key",request)).getStatusCode());
@@ -68,8 +79,7 @@ class SchedulingAcademicLeaseBridgeTest {
     }
 
     @Test void changedSessionVersionRefusesReservationWithoutInserting() throws Exception {
-        when(db.queryForObject(contains("SELECT writer_mode"),eq(String.class)))
-            .thenReturn("QUIESCED");
+        writerMode("QUIESCED",2);
         classAndLesson(3,8,"READY","PLANNED");
         assertEquals(HttpStatus.CONFLICT,
             assertThrows(ResponseStatusException.class,
@@ -96,10 +106,11 @@ class SchedulingAcademicLeaseBridgeTest {
 
     @Test void lostResponseReplayGetsSameAcademicLeaseWithoutSecondInsert()
             throws Exception {
-        when(db.queryForObject(contains("SELECT writer_mode"),eq(String.class)))
-            .thenReturn("QUIESCED");
+        writerMode("QUIESCED",2);
         classAndLesson(3,7,"RUNNING","PLANNED");
         existingCommandLease(3,7);
+        when(db.queryForObject(startsWith("SELECT expected_writer_generation"),
+            eq(Long.class),eq("lease-already-created"))).thenReturn(2L);
         var duplicate=bridge.reserve("trusted-academic-key",request);
         assertEquals("lease-already-created",duplicate.leaseId());
         verify(db,never()).update(startsWith("INSERT INTO scheduling_academic_session_leases"),
@@ -107,8 +118,7 @@ class SchedulingAcademicLeaseBridgeTest {
     }
 
     @Test void commandKeyCannotSilentlyReuseOldAcademicVersions() throws Exception {
-        when(db.queryForObject(contains("SELECT writer_mode"),eq(String.class)))
-            .thenReturn("QUIESCED");
+        writerMode("QUIESCED",2);
         classAndLesson(3,7,"READY","PLANNED");
         existingCommandLease(3,6);
         assertEquals(HttpStatus.CONFLICT,
@@ -117,8 +127,7 @@ class SchedulingAcademicLeaseBridgeTest {
     }
 
     @Test void concurrentActiveAcademicLeaseConflicts() throws Exception {
-        when(db.queryForObject(contains("SELECT writer_mode"),eq(String.class)))
-            .thenReturn("QUIESCED");
+        writerMode("QUIESCED",2);
         classAndLesson(3,7,"RUNNING","PLANNED");
         when(db.queryForObject(contains("SELECT count(*) FROM scheduling_academic_session_leases"),
             eq(Long.class),eq("lesson-1"))).thenReturn(1L);
@@ -128,8 +137,7 @@ class SchedulingAcademicLeaseBridgeTest {
     }
 
     @Test void leaseCanBeCreatedAndReleasedWithExactAcademicVersions() throws Exception {
-        when(db.queryForObject(contains("SELECT writer_mode"),eq(String.class)))
-            .thenReturn("QUIESCED");
+        writerMode("QUIESCED",2);
         classAndLesson(3,7,"READY","PLANNED");
         when(db.queryForObject(contains("SELECT count(*) FROM scheduling_academic_session_leases"),
             eq(Long.class),eq("lesson-1"))).thenReturn(0L);
@@ -146,9 +154,65 @@ class SchedulingAcademicLeaseBridgeTest {
             eq(lease.leaseId()));
     }
 
-    @Test void expiredLeaseCannotBeRenewed() {
+    @Test void retiredWriterGenerationCannotReuseAnOldLease() throws Exception {
+        writerMode("QUIESCED",4);
+        classAndLesson(3,7,"READY","PLANNED");
+        existingCommandLease(3,7);
+        when(db.queryForObject(startsWith("SELECT expected_writer_generation"),
+            eq(Long.class),eq("lease-already-created"))).thenReturn(2L);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.reserve("trusted-academic-key",request)).getStatusCode());
+    }
+
+    @Test void expiredOrChangedWriterGenerationCannotRenewAnAcademicLease() {
+        writerMode("QUIESCED",4);
         when(db.query(startsWith("SELECT l.class_id,l.class_session_id"),
-            any(RowMapper.class),eq("lease-expired"))).thenReturn(List.of());
+            any(RowMapper.class),eq("lease-stale"),eq(4L))).thenReturn(List.of());
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.renew("trusted-academic-key","lease-stale")).getStatusCode());
+        verify(db,never()).update(startsWith("UPDATE scheduling_academic_session_leases"),
+            any(Object[].class));
+    }
+
+    @Test void resumedCoreWriterRefusesRenewalWithoutReadingAcademicSession() {
+        writerMode("CORE",5);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.renew("trusted-academic-key","lease-1")).getStatusCode());
+        verify(db,never()).query(startsWith("SELECT l.class_id"),
+            any(RowMapper.class),any(Object[].class));
+    }
+
+    @SuppressWarnings({"rawtypes","unchecked"})
+    @Test void liveAcademicLeaseRenewsOnlyWithCurrentWriterGeneration() throws Exception {
+        writerMode("QUIESCED",4);
+        when(db.query(startsWith("SELECT l.class_id,l.class_session_id"),
+            any(RowMapper.class),eq("lease-live"),eq(4L))).thenAnswer(invocation -> {
+                RowMapper mapper=invocation.getArgument(1);
+                var rs=mock(java.sql.ResultSet.class);
+                when(rs.getString(1)).thenReturn("class-1");
+                when(rs.getString(2)).thenReturn("lesson-1");
+                when(rs.getLong(3)).thenReturn(3L);
+                when(rs.getLong(4)).thenReturn(7L);
+                when(rs.getTimestamp(5)).thenReturn(
+                    Timestamp.from(Instant.parse("2027-02-11T09:00:00Z")));
+                return List.of(mapper.mapRow(rs,0));
+            });
+        when(db.queryForObject(startsWith("SELECT expires_at"),
+            eq(Timestamp.class),eq("lease-live"))).thenReturn(
+                Timestamp.from(Instant.parse("2027-02-11T09:06:00Z")));
+        var result=bridge.renew("trusted-academic-key","lease-live");
+        assertEquals("lease-live",result.leaseId());
+        verify(db).update(startsWith("UPDATE scheduling_academic_session_leases"),
+            eq("lease-live"));
+    }
+
+    @Test void expiredLeaseCannotBeRenewed() {
+        writerMode("QUIESCED",2);
+        when(db.query(startsWith("SELECT l.class_id,l.class_session_id"),
+            any(RowMapper.class),eq("lease-expired"),eq(2L))).thenReturn(List.of());
         assertEquals(HttpStatus.CONFLICT,
             assertThrows(ResponseStatusException.class,
                 ()->bridge.renew("trusted-academic-key","lease-expired")).getStatusCode());
