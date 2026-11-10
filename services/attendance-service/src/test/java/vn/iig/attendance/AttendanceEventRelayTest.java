@@ -42,6 +42,20 @@ class AttendanceEventRelayTest {
         verify(core,times(2)).acknowledge(event);
     }
 
+    @Test void readBarrierRefusesToAssumeAFullBatchMeansCompletion() {
+        when(core.pending(100)).thenReturn(java.util.List.of());
+        when(core.pending(1)).thenReturn(java.util.List.of(event));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,
+            assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                relay::requireCaughtUp).getStatusCode());
+    }
+
+    @Test void readBarrierProvesSourceQueueIsReallyEmpty() {
+        when(core.pending(100)).thenReturn(java.util.List.of());
+        when(core.pending(1)).thenReturn(java.util.List.of());
+        assertDoesNotThrow(relay::requireCaughtUp);
+    }
+
     @Test void relayRemainsDisabledInLegacyCoreOnlyDeployment() {
         new AttendanceEventRelay(core,store,false).tick();
         verifyNoInteractions(core,store);

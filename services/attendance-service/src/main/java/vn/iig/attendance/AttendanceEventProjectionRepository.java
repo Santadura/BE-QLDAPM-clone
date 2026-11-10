@@ -33,6 +33,24 @@ public class AttendanceEventProjectionRepository {
         this.db=db;this.mapper=mapper;
     }
 
+    /**
+     * Attendance's own latest committed source status, including a
+     * tombstone. Null return means no attendance has ever been recorded.
+     * The live Core class roster is still required for CS authorization.
+     */
+    public record AttendanceState(String eventKind,String status) {}
+
+    public AttendanceState stateFor(String scheduleId) {
+        List<AttendanceState> matches=db.query(
+            "SELECT event_kind,payload->>'status' " +
+            "FROM attendance_teacher_source_records WHERE teaching_schedule_id=?",
+            (rs,i)->new AttendanceState(rs.getString(1),rs.getString(2)),
+            scheduleId);
+        if(matches.size()>1)
+            throw new IllegalStateException("Duplicate Attendance source projection");
+        return matches.isEmpty()?null:matches.get(0);
+    }
+
     @Transactional
     public void apply(AttendanceSourceClient.Event event) {
         if(event==null || event.eventId()<1 ||

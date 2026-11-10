@@ -42,7 +42,22 @@ public class AttendanceEventRelay {
         }
     }
 
-    public int drain() {
+    /**
+     * Before using the Attendance-owned read status, prove that ALL Core
+     * source events that were visible when we checked have been imported.
+     * A full batch is not evidence that the feed is empty.
+     */
+    public synchronized void requireCaughtUp() {
+        if(!enabled)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Attendance source projection is disabled");
+        drain();
+        if(!core.pending(1).isEmpty())
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Attendance source relay has more pending changes");
+    }
+
+    public synchronized int drain() {
         if(!enabled) return 0;
         int applied=0;
         for(int round=0;round<25;round++) {
