@@ -2,7 +2,7 @@
 
 ## Status (2026-11-10)
 
-This branch is **migration phase 8f-7 (versioned Academic/Scheduling Attendance command preconditions)**, not
+This branch is **migration phase 8f-8 (Attendance normalized ledger + immutable full history)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,50 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8f-8: normalized independent Attendance ledger and complete immutable history
+
+Attendance PostgreSQL now maintains `attendance_teacher_ledger` as a
+**normalized, write-model-shaped mirror** of every teaching schedule's latest
+source attendance state, retaining `DELETE` tombstones rather than removing
+the last known source version. `attendance_teacher_event_history` stores
+every accepted event with its exact source ID, digest and full payload,
+including timestamps needed to prepare Payroll reference extraction. A
+PostgreSQL trigger rejects UPDATE/DELETE of historical rows.
+
+The Core private `/internal/attendance/events/history` feed is bounded,
+service-key protected and keyset-paginated by monotonically increasing
+`event_id`; it includes **previously delivered events**. Attendance uses
+its own `attendance_history_backfill_cursor`, never `MAX(event_id)` of the
+live-delivery read model, so a live event imported ahead of historical
+replay cannot skip older events. Every page replays through the same
+validated `@Transactional` importer: the ledger, immutable history,
+source projection and import receipt are committed locally as a unit.
+The history cursor advances only after the event commit; a crash can
+replay a page without adding duplicate history rows or overwriting a
+newer normalized ledger revision.
+
+Existing databases created before this phase are backfilled from the full
+Core history. Even when an event was previously acknowledged and the old
+`attendance_import_receipts` record exists, the importer materializes
+the new ledger/history without modifying the old receipt or accidentally
+replaying the business write in Core.
+
+`/internal/attendance/verify` and the frozen gate now compare the entire
+Core source history against Attendance's immutable historical rows,
+import receipt digests, event counts/cursor, normalized ledger state,
+and the previous full source projections. Missing events, ghost rows,
+tampered hashes or concurrent source changes fail closed. A bounded
+historical catch-up is required before cutover readiness may report true.
+Docker smoke confirms three old INSERT/UPDATE/DELETE events, tombstones,
+SQL immutability (55000), intentionally corrupted ledger (409), and a
+cursor-reset/replay without duplicate history or lost latest revisions.
+
+**Not a writer cutover:** This normalized ledger is still written ONLY by
+the Core source-event importer. It cannot yet accept independently
+authorized Attendance PUT commands or replace Payroll's Core source facts.
+Separate Academic/Scheduling lease fencing, a one-way transaction owner
+handoff, Payroll integration, and cross-service compensation remain.
 
 ## Phase 8f-7: versioned Academic, teacher and exact-CS support evidence
 

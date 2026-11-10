@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8f-7 (Attendance ingress checks live versioned Academic/teacher/CS context and Core verifies it under transactional locks; Core still writes)**. Do not claim full migration before every
+> Architecture status: **Phase 8f-8 (Attendance independently persists a normalized Core event ledger and immutable complete history; Core still writes)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -187,6 +187,7 @@ service-key-protected projection API after bootstrap.
 - [x] Phase 8f-5: verify all acknowledged Core Attendance events and deletion tombstones against the independent Attendance PostgreSQL by private paged manifest, source-table completeness and pre/post mutation snapshots; mismatches and outages fail closed.
 - [x] Phase 8f-6: PostgreSQL-level Attendance writer freeze coordinated with Scheduling's existing fence; reversible only in a safe order, with monotonic generations and a private frozen full-manifest verification gate.
 - [x] Phase 8f-7: live, actor-scoped Academic lesson + teacher/CS assignment version precondition forwarded from Attendance to Core, revalidated after business locks inside the original attendance/audit/outbox transaction; stale evidence must roll back.
+- [x] Phase 8f-8: Attendance-owned normalized ledger and immutable complete Core event history, including all previously acknowledged events and tombstones; backfill cursors, parity checks and tamper protection are covered by CI.
 - [ ] Attendance PUT cutover: relocate exact-CS, lesson-start and teacher
   assignment guards with a versioned Academic/Scheduling lease plus
   Core/Payroll reference projection and safe handback.

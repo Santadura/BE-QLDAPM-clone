@@ -478,6 +478,69 @@ printf '%s' "$verified_attendance" | python3 -c \
   'import json,sys; assert json.load(sys.stdin)["ready"] is True'
 echo "PASS: Attendance manifest fails closed on tampering, ghost data and unauthorized access"
 
+# Phase 8f-8: Attendance owns an independent normalized teacher attendance
+# ledger and an immutable, complete historical event timeline. Core is still
+# the writer; do not count the mirror as an independent business write.
+core_event_count="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM teacher_attendance_source_outbox" | tr -d '[:space:]')"
+core_latest_count="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(DISTINCT teaching_schedule_id) FROM teacher_attendance_source_outbox" | tr -d '[:space:]')"
+local_history_count="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT count(*) FROM attendance_teacher_event_history" | tr -d '[:space:]')"
+local_ledger_count="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT count(*) FROM attendance_teacher_ledger" | tr -d '[:space:]')"
+local_receipt_count="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT count(*) FROM attendance_import_receipts" | tr -d '[:space:]')"
+test "$core_event_count" = "$local_history_count" && \
+  test "$core_event_count" = "$local_receipt_count" && \
+  test "$core_latest_count" = "$local_ledger_count" || {
+  echo "Attendance ledger did not reconstruct complete Core source event history"; exit 1
+}
+tombstone_ledger="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT count(*) FROM attendance_teacher_ledger WHERE teaching_schedule_id='teaching-001' AND event_kind='DELETE' AND status IS NULL AND attendance_id IS NULL AND recorded_by IS NULL" | tr -d '[:space:]')"
+test "$tombstone_ledger" = "1" || {
+  echo "Attendance normalized writer-ready ledger lost a deletion tombstone"; exit 1
+}
+historical_changes="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT count(*) FROM attendance_teacher_event_history WHERE source_payload->>'attendance_id'='${attendance_fixture}'" | tr -d '[:space:]')"
+test "$historical_changes" = "3" || {
+  echo "Attendance immutable history lost an insert, update or delete"; exit 1
+}
+# History is append-only at the actual database layer; a reader must
+# never be allowed to forge payroll evidence by rewriting old events.
+history_mutation="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance \
+  -v ON_ERROR_STOP=1 -v VERBOSITY=verbose \
+  -c "UPDATE attendance_teacher_event_history SET payload_hash='f'::text WHERE event_id=(SELECT MIN(event_id) FROM attendance_teacher_event_history)" 2>&1 || true)"
+if ! printf '%s' "$history_mutation" | grep -q '55000'; then
+  echo "Attendance historical evidence was mutable at PostgreSQL level"; exit 1
+fi
+# Ledger parity MUST detect local corruption even though the Core pending
+# event queue is empty. Restore only the disposable mirror after 409.
+ledger_digest="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT source_hash FROM attendance_teacher_ledger WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+"${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "UPDATE attendance_teacher_ledger SET source_hash=repeat('f',64) WHERE teaching_schedule_id='teaching-001'"
+invalid_report="$("${COMPOSE[@]}" exec -T attendance-postgres wget -S -O /dev/null \
+  --header "X-Internal-Key: ${attendance_private_key}" "$attendance_verify_url" 2>&1 || true)"
+if ! printf '%s' "$invalid_report" | grep -Eq 'HTTP/[0-9.]+ 409|409 Conflict'; then
+  echo "Attendance full parity accepted a corrupted normalized ledger"; exit 1
+fi
+"${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "UPDATE attendance_teacher_ledger SET source_hash='${ledger_digest}' WHERE teaching_schedule_id='teaching-001'"
+# Deliberately reset the SEPARATE backfill cursor to simulate a restart
+# during historic replay after all new live events were already imported.
+"${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "UPDATE attendance_history_backfill_cursor SET last_event_id=0 WHERE singleton=TRUE"
+verified_attendance="$(verify_attendance)"
+printf '%s' "$verified_attendance" | python3 -c \
+  'import json,sys; r=json.load(sys.stdin); assert r["ready"] is True and r["state"]=="READY",r'
+replay_count="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT count(*) FROM attendance_teacher_event_history" | tr -d '[:space:]')"
+test "$replay_count" = "$core_event_count" || {
+  echo "Historical Core replay duplicated immutable Attendance events"; exit 1
+}
+echo "PASS: independent Attendance ledger/history, tombstones, immutable events, tamper detection and restart-safe backfill"
+
 # Phase 8f-6: write-mode coordination with Scheduling. The normal live
 # parity endpoint may return READY while Core is still writable; frozen
 # verification MUST not do so until BOTH existing writer controls are held.
