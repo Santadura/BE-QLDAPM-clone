@@ -110,6 +110,29 @@ public class AttendanceEventProjectionRepository {
                 "Attendance history cursor failed to advance");
     }
 
+    /**
+     * Payroll reference evidence contains ONLY source status and provenance:
+     * no Payroll rates, no PII and no externally writable fields. A DELETE
+     * tombstone remains visible so it cannot be mistaken for a paid lesson.
+     */
+    public record PayrollEvidence(String teachingScheduleId,String eventKind,
+                                  String status,long sourceEventId,String sourceHash) {}
+
+    public List<PayrollEvidence> payrollEvidence(List<String> scheduleIds) {
+        if(scheduleIds==null || scheduleIds.isEmpty() || scheduleIds.size()>100)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Invalid Attendance evidence batch size");
+        String placeholders=String.join(",",java.util.Collections.nCopies(
+            scheduleIds.size(),"?"));
+        return db.query(
+            "SELECT teaching_schedule_id,event_kind,status,source_event_id,source_hash " +
+            "FROM attendance_teacher_ledger WHERE teaching_schedule_id IN (" +
+            placeholders + ") ORDER BY teaching_schedule_id",
+            (rs,i)->new PayrollEvidence(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getLong(4),rs.getString(5)),
+            scheduleIds.toArray());
+    }
+
     public long ledgerRowCount() {
         Long count=db.queryForObject(
             "SELECT COUNT(*) FROM attendance_teacher_ledger",Long.class);

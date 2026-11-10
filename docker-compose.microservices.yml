@@ -366,6 +366,7 @@ services:
       ATTENDANCE_DB_USERNAME: iig_attendance
       ATTENDANCE_DB_PASSWORD: ${ATTENDANCE_DB_PASSWORD:-local-dev-attendance-password}
       ATTENDANCE_INTERNAL_API_KEY: ${ATTENDANCE_INTERNAL_API_KEY:-local-dev-attendance-key-change-before-deployment}
+      PAYROLL_INTERNAL_API_KEY: ${PAYROLL_INTERNAL_API_KEY:-local-dev-payroll-key-change-before-deployment}
       ATTENDANCE_SOURCE_RELAY_ENABLED: ${ATTENDANCE_SOURCE_RELAY_ENABLED:-true}
       ATTENDANCE_WRITE_GATEWAY_ENABLED: "true"
       CORE_INTERNAL_URL: http://backend:8081

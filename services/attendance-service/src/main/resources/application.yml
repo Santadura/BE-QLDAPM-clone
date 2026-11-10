@@ -15,6 +15,9 @@ iig:
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${ATTENDANCE_INTERNAL_API_KEY:}
+  payroll:
+    # A distinct Payroll service key; never reuse Attendance's Core key.
+    evidence-key: ${PAYROLL_INTERNAL_API_KEY:}
   attendance:
     source-relay-enabled: ${ATTENDANCE_SOURCE_RELAY_ENABLED:false}
     # Public PUT ingress is opt-in; Core remains the transactional writer.
