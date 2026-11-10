@@ -32,6 +32,75 @@ public class TeacherAttendanceSourceBridge {
     public record AckRequest(List<Ack> events) {}
     public record AckReceipt(int confirmed) {}
 
+    /**
+     * Complete snapshot, including previously acknowledged source events and
+     * deletion tombstones. A drained incremental feed ALONE cannot prove
+     * readiness to transfer attendance write ownership.
+     */
+    public record ManifestSummary(long liveRows,long trackedLiveRows,
+                                  long sourceRows,long eventCount,long maxEventId,
+                                  long pendingEvents,long divergentRows) {}
+    public record ManifestRow(long eventId,String teachingScheduleId,
+                              String eventKind,String payloadJson,boolean sourceMatches) {}
+
+    @GetMapping("/manifest/summary")
+    @Transactional(readOnly=true)
+    public ManifestSummary manifestSummary(
+            @RequestHeader(value="X-Internal-Key",required=false) String key) {
+        authenticate(key);
+        return db.queryForObject(
+            "SELECT " +
+            "(SELECT COUNT(*) FROM teacher_session_attendance)," +
+            "(SELECT COUNT(*) FROM teacher_session_attendance a WHERE EXISTS " +
+            " (SELECT 1 FROM teacher_attendance_source_outbox e " +
+            "  WHERE e.teaching_schedule_id=a.teaching_schedule_id))," +
+            "(SELECT COUNT(DISTINCT teaching_schedule_id) FROM teacher_attendance_source_outbox)," +
+            "(SELECT COUNT(*) FROM teacher_attendance_source_outbox)," +
+            "(SELECT COALESCE(MAX(event_id),0) FROM teacher_attendance_source_outbox)," +
+            "(SELECT COUNT(*) FROM teacher_attendance_source_outbox WHERE delivered_at IS NULL)," +
+            "(SELECT COUNT(*) FROM (" +
+            " SELECT DISTINCT ON (teaching_schedule_id) " +
+            " teaching_schedule_id,event_kind,payload " +
+            " FROM teacher_attendance_source_outbox " +
+            " ORDER BY teaching_schedule_id,event_id DESC) newest " +
+            " LEFT JOIN teacher_session_attendance a ON " +
+            " a.teaching_schedule_id=newest.teaching_schedule_id " +
+            " WHERE (newest.event_kind='UPSERT' AND " +
+            " (a.teaching_schedule_id IS NULL OR newest.payload IS DISTINCT FROM to_jsonb(a))) " +
+            " OR (newest.event_kind='DELETE' AND a.teaching_schedule_id IS NOT NULL))",
+            (rs,i)->new ManifestSummary(
+                rs.getLong(1),rs.getLong(2),rs.getLong(3),rs.getLong(4),
+                rs.getLong(5),rs.getLong(6),rs.getLong(7)));
+    }
+
+    @GetMapping("/manifest")
+    @Transactional(readOnly=true)
+    public List<ManifestRow> manifest(
+            @RequestHeader(value="X-Internal-Key",required=false) String key,
+            @RequestParam(defaultValue="") String after,
+            @RequestParam(defaultValue="250") int limit) {
+        authenticate(key);
+        if(after==null || after.length()>50 || limit<1 || limit>250)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Invalid Attendance manifest cursor or page size");
+        return db.query(
+            "SELECT newest.event_id,newest.teaching_schedule_id,newest.event_kind," +
+            " newest.payload::text,CASE " +
+            " WHEN newest.event_kind='UPSERT' THEN " +
+            " (a.teaching_schedule_id IS NOT NULL AND newest.payload=to_jsonb(a)) " +
+            " ELSE a.teaching_schedule_id IS NULL END AS source_matches " +
+            " FROM (SELECT DISTINCT ON (teaching_schedule_id) " +
+            " event_id,teaching_schedule_id,event_kind,payload " +
+            " FROM teacher_attendance_source_outbox " +
+            " WHERE teaching_schedule_id>? " +
+            " ORDER BY teaching_schedule_id,event_id DESC LIMIT ?) newest " +
+            " LEFT JOIN teacher_session_attendance a ON " +
+            " a.teaching_schedule_id=newest.teaching_schedule_id " +
+            " ORDER BY newest.teaching_schedule_id",
+            (rs,i)->new ManifestRow(rs.getLong(1),rs.getString(2),
+                rs.getString(3),rs.getString(4),rs.getBoolean(5)),after,limit);
+    }
+
     private final JdbcTemplate db;
     private final byte[] secret;
 

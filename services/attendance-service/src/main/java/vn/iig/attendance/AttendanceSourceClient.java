@@ -19,6 +19,12 @@ public class AttendanceSourceClient {
     public record Ack(long eventId,String payloadHash) {}
     public record AckRequest(List<Ack> events) {}
     public record AckReceipt(int confirmed) {}
+
+    public record ManifestSummary(long liveRows,long trackedLiveRows,
+                                  long sourceRows,long eventCount,long maxEventId,
+                                  long pendingEvents,long divergentRows) {}
+    public record ManifestRow(long eventId,String teachingScheduleId,
+                              String eventKind,String payloadJson,boolean sourceMatches) {}
     private final RestClient client;
     private final String secret;
 
@@ -33,6 +39,43 @@ public class AttendanceSourceClient {
         factory.setReadTimeout(8000);
         this.client=RestClient.builder().baseUrl(coreUrl)
             .requestFactory(factory).build();
+    }
+
+
+    public ManifestSummary manifestSummary() {
+        try {
+            ManifestSummary summary=client.get()
+                .uri("/internal/attendance/events/manifest/summary")
+                .header("X-Internal-Key",secret)
+                .retrieve().body(ManifestSummary.class);
+            if(summary==null || summary.liveRows()<0 || summary.sourceRows()<0 ||
+                    summary.trackedLiveRows()<0 || summary.eventCount()<0 ||
+                    summary.maxEventId()<0 || summary.pendingEvents()<0 ||
+                    summary.divergentRows()<0)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Invalid Core Attendance manifest summary");
+            return summary;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core Attendance manifest unavailable",ex);
+        }
+    }
+
+    public List<ManifestRow> manifest(String after,int limit) {
+        try {
+            ManifestRow[] rows=client.get()
+                .uri(uri->uri.path("/internal/attendance/events/manifest")
+                    .queryParam("after",after).queryParam("limit",limit).build())
+                .header("X-Internal-Key",secret)
+                .retrieve().body(ManifestRow[].class);
+            if(rows==null || rows.length>limit)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Invalid Core Attendance manifest page");
+            return Arrays.asList(rows);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core Attendance manifest unavailable",ex);
+        }
     }
 
     public List<Event> pending(int limit) {

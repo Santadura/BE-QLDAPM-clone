@@ -51,6 +51,42 @@ public class AttendanceEventProjectionRepository {
         return matches.isEmpty()?null:matches.get(0);
     }
 
+
+    public long projectedRowCount() {
+        Long rows=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_teacher_source_records",Long.class);
+        if(rows==null || rows<0)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Attendance projection count unavailable");
+        return rows;
+    }
+
+    /**
+     * Compare complete versioned JSON, not merely the FE attendance status.
+     * Deleted rows are retained as tombstones and must match exactly.
+     */
+    public boolean matchesManifest(AttendanceSourceClient.ManifestRow expected) {
+        record Existing(long eventId,String kind,String payloadJson) {}
+        List<Existing> stored=db.query(
+            "SELECT source_event_id,event_kind,payload::text " +
+            "FROM attendance_teacher_source_records WHERE teaching_schedule_id=?",
+            (rs,i)->new Existing(rs.getLong(1),rs.getString(2),rs.getString(3)),
+            expected.teachingScheduleId());
+        if(stored.size()!=1) return false;
+        Existing actual=stored.get(0);
+        if(actual.eventId()!=expected.eventId() ||
+                !actual.kind().equals(expected.eventKind())) return false;
+        try {
+            JsonNode left=mapper.readTree(actual.payloadJson());
+            JsonNode right=mapper.readTree(expected.payloadJson());
+            return left!=null && left.isObject() && left.equals(right)
+                && expected.teachingScheduleId().equals(
+                    left.path("teaching_schedule_id").asText());
+        } catch(Exception ex) {
+            return false;
+        }
+    }
+
     @Transactional
     public void apply(AttendanceSourceClient.Event event) {
         if(event==null || event.eventId()<1 ||
