@@ -91,18 +91,10 @@ CREATE TABLE IF NOT EXISTS attendance_teacher_event_history (
 CREATE INDEX IF NOT EXISTS idx_attendance_history_schedule
   ON attendance_teacher_event_history(teaching_schedule_id,event_id);
 
-CREATE OR REPLACE FUNCTION iig_attendance_block_history_mutations()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-  RAISE EXCEPTION 'Attendance historical events are immutable'
-    USING ERRCODE='55000';
-END;
-$$;
-DROP TRIGGER IF EXISTS trg_iig_attendance_immutable_history
-  ON attendance_teacher_event_history;
-CREATE TRIGGER trg_iig_attendance_immutable_history
-  BEFORE UPDATE OR DELETE ON attendance_teacher_event_history
-  FOR EACH ROW EXECUTE FUNCTION iig_attendance_block_history_mutations();
+-- Spring's schema.sql initializer separates statements at semicolons,
+-- including those inside PostgreSQL PL/pgSQL dollar quotes. The complete
+-- function and trigger are installed from one JDBC statement each by
+-- AttendanceHistoryImmutability on application startup (fail-closed).
 
 -- A separate HISTORY cursor is mandatory: MAX(event_id) of live deliveries
 -- can skip old events when live relay commits newer events first.
