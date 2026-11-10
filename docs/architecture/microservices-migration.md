@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8f-1 (Core Attendance outbox to independent read source)**, not
+This branch is **migration phase 8f-2 (Attendance-owned status reads with Core event barrier)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,30 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8f-2: independently owned teacher-attendance status reads
+
+Attendance now uses its own `attendance_teacher_source_records` to
+resolve the FE `attendanceStatus` field. The Core role-scoped GET still
+returns the live teaching/session roster and enforces the assigned-CS or
+managing-CS class visibility. Before serving the roster, Attendance
+requires its private Core event feed to be **fully drained**, including
+checking that a final short/empty batch is really empty. It then verifies
+that the current Core status equals the locally imported Attendance
+status; on success it emits the Attendance-owned status with the existing
+FE JSON shape and saves the scoped read snapshot.
+
+A write racing between Core roster lookup and the relay barrier triggers
+one fresh read+barrier retry. Persistent mismatch, source outage, or an
+unacknowledged event causes HTTP 503, never a stale attendance result.
+Delete tombstones are interpreted as `null` attendance status. The Docker
+smoke asserts PRESENT/LATE/null values after real source events and
+deliberately corrupts a disposable Attendance projection to verify
+fail-closed behavior before restoring it.
+
+This does NOT make the class roster, lesson facts, role checks or teacher
+attendance PUT independently owned. They remain Core dependencies until
+the fenced Attendance writer saga and Payroll evidence handoff exist.
 
 ## Phase 8f-1: durable Core-to-Attendance write-event replication
 
