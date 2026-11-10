@@ -174,7 +174,9 @@ public class SchedulingCoreClient {
             AssignmentDomainOutboxRepository.Event event) {
         try {
             AssignmentReferenceReceipt result=client.post()
-                .uri("/internal/scheduling/assignments/reference")
+                .uri("TEACHING".equals(event.sourceType()) ?
+                    "/internal/scheduling/assignments/reference/teaching" :
+                    "/internal/scheduling/assignments/reference")
                 .header("X-Internal-Key",key)
                 .body(new AssignmentReferenceEnvelope(
                     event.eventId(),event.actorUsername(),event.operation(),

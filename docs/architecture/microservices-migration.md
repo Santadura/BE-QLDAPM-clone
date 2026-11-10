@@ -649,6 +649,31 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-6: narrow Core TEACHING reference receipt boundary (OFF)
+
+Core now has a separate, private, opt-in TEACHING reference receiver at
+`/internal/scheduling/assignments/reference/teaching`. It accepts ONLY
+revision-1 ASSIGN_TEACHER UPSERT events with immutable SHA-256 payload
+digests and the exact actor/command-scoped Academic lease from 8g-1.
+It verifies Core writer QUIESCED plus its generation, live TC and teacher,
+an independently admitted PENDING TC writer claim, the exact planned
+class/session status, versions, date and time, and Core's latest committed
+teacher/class overlap rules. The new Teaching reference, latest receipt,
+immutable per-event provenance and claim confirmation commit in a
+**single Core PostgreSQL transaction**, with the ordinary Core-to-
+Scheduling event feed suppressed for this Scheduling-origin row.
+
+The Scheduling relay now distinguishes STAFF vs TEACHING source type:
+the existing CS/Sale receiver remains unchanged. Lost responses are
+recoverable by exactly matching the original Core immutable TEACHING
+receipt, not by reconstructing or blindly duplicating the assignment.
+
+**This is not an enabled writer cutover.** The new receiver is OFF unless
+`SCHEDULING_TEACHER_REFERENCE_WRITES_ENABLED=true`; the independent
+TEACHING executor, live worker/Academic lease renewal during relay,
+financial evidence propagation, compensation/handoff and public Gateway
+switch are still unfinished. Do NOT enable the flag on a normal stack.
+
 ## Phase 8g-5: Core admission for future TC-owned teacher assignment writes
 
 The Core durable Scheduling claim bridge now accepts

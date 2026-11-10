@@ -49,6 +49,9 @@ iig:
     assignment-relay-enabled: ${SCHEDULING_ASSIGNMENT_RELAY_ENABLED:false}
     # Strictly opt-in after approved cutover; internal Core reference receiver only.
     reference-writes-enabled: ${SCHEDULING_REFERENCE_WRITES_ENABLED:false}
+    # Private TEACHING mirror; do not enable before a verified Scheduling
+    # teacher command writer and finalized Attendance/Payroll reconciliation.
+    teacher-reference-writes-enabled: ${SCHEDULING_TEACHER_REFERENCE_WRITES_ENABLED:false}
     external-availability: ${SCHEDULING_AVAILABILITY_EXTERNAL:false}
     url: ${SCHEDULING_SERVICE_URL:http://localhost:8098}
     internal-key: ${SCHEDULING_INTERNAL_API_KEY:}
