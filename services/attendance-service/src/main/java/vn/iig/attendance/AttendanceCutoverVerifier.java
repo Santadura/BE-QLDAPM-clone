@@ -66,8 +66,9 @@ public class AttendanceCutoverVerifier {
         // Never serve a successful report while the committed Core feed is
         // backlogged. Outages propagate 503, not false readiness.
         relay.requireCaughtUp();
+        relay.requireHistoryCaughtUp();
         var before=source.manifestSummary();
-        if(before.sourceRows()>PAGE_SIZE*MAX_PAGES)
+        if(before.eventCount()>25000 || before.sourceRows()>PAGE_SIZE*MAX_PAGES)
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Attendance full manifest exceeds bounded verification capacity");
 
@@ -84,6 +85,42 @@ public class AttendanceCutoverVerifier {
         if(before.pendingEvents()!=0) {
             errors++;
             add(mismatchKeys,"CORE_PENDING_EVENTS");
+        }
+        if(projection.historicalEventCount()!=before.eventCount() ||
+                projection.historyCursor()<before.maxEventId() ||
+                projection.historicalReceiptDivergence()!=0) {
+            errors++;
+            add(mismatchKeys,"INCOMPLETE_OR_DIVERGENT_ATTENDANCE_EVENT_HISTORY");
+        }
+
+        // Compare EVERY original source event with the independent immutable
+        // event history, not only the newest event for each schedule.
+        long historicalVerified=0;
+        long lastHistoricalId=0;
+        for(int page=0;page<125 && historicalVerified<before.eventCount();page++) {
+            List<AttendanceSourceClient.Event> batch=source.history(lastHistoricalId,200);
+            if(batch==null || batch.isEmpty() || batch.size()>200)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Core Attendance historical manifest ended unexpectedly");
+            for(var event:batch) {
+                if(event==null || event.eventId()<=lastHistoricalId ||
+                        !projection.matchesHistoricalEvent(event)) {
+                    errors++;
+                    add(mismatchKeys,"ATTENDANCE_EVENT_HISTORY_MISMATCH");
+                }
+                if(event==null || event.eventId()<=lastHistoricalId)
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Invalid Core Attendance historical manifest order");
+                historicalVerified++;
+                lastHistoricalId=event.eventId();
+                if(historicalVerified>before.eventCount())
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Core Attendance event history grew during verification");
+            }
+        }
+        if(historicalVerified!=before.eventCount()) {
+            errors++;
+            add(mismatchKeys,"INCOMPLETE_ATTENDANCE_HISTORY_MANIFEST");
         }
 
         long verified=0;
@@ -108,7 +145,8 @@ public class AttendanceCutoverVerifier {
                     throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                         "Invalid or duplicate Core Attendance manifest identity");
                 }
-                if(!row.sourceMatches() || !projection.matchesManifest(row)) {
+                if(!row.sourceMatches() || !projection.matchesManifest(row) ||
+                        !projection.matchesLedgerManifest(row)) {
                     errors++;
                     add(mismatchKeys,row.teachingScheduleId());
                 }
@@ -124,7 +162,7 @@ public class AttendanceCutoverVerifier {
             add(mismatchKeys,"INCOMPLETE_SOURCE_MANIFEST");
         }
         long localCount=projection.projectedRowCount();
-        if(localCount!=verified) {
+        if(localCount!=verified || projection.ledgerRowCount()!=verified) {
             errors++;
             add(mismatchKeys,"ATTENDANCE_ORPHAN_OR_MISSING_ROWS");
         }

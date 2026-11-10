@@ -34,6 +34,9 @@ public class AttendanceEventRelay {
         if(!enabled) return;
         try {
             drain();
+            // The historical cursor is separate from the live event feed:
+            // old acknowledged events also belong in our immutable ledger.
+            backfillHistory(5);
         } catch(Exception ex) {
             // Retain pending events in Core: no successful acknowledgement is
             // inferred from a partial batch or a lost HTTP response.
@@ -55,6 +58,45 @@ public class AttendanceEventRelay {
         if(!core.pending(1).isEmpty())
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Attendance source relay has more pending changes");
+    }
+
+    /**
+     * Rehydrate every past Core event, not only undelivered events. Each
+     * record is durably applied before its independent keyset cursor advances,
+     * so interrupted backfills replay safely and cannot skip older events
+     * if the live relay imported a newer source ID first.
+     */
+    public synchronized void requireHistoryCaughtUp() {
+        if(!enabled)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Attendance historical importer is disabled");
+        if(!backfillHistory(250))
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Attendance historical import exceeds bounded catch-up capacity");
+    }
+
+    public synchronized boolean backfillHistory(int pages) {
+        if(!enabled)return false;
+        if(pages<1 || pages>250)throw new IllegalArgumentException(
+            "Attendance historical backfill must remain bounded");
+        long cursor=projection.historyCursor();
+        for(int page=0;page<pages;page++) {
+            List<AttendanceSourceClient.Event> batch=core.history(cursor,100);
+            if(batch==null || batch.size()>100)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Invalid Core Attendance historical batch");
+            if(batch.isEmpty())return true;
+            for(var event:batch) {
+                if(event==null || event.eventId()<=cursor)
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Core Attendance historical cursor is not monotonic");
+                projection.apply(event);
+                projection.advanceHistoryCursor(event.eventId());
+                cursor=event.eventId();
+            }
+            if(batch.size()<100)return true;
+        }
+        return false;
     }
 
     public synchronized int drain() {
