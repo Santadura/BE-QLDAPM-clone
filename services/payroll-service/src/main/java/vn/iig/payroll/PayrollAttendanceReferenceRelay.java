@@ -75,7 +75,8 @@ public class PayrollAttendanceReferenceRelay {
                         verified.attendanceGeneration()!=first.attendanceGeneration() ||
                         verified.schedulingGeneration()!=first.schedulingGeneration() ||
                         reference.cursor()<verified.sourceRevision() ||
-                        reference.eventCount()!=verified.sourceEventCount())
+                        reference.eventCount()!=verified.sourceEventCount() ||
+                        reference.divergentLatestRows()!=0)
                     throw new ResponseStatusException(HttpStatus.CONFLICT,
                         "Payroll teacher evidence history not yet fully reconciled");
                 return true;

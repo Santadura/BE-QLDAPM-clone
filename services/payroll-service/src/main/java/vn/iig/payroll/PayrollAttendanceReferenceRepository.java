@@ -39,6 +39,32 @@ public class PayrollAttendanceReferenceRepository {
         return n;
     }
 
+    /**
+     * A source count/cursor alone is NOT proof: compare latest rows with
+     * the complete immutable Payroll event history, including tombstones,
+     * hashes and ghost rows. A corrupted local latest status must block
+     * readiness even if all historical event IDs were imported.
+     */
+    public long divergentLatestRows() {
+        Long count=db.queryForObject(
+            "SELECT COUNT(*) FROM (" +
+            "SELECT DISTINCT ON(teaching_schedule_id) teaching_schedule_id," +
+            "event_id,event_kind,status,source_hash " +
+            "FROM payroll_attendance_reference_events " +
+            "ORDER BY teaching_schedule_id,event_id DESC" +
+            ") historical FULL OUTER JOIN payroll_attendance_reference_latest current " +
+            "USING(teaching_schedule_id) WHERE " +
+            "historical.event_id IS DISTINCT FROM current.event_id OR " +
+            "historical.event_kind IS DISTINCT FROM current.event_kind OR " +
+            "historical.status IS DISTINCT FROM current.status OR " +
+            "historical.source_hash IS DISTINCT FROM current.source_hash",
+            Long.class);
+        if(count==null || count<0)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Payroll Attendance latest/reference parity unavailable");
+        return count;
+    }
+
     public record Reference(String teachingScheduleId,long eventId,
                             String eventKind,String status,String sourceHash) {}
 

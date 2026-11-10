@@ -39,6 +39,7 @@ class PayrollAttendanceReferenceRelayTest {
         order.verify(client).readiness();
         order.verify(repo).cursor();
         order.verify(repo).eventCount();
+        order.verify(repo).divergentLatestRows();
     }
 
     @Test void sourceRevisionChangingBetweenPagesDoesNotAcknowledgeCompletion() {
@@ -69,6 +70,16 @@ class PayrollAttendanceReferenceRelayTest {
         when(repo.eventCount()).thenReturn(1L);
         when(client.history(0,100)).thenReturn(p(2,2,List.of(e(1),e(2))));
         when(client.readiness()).thenReturn(ready(2,2));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,()->relay.poll(5)).getStatusCode());
+    }
+
+    @Test void locallyCorruptedLatestStatusBlocksTheStrongHistoryGate() {
+        when(repo.cursor()).thenReturn(0L,1L);
+        when(repo.eventCount()).thenReturn(1L);
+        when(repo.divergentLatestRows()).thenReturn(1L);
+        when(client.history(0,100)).thenReturn(p(1,1,List.of(e(1))));
+        when(client.readiness()).thenReturn(ready(1,1));
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,()->relay.poll(5)).getStatusCode());
     }
