@@ -36,6 +36,9 @@ logging:
 
 # Disabled in the legacy monolith deployment. Enabled by the microservices stack.
 iig:
+  attendance:
+    bridge-enabled: ${ATTENDANCE_BRIDGE_ENABLED:false}
+    internal-key: ${ATTENDANCE_INTERNAL_API_KEY:}
   academic:
     bridge-enabled: ${ACADEMIC_BRIDGE_ENABLED:false}
     internal-key: ${ACADEMIC_INTERNAL_API_KEY:}

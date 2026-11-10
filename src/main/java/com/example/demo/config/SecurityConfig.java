@@ -60,6 +60,7 @@ public class SecurityConfig {
                     // Academic's revision and snapshot adapters are private;
                     // their controllers validate X-Internal-Key, not browser JWT.
                     .requestMatchers("/internal/academic/**").permitAll()
+                    .requestMatchers("/internal/attendance/**").permitAll()
                     .requestMatchers("/internal/catalog/**").permitAll()
                     .requestMatchers("/internal/identity/**").permitAll()
                     .requestMatchers("/internal/reporting/**").permitAll()

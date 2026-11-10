@@ -685,6 +685,19 @@ model AuditOutboxDelivery {
 }
 
 // Confirmed presence for one teacher assignment in one class lesson.
+// Durable Core-to-Attendance source feed. The full historic event payload
+// is retained even if the original attendance record is later deleted.
+model TeacherAttendanceSourceOutbox {
+  eventId BigInt @id @default(autoincrement()) @map("event_id")
+  teachingScheduleId String @map("teaching_schedule_id") @db.VarChar(50)
+  eventKind String @map("event_kind") @db.VarChar(10)
+  payload Json
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(6)
+
+  @@map("teacher_attendance_source_outbox")
+}
+
 model TeacherSessionAttendance {
   attendanceId String @id @default(cuid()) @map("attendance_id") @db.VarChar(50)
   teachingScheduleId String @unique @map("teaching_schedule_id") @db.VarChar(50)
