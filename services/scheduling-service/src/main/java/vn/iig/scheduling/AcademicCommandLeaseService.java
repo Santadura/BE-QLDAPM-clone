@@ -211,6 +211,56 @@ public class AcademicCommandLeaseService {
         return receipt;
     }
 
+    /**
+     * A Scheduling TEACHING source event has committed locally but not yet
+     * reached Core. The relay may extend ONLY the same unexpired Academic
+     * lease and matching class/session versions. Re-reserving a new lease
+     * after local business commit is forbidden: it could silently authorize
+     * a different lesson and erase the need for audited compensation.
+     */
+    @Transactional
+    public Receipt renewForReference(String actor,String requestKey) {
+        if(actor==null || actor.isBlank() || requestKey==null ||
+                !requestKey.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "A valid actor-scoped pending teacher command is required");
+        List<Command> rows=db.query(
+            "SELECT state,payload::text FROM scheduling_assignment_command_inbox " +
+            "WHERE actor_username=? AND operation='ASSIGN_TEACHER' " +
+            "AND request_key=? FOR UPDATE",
+            (rs,i)->new Command(rs.getString(1),rs.getString(2)),actor,requestKey);
+        if(rows.size()!=1 || !"PENDING_REFERENCE".equals(rows.get(0).state()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Only a locally applied, unconfirmed teacher event may renew a lease");
+        Expected wanted=expected(rows.get(0));
+        List<Claim> current=claims(actor,requestKey);
+        if(current.size()!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Missing durable pending teacher Academic lease");
+        Claim lease=current.get(0);
+        if(!wanted.classId().equals(lease.classId()) ||
+                !wanted.sessionId().equals(lease.sessionId()) ||
+                wanted.classVersion()!=lease.classVersion() ||
+                wanted.sessionVersion()!=lease.sessionVersion() ||
+                lease.expiresAt()==null || !lease.expiresAt().isAfter(Instant.now()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Expired or changed teacher Academic lease needs explicit recovery");
+        Receipt receipt=check(requestKey,wanted,
+            core.renewAcademicSession(lease.leaseId()));
+        if(!lease.leaseId().equals(receipt.leaseId()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Pending teacher event cannot switch to a different Academic lease");
+        int updated=db.update("UPDATE scheduling_academic_command_leases " +
+            "SET expires_at=?,refreshed_at=NOW() WHERE actor_username=? " +
+            "AND operation='ASSIGN_TEACHER' AND request_key=? " +
+            "AND core_lease_id=? AND expires_at>NOW()",
+            Timestamp.from(receipt.expiresAt()),actor,requestKey,lease.leaseId());
+        if(updated!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Pending teacher lease changed during relay renewal");
+        return receipt;
+    }
+
     @Transactional
     public void release(String actor,String requestKey) {
         // A command which locally committed a teacher/scheduling event may

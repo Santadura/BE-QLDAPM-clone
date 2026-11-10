@@ -4,6 +4,7 @@ import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -30,17 +31,28 @@ public class AssignmentReferenceRelay {
     private final AssignmentDomainOutboxRepository outbox;
     private final AssignmentCommandLifecycleService lifecycle;
     private final SchedulingCoreClient core;
+    private final AcademicCommandLeaseService academic;
     private final boolean enabled;
 
+    @Autowired
     public AssignmentReferenceRelay(AssignmentDomainOutboxRepository outbox,
                                     AssignmentCommandLifecycleService lifecycle,
                                     SchedulingCoreClient core,
+                                    AcademicCommandLeaseService academic,
                                     @Value("${iig.scheduling.assignment-reference-relay-enabled:false}")
                                     boolean enabled) {
         this.outbox=outbox;
         this.lifecycle=lifecycle;
         this.core=core;
+        this.academic=academic;
         this.enabled=enabled;
+    }
+
+    /** Existing STAFF-only test fixtures keep the same constructor. */
+    AssignmentReferenceRelay(AssignmentDomainOutboxRepository outbox,
+                             AssignmentCommandLifecycleService lifecycle,
+                             SchedulingCoreClient core,boolean enabled) {
+        this(outbox,lifecycle,core,null,enabled);
     }
 
     @Scheduled(initialDelay=15000,fixedDelay=5000)
@@ -48,6 +60,23 @@ public class AssignmentReferenceRelay {
         if(!enabled) return;
         for(var event:outbox.pending(50)) {
             try {
+                if("TEACHING".equals(event.sourceType()) && academic!=null) {
+                    try {
+                        // Keep the original generation-fenced Academic lease
+                        // alive while its immutable local TEACHING event is
+                        // awaiting Core reference confirmation. Never issue
+                        // a NEW lease for an already-applied source command.
+                        academic.renewForReference(
+                            event.actorUsername(),event.requestKey());
+                    } catch(Exception renewFailure) {
+                        // An HTTP timeout may mean Core already committed
+                        // before the lease expired. Still attempt ONLY the
+                        // original immutable event: Core will acknowledge an
+                        // exact historical receipt or reject a new write.
+                        log.warn("Teacher lease renewal deferred for event {}: {}",
+                            event.eventId(),renewFailure.getClass().getSimpleName());
+                    }
+                }
                 var receipt=core.applyAssignmentReference(event);
                 if(!event.eventId().equals(receipt.eventId()) ||
                     event.revision()!=receipt.revision() ||
