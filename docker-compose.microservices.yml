@@ -40,6 +40,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-key-at-least-256-bits-please}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
       ATTENDANCE_BRIDGE_ENABLED: "true"
+      ATTENDANCE_PUBLIC_WRITE_ENABLED: "false"
       ATTENDANCE_INTERNAL_API_KEY: ${ATTENDANCE_INTERNAL_API_KEY:-local-dev-attendance-key-change-before-deployment}
       ACADEMIC_BRIDGE_ENABLED: "true"
       ACADEMIC_INTERNAL_API_KEY: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}
@@ -366,6 +367,7 @@ services:
       ATTENDANCE_DB_PASSWORD: ${ATTENDANCE_DB_PASSWORD:-local-dev-attendance-password}
       ATTENDANCE_INTERNAL_API_KEY: ${ATTENDANCE_INTERNAL_API_KEY:-local-dev-attendance-key-change-before-deployment}
       ATTENDANCE_SOURCE_RELAY_ENABLED: ${ATTENDANCE_SOURCE_RELAY_ENABLED:-true}
+      ATTENDANCE_WRITE_GATEWAY_ENABLED: "true"
       CORE_INTERNAL_URL: http://backend:8081
     expose:
       - "8100"

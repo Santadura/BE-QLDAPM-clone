@@ -649,6 +649,32 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8f-3: single protected public Attendance PUT ingress (Core still owns writes)
+
+In the opt-in microservices stack, the Gateway sends
+`PUT /api/classes/{classId}/teacher-attendance/{teachingScheduleId}`
+to Attendance Service. It checks the caller's **live** Core JWT and CS role,
+then invokes the private Core Attendance command endpoint with **both**
+the original JWT and the Attendance-only `X-Internal-Key`. Core's JWT filter
+and existing `TeacherSessionAttendanceService.mark` re-check the live
+employee identity, exact assigned CS support shift, planned teacher/lesson,
+lesson start time and transactional class/teacher/CS row locks. Core's direct
+public PUT is explicitly **403** in this Compose; its private command is
+not routed by Gateway. Missing/invalid JWT, wrong role, wrong service key
+and unavailable Core all fail closed; private commands cannot be called
+with the service key alone.
+
+The standalone/legacy Compose keeps its prior direct Core PUT
+(`ATTENDANCE_PUBLIC_WRITE_ENABLED=true`). The Attendance public PUT ingress
+is disabled by default outside the microservices stack. The FE success JSON
+remains unchanged, and Attendance does not connect to Core's PostgreSQL.
+This is **write-ingress fencing, NOT Attendance write-data ownership**:
+the source `teacher_session_attendance` table, source outbox, transaction
+and Payroll evidence still belong to Core. A durable independent Attendance
+command inbox, versioned teacher/CS/session leases, writer-mode handoff,
+idempotent receipts and Payroll compensation/reconciliation are required
+before claiming authoritative Attendance writes.
+
 ## Phase 8f-2: independently owned teacher-attendance status reads
 
 Attendance now uses its own `attendance_teacher_source_records` to

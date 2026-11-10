@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8f-2 (Attendance owns verified status reads; all attendance writes still Core-owned)**. Do not claim full migration before every
+> Architecture status: **Phase 8f-3 (Attendance is the protected public PUT ingress, Core remains the exclusive transactional Attendance writer)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -13,7 +13,7 @@
 | HR salary ranks | **`hr_salary_ranks`, `hr_salary_rank_outbox`** | HR Service owns salary-rank writes; Core `salary_ranks` is a versioned FK reference projection |
 | Academic | `classes`, `lessons`, `students`, `student_targets`, `class_target_requirements`, `class_students`, `class_access_scopes`, `assignments`, `exams`, `student_results`, `class_sessions` | Legacy core |
 | Scheduling availability | **`scheduling_availabilities`, `scheduling_availability_outbox`, `scheduling_availability_reservations`, `scheduling_availability_audit_outbox`** | Independent Scheduling database owns registration, approval, active leases and append-only audit |
-| Scheduling assignment/attendance writes | `teaching_schedules`, `staff_schedules`, `teacher_session_attendance` | Core remains **exclusive write owner**; class lifecycle, CS guard and attendance transactions are not yet distributable |
+| Scheduling assignment/attendance writes | `teaching_schedules`, `staff_schedules`, `teacher_session_attendance` | Core remains **exclusive write owner**. Microservices Gateway forwards attendance PUT to Attendance, which authenticates and privately delegates to the protected Core transaction; this is not a database write cutover |
 | Scheduling assignment read model | **`scheduling_assignment_read_model`** | Scheduling PostgreSQL stores teacher/staff/worker GET snapshots, not authoritative writes |
 | Core assignment relay | `scheduling_assignment_outbox` | Transactional change trigger and versioned HTTP delivery to Scheduling; metadata changes also enqueue updates |
 | Availability reference | `availabilities`, `scheduling_availability_versions` | Core reference projection only; versioned updates and deletion tombstones from Scheduling |

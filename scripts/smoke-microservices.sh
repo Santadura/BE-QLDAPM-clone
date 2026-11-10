@@ -233,6 +233,59 @@ if [ "$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/attendance/eve
 fi
 echo "PASS: Attendance-owned status read stays Core-consistent across INSERT/UPDATE/DELETE, rejects projection drift and confirms immutable receipts"
 
+# Phase 8f-3: Attendance alone accepts the public PUT in microservices mode.
+# Without an assigned exact CS support shift even the managing CS is denied.
+attendance_write="${attendance_api}/teaching-001"
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+  -H 'Content-Type: application/json' -d '{"status":"PRESENT"}' "$attendance_write")" = "401" || {
+  echo "Attendance PUT accepted a missing JWT"; exit 1;
+}
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+  -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
+  -d '{"status":"PRESENT"}' "$attendance_write")" = "403" || {
+  echo "Attendance PUT accepted an ADMIN as recording CS"; exit 1;
+}
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+  -H "Authorization: Bearer ${cs_token}" -H 'Content-Type: application/json' \
+  -d '{"status":"PRESENT"}' "$attendance_write")" = "403" || {
+  echo "Attendance PUT accepted a CS with no exact support shift"; exit 1;
+}
+attendance_support="ms-attendance-cs-${GITHUB_RUN_ID:-local}"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "INSERT INTO staff_schedules(staff_schedule_id,employee_id,class_id,date,start_time,end_time,work_type,status) VALUES('${attendance_support}','cs-001','class-0001','2026-10-06','18:30','20:30','CLASS_SUPPORT','ASSIGNED')"
+write_response="$(curl -fsS -X PUT "$attendance_write" \
+  -H "Authorization: Bearer ${cs_token}" -H 'Content-Type: application/json' \
+  -d '{"status":"PRESENT"}')"
+WRITE_RESPONSE="$write_response" python3 -c \
+  'import json,os; row=json.loads(os.environ["WRITE_RESPONSE"]); assert row["status"]=="PRESENT" and row["teachingScheduleId"]=="teaching-001",row'
+actual_status="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT status FROM teacher_session_attendance WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+test "$actual_status" = "PRESENT" || { echo "Attendance private command did not commit at Core"; exit 1; }
+for i in $(seq 1 60); do
+  observed="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance \
+    -d iig_attendance -tAc "SELECT payload->>'status' FROM attendance_teacher_source_records WHERE teaching_schedule_id='teaching-001' AND event_kind='UPSERT'" | tr -d '[:space:]')"
+  test "$observed" = "PRESENT" && break
+  sleep 2
+done
+test "$observed" = "PRESENT" || { echo "Attendance public write did not replicate its Core outbox"; exit 1; }
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+  -H "Authorization: Bearer ${cs_token}" -H 'Content-Type: application/json' \
+  -d '{"status":"PRESENT"}' "${BASE}/internal/attendance/commands/classes/class-0001/teacher-attendance/teaching-001")" = "404" || {
+  echo "Private Attendance command exposed through public Gateway"; exit 1;
+}
+# Cleanup to leave later Payroll/assignment smoke fixtures unchanged.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+  -c "DELETE FROM teacher_session_attendance WHERE teaching_schedule_id='teaching-001'; DELETE FROM staff_schedules WHERE staff_schedule_id='${attendance_support}'"
+for i in $(seq 1 60); do
+  observed="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance \
+    -d iig_attendance -tAc "SELECT event_kind FROM attendance_teacher_source_records WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+  test "$observed" = "DELETE" && break
+  sleep 2
+done
+test "$observed" = "DELETE" || { echo "Attendance cleanup did not replicate tombstone"; exit 1; }
+echo "PASS: Attendance-only public PUT ingress, live CS authority, private Core command, outbox and cleanup"
+
+
 
 
 

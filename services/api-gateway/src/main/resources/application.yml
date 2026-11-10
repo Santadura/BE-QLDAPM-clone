@@ -51,7 +51,14 @@ spring:
             - Method=GET
         # Teacher attendance GET has its own role-scoped persistence and
         # checks the current Core JWT and CS class access on every request.
-        # PUT /.../teacher-attendance/{teachingScheduleId} remains Core-owned.
+        # The public PUT ingress is Attendance, but the original locked
+        # transaction remains in Core via a service-key + live-JWT command.
+        # The direct Core public PUT is disabled in microservices Compose.
+        - id: attendance-teacher-write
+          uri: ${ATTENDANCE_SERVICE_URI:http://localhost:8100}
+          predicates:
+            - Path=/api/classes/*/teacher-attendance/*
+            - Method=PUT
         - id: attendance-teacher-read
           uri: ${ATTENDANCE_SERVICE_URI:http://localhost:8100}
           predicates:
