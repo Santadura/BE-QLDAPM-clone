@@ -2,7 +2,7 @@
 
 ## Status (2026-11-09)
 
-This branch is **migration phase 8f-2 (Attendance-owned status reads with Core event barrier)**, not
+This branch is **migration phase 8f-4 (Attendance command inbox + transactional Core receipts)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,45 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8f-4: durable two-database Attendance command receipts (NOT writer cutover)
+
+The microservices Attendance PUT accepts an **optional** `Idempotency-Key`
+header (1–128 safe ASCII characters). Existing React clients omitting the key
+retain the original request and response contract, but **cannot safely replay
+an ambiguous write** without a stable key. A client retry must reuse the exact
+original key, actor, class, teaching schedule and requested status; a new
+intentional attendance status change must use a new key.
+
+With a key, Attendance checks the live JWT/CS role, normalizes status and
+records an actor/class/teacher-schedule-scoped `PENDING` command in its
+**own PostgreSQL**. The private call forwards the bearer AND same key. Core
+revalidates active employee CS role, inserts/locks its own command receipt,
+enforces the exact assigned CS shift and existing class/lesson/teacher locks,
+then writes attendance, audit and its durable source outbox in **one Core
+transaction** with the `COMPLETED` outcome receipt. Duplicate same-key
+requests return the identical response without a second attendance update or
+audit event; a changed status with the same key returns HTTP 409. A retry
+of an already completed command is denied if the CS lost their exact
+lesson-support assignment or their account/role is revoked.
+
+Only after Core acknowledges does Attendance change the local inbox to
+`COMMITTED`. If Core completes but HTTP/Attendance crashes before the
+local acknowledgment, the inbox stays `PENDING`; **the caller** retries
+the same key and Core returns its committed receipt. No blind background
+resubmission or cross-database atomicity is claimed. A 503 is preferable to
+fabricating success during Core outage; a local cached receipt cannot bypass
+Core's current authorization. A disposable SQL regression simulates missing
+Attendance completion, validates replay without a second audit/outbox event,
+and checks same-key body conflicts and revoked CS support.
+
+**Still not an independent writer:** Core still owns the true
+`teacher_session_attendance` rows and all attendance, Academic and Payroll
+side effects. Before handing ownership to Attendance, implement an exclusive
+database-level writer-mode cutover, versioned Academic/CS/teaching facts,
+durable outbound Attendance events to Core/Payroll with immutable receipts,
+fenced leases/renewal, compensation and recovery of unresolved commands,
+plus concurrency and full-stack E2E tests.
 
 ## Phase 8f-3: single protected public Attendance PUT ingress (Core still owns writes)
 

@@ -253,14 +253,67 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
 attendance_support="ms-attendance-cs-${GITHUB_RUN_ID:-local}"
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
   -c "INSERT INTO staff_schedules(staff_schedule_id,employee_id,class_id,date,start_time,end_time,work_type,status) VALUES('${attendance_support}','cs-001','class-0001','2026-10-06','18:30','20:30','CLASS_SUPPORT','ASSIGNED')"
+receipt_key="ms-attendance-receipt-${GITHUB_RUN_ID:-local}"
+audit_before="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM audit_logs WHERE action='RECORD_TEACHER_ATTENDANCE_PRESENT' AND entity_id='teaching-001'" | tr -d '[:space:]')"
+source_before="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM teacher_attendance_source_outbox WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
 write_response="$(curl -fsS -X PUT "$attendance_write" \
   -H "Authorization: Bearer ${cs_token}" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: ${receipt_key}" \
   -d '{"status":"PRESENT"}')"
 WRITE_RESPONSE="$write_response" python3 -c \
   'import json,os; row=json.loads(os.environ["WRITE_RESPONSE"]); assert row["status"]=="PRESENT" and row["teachingScheduleId"]=="teaching-001",row'
 actual_status="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
   "SELECT status FROM teacher_session_attendance WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
 test "$actual_status" = "PRESENT" || { echo "Attendance private command did not commit at Core"; exit 1; }
+
+# Same command after a lost response must return the identical Core receipt,
+# not create another attendance update, audit or outbox event.
+duplicate_response="$(curl -fsS -X PUT "$attendance_write" \
+  -H "Authorization: Bearer ${cs_token}" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: ${receipt_key}" \
+  -d '{"status":" present "}')"
+FIRST_RESULT="$write_response" RETRY_RESULT="$duplicate_response" python3 -c \
+  'import json,os; assert json.loads(os.environ["FIRST_RESULT"]) == json.loads(os.environ["RETRY_RESULT"])'
+core_receipts="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM teacher_attendance_command_receipts WHERE actor_username='cs001' AND request_key='${receipt_key}' AND response_payload->>'status'='PRESENT'" | tr -d '[:space:]')"
+local_receipts="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT count(*) FROM attendance_write_command_inbox WHERE actor_username='cs001' AND request_key='${receipt_key}' AND state='COMMITTED' AND response_payload->>'status'='PRESENT'" | tr -d '[:space:]')"
+test "$core_receipts" = "1" && test "$local_receipts" = "1" || {
+  echo "Transactional Core or Attendance command receipt missing"; exit 1;
+}
+audit_after="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM audit_logs WHERE action='RECORD_TEACHER_ATTENDANCE_PRESENT' AND entity_id='teaching-001'" | tr -d '[:space:]')"
+source_after="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM teacher_attendance_source_outbox WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+test "$audit_after" -eq "$((audit_before+1))" && test "$source_after" -eq "$((source_before+1))" || {
+  echo "Duplicate command emitted more than one audit/outbox event"; exit 1;
+}
+conflict_status="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$attendance_write" \
+  -H "Authorization: Bearer ${cs_token}" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: ${receipt_key}" -d '{"status":"ABSENT"}')"
+test "$conflict_status" = "409" || { echo "Changed payload reused Attendance command key: $conflict_status"; exit 1; }
+
+# Simulate the Attendance process losing its local completion acknowledgement
+# after Core already committed. An intact key still recovers via Core's own
+# immutable outcome rather than replaying the attendance write.
+"${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "UPDATE attendance_write_command_inbox SET state='PENDING',response_payload=NULL,completed_at=NULL WHERE actor_username='cs001' AND request_key='${receipt_key}'"
+recovered="$(curl -fsS -X PUT "$attendance_write" \
+  -H "Authorization: Bearer ${cs_token}" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: ${receipt_key}" -d '{"status":"PRESENT"}')"
+FIRST_RESULT="$write_response" RETRY_RESULT="$recovered" python3 -c \
+  'import json,os; assert json.loads(os.environ["FIRST_RESULT"]) == json.loads(os.environ["RETRY_RESULT"])'
+source_recovered="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM teacher_attendance_source_outbox WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+test "$source_recovered" = "$source_after" || {
+  echo "Recovery replayed committed Attendance business write"; exit 1;
+}
+local_recovered="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance -d iig_attendance -tAc \
+  "SELECT state FROM attendance_write_command_inbox WHERE actor_username='cs001' AND request_key='${receipt_key}'" | tr -d '[:space:]')"
+test "$local_recovered" = "COMMITTED" || { echo "PENDING Attendance command was not reconciled"; exit 1; }
+echo "PASS: Attendance/Core idempotent receipts, payload conflict, ambiguous completion recovery, no extra audit/outbox"
 for i in $(seq 1 60); do
   observed="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance \
     -d iig_attendance -tAc "SELECT payload->>'status' FROM attendance_teacher_source_records WHERE teaching_schedule_id='teaching-001' AND event_kind='UPSERT'" | tr -d '[:space:]')"
@@ -283,7 +336,14 @@ for i in $(seq 1 60); do
   sleep 2
 done
 test "$observed" = "DELETE" || { echo "Attendance cleanup did not replicate tombstone"; exit 1; }
-echo "PASS: Attendance-only public PUT ingress, live CS authority, private Core command, outbox and cleanup"
+# A completed receipt cannot bypass a later loss of the exact CS support role.
+revoked_replay="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$attendance_write" \
+  -H "Authorization: Bearer ${cs_token}" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: ${receipt_key}" -d '{"status":"PRESENT"}')"
+test "$revoked_replay" = "403" || {
+  echo "CS without exact support shift replayed a stale attendance receipt: ${revoked_replay}"; exit 1;
+}
+echo "PASS: Attendance ingress, revocable CS scope, idempotent private Core transaction and cleanup"
 
 
 
