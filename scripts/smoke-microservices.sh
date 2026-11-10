@@ -349,6 +349,72 @@ echo "PASS: Attendance ingress, revocable CS scope, idempotent private Core tran
 
 
 
+# Phase 8f-5: full source-manifest gate. It verifies acknowledged historical
+# events and tombstones, not just an empty incremental feed or a matching
+# read of one class. This is a READ-ONLY preflight, never a writer cutover.
+attendance_verify_url="http://attendance-service:8100/internal/attendance/verify"
+attendance_private_key="${ATTENDANCE_INTERNAL_API_KEY:-local-dev-attendance-key-change-before-deployment}"
+verify_attendance() {
+  "${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+    --header "X-Internal-Key: ${attendance_private_key}" "$attendance_verify_url"
+}
+if "${COMPOSE[@]}" exec -T attendance-postgres wget -qO- \
+    "$attendance_verify_url" >/dev/null 2>&1; then
+  echo "Attendance cutover verification accepted a request without the service key"; exit 1
+fi
+if [ "$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/attendance/verify")" != "404" ]; then
+  echo "Attendance private cutover verification leaked through public Gateway"; exit 1
+fi
+verified_attendance="$(verify_attendance)"
+printf '%s' "$verified_attendance" | python3 -c \
+  'import json,sys; r=json.load(sys.stdin); assert r["ready"] is True and r["state"]=="READY" and r["sourceRows"]>=1 and r["verifiedRows"]==r["sourceRows"],r'
+echo "PASS: full Core Attendance manifest agrees with the independent PostgreSQL projection"
+
+# Tampering with the local copy cannot yield a healthy cutover report even
+# when Core has no pending events. Restore the disposable fixture afterward.
+attendance_last_status="$("${COMPOSE[@]}" exec -T attendance-postgres psql \
+  -U iig_attendance -d iig_attendance -tAc \
+  "SELECT payload->>'status' FROM attendance_teacher_source_records WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+test -n "$attendance_last_status" || { echo "Missing Attendance manifest fixture"; exit 1; }
+if [ "$attendance_last_status" = "ABSENT" ]; then
+  attendance_corrupt_status="PRESENT"
+else
+  attendance_corrupt_status="ABSENT"
+fi
+"${COMPOSE[@]}" exec -T attendance-postgres psql \
+  -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "UPDATE attendance_teacher_source_records SET payload=jsonb_set(payload,'{status}',to_jsonb('${attendance_corrupt_status}'::text)) WHERE teaching_schedule_id='teaching-001'"
+invalid_report="$("${COMPOSE[@]}" exec -T attendance-postgres wget -S -O /dev/null \
+  --header "X-Internal-Key: ${attendance_private_key}" "$attendance_verify_url" 2>&1 || true)"
+if ! printf '%s' "$invalid_report" | grep -Eq 'HTTP/[0-9.]+ 409|409 Conflict'; then
+  echo "Attendance verification did not reject corrupted source projection:"
+  printf '%s\n' "$invalid_report"
+  exit 1
+fi
+"${COMPOSE[@]}" exec -T attendance-postgres psql \
+  -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "UPDATE attendance_teacher_source_records SET payload=jsonb_set(payload,'{status}',to_jsonb('${attendance_last_status}'::text)) WHERE teaching_schedule_id='teaching-001'"
+verified_attendance="$(verify_attendance)"
+printf '%s' "$verified_attendance" | python3 -c \
+  'import json,sys; assert json.load(sys.stdin)["ready"] is True'
+# A ghost tombstone with no matching Core source event also blocks readiness.
+attendance_ghost_id="ms-ghost-${GITHUB_RUN_ID:-local}"
+"${COMPOSE[@]}" exec -T attendance-postgres psql \
+  -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "INSERT INTO attendance_teacher_source_records(teaching_schedule_id,source_event_id,event_kind,payload) VALUES('${attendance_ghost_id}',9999999,'DELETE','{\"status\":\"PRESENT\"}'::jsonb)"
+invalid_report="$("${COMPOSE[@]}" exec -T attendance-postgres wget -S -O /dev/null \
+  --header "X-Internal-Key: ${attendance_private_key}" "$attendance_verify_url" 2>&1 || true)"
+if ! printf '%s' "$invalid_report" | grep -Eq 'HTTP/[0-9.]+ 409|409 Conflict'; then
+  echo "Attendance verification did not reject an orphaned projection"; exit 1
+fi
+"${COMPOSE[@]}" exec -T attendance-postgres psql \
+  -U iig_attendance -d iig_attendance -v ON_ERROR_STOP=1 \
+  -c "DELETE FROM attendance_teacher_source_records WHERE teaching_schedule_id='${attendance_ghost_id}'"
+verified_attendance="$(verify_attendance)"
+printf '%s' "$verified_attendance" | python3 -c \
+  'import json,sys; assert json.load(sys.stdin)["ready"] is True'
+echo "PASS: Attendance manifest fails closed on tampering, ghost data and unauthorized access"
+
 # Course Catalog is a separate Spring service with independent storage.
 # The initial import must preserve all legacy course options for React.
 catalog_ready=0

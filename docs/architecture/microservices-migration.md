@@ -1,8 +1,8 @@
 # IIG Spring Microservices migration — architecture decision and implementation status
 
-## Status (2026-11-09)
+## Status (2026-11-10)
 
-This branch is **migration phase 8f-4 (Attendance command inbox + transactional Core receipts)**, not
+This branch is **migration phase 8f-5 (independent Attendance manifest parity gate)**, not
 a claim that all IIG business modules are independently deployable microservices.
 Core still owns Academic, Students, assignments/attendance, HR employee lifecycle,
 salary review workflows and credential writes. **Audit, Course Catalog,
@@ -648,6 +648,38 @@ these two flags is NOT sufficient or safe: a controlled cutover needs an
 independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
+
+## Phase 8f-5: complete Attendance manifest parity (read-only cutover gate)
+
+Core now offers service-key protected, stable keyset-paginated
+`/internal/attendance/events/manifest` and `/manifest/summary`.
+Unlike the pending event feed, the manifest includes **all previously
+acknowledged source events**, retaining the newest version for each
+teaching schedule, including deletion tombstones. Core computes live
+attendance row counts, how many real rows have source events, and whether
+each latest event still agrees with the actual Core table. A disabled
+trigger or a source mismatch therefore cannot be hidden by an empty queue.
+
+Attendance uses the existing independent `attendance_teacher_source_records`
+PostgreSQL as its verification target. Its private, read-only
+`GET /internal/attendance/verify` (service key required, NEVER routed
+through public Gateway) drains the Core event relay, pages through the
+complete source manifest, compares every event ID, deletion kind and
+full JSON payload, rejects missing/extra/tampered local records, then
+rechecks the Core source summary for concurrent mutations. A stable
+complete match returns `200 {ready:true,state:"READY"}`; data
+divergence returns `409` and a bounded list of mismatched identities;
+source outage, malformed pages, or more than 25,000 schedules returns
+`503`, never an optimistic success. An event committed **after** the
+final summary can still race, so this is not a linearizable write fence.
+
+Docker regression verifies readiness for the real replicated data,
+corrupts the disposable Attendance projection to prove fail-closed
+behavior, restores it, inserts a ghost row and verifies that this also
+blocks readiness before cleanup. This step does **not** change public
+GET/PUT routing, hand out Academic/CS leases, enable a second writer,
+or transfer attendance/Payroll event ownership. It is only one required
+precondition for a later exclusive, auditable writer handoff.
 
 ## Phase 8f-4: durable two-database Attendance command receipts (NOT writer cutover)
 

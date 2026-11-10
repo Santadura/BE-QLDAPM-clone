@@ -89,6 +89,22 @@ class TeacherAttendanceSourceBridgeTest {
             eq(7L));
     }
 
+    @Test void manifestRequiresPrivateKeyAndRejectsUnboundedPages() {
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.manifestSummary(null)).getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.manifest("wrong","",250)).getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.manifest("private-attendance-key","",251)).getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.manifest("private-attendance-key","a".repeat(51),250)).getStatusCode());
+        verifyNoInteractions(db);
+    }
+
     @Test void missingCoreEventCannotBeAcknowledged() throws Exception {
         when(db.query(startsWith("SELECT payload::text"),
             any(RowMapper.class),eq(999L))).thenReturn(List.of());

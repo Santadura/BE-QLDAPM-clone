@@ -1,6 +1,6 @@
 # IIG — Microservice data ownership, invariants & extraction gates
 
-> Architecture status: **Phase 8f-4 (Attendance owns durable pending command inbox; Core owns transactional attendance writes and command outcomes)**. Do not claim full migration before every
+> Architecture status: **Phase 8f-5 (Attendance has a fail-closed full source-manifest parity gate; Core still owns attendance writes)**. Do not claim full migration before every
 > domain below meets its exit criteria and the existing FE/BE E2E suite passes.
 
 ## Ownership matrix
@@ -184,6 +184,7 @@ service-key-protected projection API after bootstrap.
 - [x] Attendance independently persists per-schedule source state and
   import receipts; source hashes are verified and only committed local
   writes can receive a Core ack, with replay and out-of-order protection.
+- [x] Phase 8f-5: verify all acknowledged Core Attendance events and deletion tombstones against the independent Attendance PostgreSQL by private paged manifest, source-table completeness and pre/post mutation snapshots; mismatches and outages fail closed.
 - [ ] Attendance PUT cutover: relocate exact-CS, lesson-start and teacher
   assignment guards with a versioned Academic/Scheduling lease plus
   Core/Payroll reference projection and safe handback.
