@@ -39,7 +39,6 @@ public class TeacherAttendanceSourceBridge {
             @Value("${iig.attendance.internal-key}") String key) {
         if(key==null || key.isBlank())
             throw new IllegalArgumentException("ATTENDANCE_INTERNAL_API_KEY required");
-        db.getClass();
         this.db=db;
         this.secret=key.getBytes(StandardCharsets.UTF_8);
     }
