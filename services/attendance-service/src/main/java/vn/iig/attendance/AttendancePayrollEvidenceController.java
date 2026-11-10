@@ -45,14 +45,25 @@ public class AttendancePayrollEvidenceController {
         this.key=serviceKey.getBytes(StandardCharsets.UTF_8);
     }
 
-    @GetMapping("/evidence")
-    public ResponseEntity<Snapshot> evidence(
-            @RequestHeader(value="X-Internal-Key",required=false) String provided,
-            @RequestParam String ids) {
+    private void authenticate(String provided) {
         byte[] presented=(provided==null?"":provided).getBytes(StandardCharsets.UTF_8);
         if(!MessageDigest.isEqual(key,presented))
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
                 "Invalid private Payroll evidence key");
+    }
+
+    @GetMapping("/readiness")
+    public ResponseEntity<Snapshot> readiness(
+            @RequestHeader(value="X-Internal-Key",required=false) String provided) {
+        authenticate(provided);
+        return ResponseEntity.ok(verifyAndRead(List.of()));
+    }
+
+    @GetMapping("/evidence")
+    public ResponseEntity<Snapshot> evidence(
+            @RequestHeader(value="X-Internal-Key",required=false) String provided,
+            @RequestParam String ids) {
+        authenticate(provided);
         if(ids==null || ids.isBlank() || ids.length()>5100)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Attendance evidence needs a bounded set of schedule IDs");
@@ -68,6 +79,10 @@ public class AttendancePayrollEvidenceController {
                     "Invalid or duplicate teacher schedule identity");
         }
 
+        return ResponseEntity.ok(verifyAndRead(wanted));
+    }
+
+    private Snapshot verifyAndRead(List<String> wanted) {
         // Double-check versioned source evidence around the local read:
         // an ABA writer-mode transition or a new Core attendance event fails
         // closed. This live proof is NOT a distributed write lease.
@@ -79,7 +94,7 @@ public class AttendancePayrollEvidenceController {
                 "Core and Attendance source history or ledger disagree");
 
         List<AttendanceEventProjectionRepository.PayrollEvidence> actual=
-            projection.payrollEvidence(wanted);
+            wanted.isEmpty()?List.of():projection.payrollEvidence(wanted);
         var fenceAfter=source.writerFence();
         var summaryAfter=source.manifestSummary();
         if(!fenceBefore.equals(fenceAfter) ||
@@ -87,8 +102,8 @@ public class AttendancePayrollEvidenceController {
                 summaryAfter.pendingEvents()!=0)
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Attendance source changed during Payroll evidence verification");
-        return ResponseEntity.ok(new Snapshot(summaryAfter.maxEventId(),
+        return new Snapshot(summaryAfter.maxEventId(),
             summaryAfter.eventCount(),fenceAfter.attendanceGeneration(),
-            fenceAfter.schedulingGeneration(),List.copyOf(actual)));
+            fenceAfter.schedulingGeneration(),List.copyOf(actual));
     }
 }

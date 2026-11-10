@@ -56,36 +56,16 @@ public class PayrollAttendanceReconciliationService {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Core Payroll source facts unavailable");
 
-        Map<String,String> teachers=new LinkedHashMap<>();
-        for(Facts item:source) {
-            if(item==null || item.person()==null ||
-                    !"ACTIVE".equals(item.person().status()) ||
-                    !"TEACHER".equals(item.person().role())) continue;
-            if(item.works()==null)
-                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "Missing Core Payroll work facts");
-            for(Work work:item.works()) {
-                if(work==null || work.scheduleId()==null ||
-                        !work.scheduleId().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
-                        work.workDate()==null ||
-                        !YearMonth.from(work.workDate()).equals(month) ||
-                        !"TEACHING".equals(work.sourceType()) ||
-                        teachers.putIfAbsent(work.scheduleId(),
-                            item.person().employeeId())!=null)
-                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                        "Invalid or duplicated teacher Payroll source shift");
-                if(teachers.size()>MAX_SCHEDULES)
-                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                        "Payroll Attendance reconciliation exceeds bounded capacity");
-            }
-        }
-
-        // An empty month needs a separate whole-source preflight; no scoped
-        // evidence token can prove that Core has no payable rows. Do not
-        // report empty source as READY without a verified payroll input.
-        if(teachers.isEmpty())
+        Map<String,String> teachers=teacherShifts(source,month);
+        if(teachers.isEmpty()) {
+            var proof=attendance.readiness();
+            if(!teachers.equals(teacherShifts(core.facts(month.toString()),month)))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Teacher Payroll work source changed during reconciliation");
             return new Report(true,"NO_TEACHER_SHIFTS",month.toString(),
-                0,0,0,0,0,0,List.of());
+                0,proof.sourceRevision(),proof.sourceEventCount(),
+                proof.attendanceGeneration(),proof.schedulingGeneration(),0,List.of());
+        }
 
         List<String> ids=new ArrayList<>(teachers.keySet());
         List<String> mismatches=new ArrayList<>();
@@ -114,9 +94,42 @@ public class PayrollAttendanceReconciliationService {
                 }
             }
         }
+        if(!teachers.equals(teacherShifts(core.facts(month.toString()),month)))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Teacher Payroll work source changed during reconciliation");
         return new Report(mismatchCount==0,mismatchCount==0?"MATCH":"MISMATCH",
             month.toString(),teachers.size(),first.sourceRevision(),
             first.sourceEventCount(),first.attendanceGeneration(),
             first.schedulingGeneration(),mismatchCount,List.copyOf(mismatches));
+    }
+    private static Map<String,String> teacherShifts(List<Facts> source,YearMonth month) {
+        if(source==null)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core teacher Payroll source facts unavailable");
+        Map<String,String> teachers=new LinkedHashMap<>();
+        for(Facts item:source) {
+            if(item==null || item.person()==null ||
+                    !"ACTIVE".equals(item.person().status()) ||
+                    !"TEACHER".equals(item.person().role())) continue;
+            if(item.works()==null || item.person().employeeId()==null ||
+                    item.person().employeeId().isBlank())
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Missing Core Payroll teacher reference facts");
+            for(Work work:item.works()) {
+                if(work==null || work.scheduleId()==null ||
+                        !work.scheduleId().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
+                        work.workDate()==null ||
+                        !YearMonth.from(work.workDate()).equals(month) ||
+                        !"TEACHING".equals(work.sourceType()) ||
+                        teachers.putIfAbsent(work.scheduleId(),
+                            item.person().employeeId())!=null)
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Invalid or duplicated teacher Payroll source shift");
+                if(teachers.size()>MAX_SCHEDULES)
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Payroll Attendance reconciliation exceeds bounded capacity");
+            }
+        }
+        return teachers;
     }
 }
