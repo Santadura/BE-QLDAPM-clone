@@ -94,7 +94,7 @@ class SchedulingAssignmentReferenceReceiptControllerTest {
                 when(rs.getString(6)).thenReturn("ASSIGNED");
                 when(rs.getString(7)).thenReturn("tc-1");
                 return List.of(mapper.mapRow(rs,0));
-            },inv->List.of());
+            }).thenReturn(List.of());
         var verified=controller.lookupEvent(
             "private-reference-key","teacher-event-1","TEACHING","teacher-slot-1");
         assertEquals(1L,verified.revision());
