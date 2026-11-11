@@ -88,6 +88,36 @@ class SchedulingAssignmentWriterClaimBridgeTest {
             any(RowMapper.class),eq("cm001"),eq("ASSIGN_STAFF"),eq("cmd-1"));
     }
 
+    @SuppressWarnings({"rawtypes","unchecked"})
+    @Test void coreClaimDiagnosticIsReadOnlyAndReportsUnconfirmedOrphans() throws Exception {
+        when(db.query(startsWith("SELECT manager_employee_id,status"),
+            any(RowMapper.class),eq("tc001"),eq("orphan-1")))
+            .thenAnswer(inv->{
+                RowMapper mapper=inv.getArgument(1);
+                var rs=mock(java.sql.ResultSet.class);
+                when(rs.getString(1)).thenReturn("tc-1");
+                when(rs.getString(2)).thenReturn("PENDING");
+                return List.of(mapper.mapRow(rs,0));
+            });
+        when(db.query(startsWith("SELECT event_id,schedule_id,payload_hash"),
+            any(RowMapper.class),eq("tc001"),eq("orphan-1")))
+            .thenReturn(List.of());
+        var report=controller.diagnoseTeacher(
+            "private-writer-key","tc001","orphan-1");
+        assertTrue(report.found());
+        assertEquals("PENDING",report.claimStatus());
+        assertEquals(0,report.referenceEventCount());
+        assertFalse(report.coreTeacherRowExists());
+        verify(db,never()).update(anyString(),any(Object[].class));
+    }
+
+    @Test void coreClaimDiagnosticRequiresServiceKeyBeforeDatabaseRead() {
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->controller.diagnoseTeacher("wrong","tc001","cmd-1")).getStatusCode());
+        verifyNoInteractions(db);
+    }
+
     @Test void SameCommandAndManagerCanRetryAfterLostHttpResponse() throws Exception {
         allowed();
         existing("cm-001","PENDING");
