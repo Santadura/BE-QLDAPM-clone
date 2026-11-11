@@ -2565,6 +2565,10 @@ SQL
     echo "No frozen Core generations for Academic post-commit recovery"
     exit 1
   }
+  # Force a REAL private-Core outage before committing the Academic local
+  # proof. The reconciler must retry without making up a local receipt.
+  # PostgreSQL remains available so both independent transactions can commit.
+  "${COMPOSE[@]}" stop backend
   "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db \
     -v ON_ERROR_STOP=1 <<SQL
 INSERT INTO academic_candidate_claims
@@ -2606,6 +2610,22 @@ VALUES ('00000000-0000-4000-8000-000000000152'::uuid,
  'REHEARSAL_ONLY','{"ciRecovery":true}'::jsonb,repeat('e',64));
 COMMIT;
 SQL
+  # Allow at least one scheduled Academic recovery attempt while Core HTTP is
+  # genuinely unreachable. The durable Core claim must remain OPEN and no
+  # successful Academic release receipt may be fabricated.
+  sleep 20
+  core_during_outage="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc     "SELECT (SELECT COUNT(*) FROM academic_candidate_claims
+      WHERE request_key='${recovery_key}' AND state='OPEN')
+      ||':'||(SELECT COUNT(*) FROM academic_candidate_claim_audit
+      WHERE request_key='${recovery_key}' AND event_kind='RELEASED');" | tr -d '[:space:]')"
+  local_during_outage="$("${COMPOSE[@]}" exec -T academic-postgres psql     -U iig_academic -d iig_academic -tAc     "SELECT COUNT(*) FROM academic_candidate_handoff_receipts
+     WHERE request_key='${recovery_key}';" | tr -d '[:space:]')"
+  test "$core_during_outage" = "1:0" && test "$local_during_outage" = "0" || {
+    echo "Academic incorrectly acknowledged a Core claim during real HTTP outage"
+    exit 1
+  }
+  "${COMPOSE[@]}" start backend
+  echo "PASS: Core HTTP outage preserves OPEN claim without a fabricated Academic release receipt"
   recovery_complete=false
   for attempt in $(seq 1 35); do
     if [ "$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
