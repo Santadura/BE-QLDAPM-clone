@@ -33,3 +33,23 @@ CREATE TABLE IF NOT EXISTS academic_session_projections (
   payload JSONB NOT NULL CHECK(jsonb_typeof(payload)='array'),
   synchronized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+-- Transitional Academic HTTP command ingress; Core remains the ONLY writer.
+-- Local receipts survive uncertain Core responses and never authorize replay.
+CREATE TABLE IF NOT EXISTS academic_session_command_inbox (
+  actor_username VARCHAR(100) NOT NULL,
+  class_id VARCHAR(50) NOT NULL,
+  operation VARCHAR(20) NOT NULL CHECK(operation IN ('PLAN','RESCHEDULE')),
+  request_key VARCHAR(128) NOT NULL,
+  request_hash CHAR(64) NOT NULL,
+  state VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK(state IN ('PENDING','COMMITTED')),
+  response_payload JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ,
+  PRIMARY KEY(actor_username,class_id,operation,request_key),
+  CONSTRAINT academic_command_receipt_complete CHECK (
+    (state='PENDING' AND response_payload IS NULL AND completed_at IS NULL) OR
+    (state='COMMITTED' AND jsonb_typeof(response_payload)='array' AND completed_at IS NOT NULL)
+  )
+);
