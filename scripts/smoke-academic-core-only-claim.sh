@@ -74,6 +74,28 @@ assert_orphan() {
 }
 assert_orphan
 
+# Private read-only triage must surface an orphan, without releasing it.
+# Gateway must not expose even this diagnostic read to browsers.
+private_key="${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}"
+open_claims="$(compose exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: $private_key" \
+  "http://backend:8081/internal/academic/candidate-claims/open?limit=25")"
+CORE_ORPHAN_JSON="$open_claims" CORE_ORPHAN_KEY="$key" python3 -c \
+  'import json,os; xs=json.loads(os.environ["CORE_ORPHAN_JSON"]); ys=[x for x in xs if x["actor"]=="ci-crash" and x["requestKey"]==os.environ["CORE_ORPHAN_KEY"]]; assert len(ys)==1 and ys[0]["eventId"]>0 and ys[0]["revision"]>0,(xs,ys)'
+unauthorized="$(compose exec -T scheduling-postgres wget -S -O- \
+  --header "X-Internal-Key: wrong-key" \
+  "http://backend:8081/internal/academic/candidate-claims/open" 2>&1 || true)"
+printf '%s' "$unauthorized" | grep -q '401' || {
+  echo "Core OPEN-claim triage accepted an invalid key" >&2
+  exit 1
+}
+gateway_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+  "http://localhost:8080/internal/academic/candidate-claims/open")"
+test "$gateway_code" = "404" || {
+  echo "Private Core claim triage exposed through Gateway: $gateway_code" >&2
+  exit 1
+}
+
 # Restart Academic to force a fresh reconciler. Its scheduled retries must
 # neither synthesize an absent outbox nor claim an unacknowledged Core release.
 compose restart academic-service
