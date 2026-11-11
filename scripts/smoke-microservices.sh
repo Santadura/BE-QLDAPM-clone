@@ -100,29 +100,55 @@ CORE_PLANNING_JSON="$core_planning" ACADEMIC_PLANNING_JSON="$academic_json" pyth
 if [ "$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/api/class-planning")" != "401" ]; then
   echo "Academic planning route did not enforce live JWT"; exit 1
 fi
-new_planned="$(curl -fsS -H "Authorization: Bearer ${TOKEN}" \
-  "${BASE}/api/classes/${one}/planned-sessions")"
+new_planned=""
+for attempt in $(seq 1 60); do
+  if new_planned="$(curl -fsS -H "Authorization: Bearer ${TOKEN}" \
+      "${BASE}/api/classes/${one}/planned-sessions" 2>/dev/null)"; then break; fi
+  sleep 2
+done
+test -n "$new_planned" || {
+  echo "Academic event-backed timetable could not catch up"; exit 1;
+}
 core_planned="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
   --header "Authorization: Bearer ${TOKEN}" \
   "http://backend:8081/api/classes/${one}/planned-sessions")"
 CORE_LESSONS_JSON="$core_planned" ACADEMIC_LESSONS_JSON="$new_planned" python3 -c \
   'import json,os; a=json.loads(os.environ["ACADEMIC_LESSONS_JSON"]); b=json.loads(os.environ["CORE_LESSONS_JSON"]); assert isinstance(a,list) and a==b'
 academic_rows="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
+  -d iig_academic -tAc "SELECT count(*) FROM academic_class_sessions_shadow WHERE class_id='${one}' AND event_kind='UPSERT';" | tr -d '[:space:]')"
+core_rows="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
+  -d qlapm_db -tAc "SELECT count(*) FROM class_sessions WHERE class_id='${one}';" | tr -d '[:space:]')"
+academic_snapshot_rows="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
   -d iig_academic -tAc "SELECT count(*) FROM academic_session_projections WHERE class_id='${one}';" | tr -d '[:space:]')"
-academic_session_revision="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
-  -d iig_academic -tAc "SELECT source_revision FROM academic_session_projections WHERE class_id='${one}';" | tr -d '[:space:]')"
-core_session_revision="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
-  -d qlapm_db -tAc "SELECT revision FROM academic_session_revision WHERE singleton=TRUE;" | tr -d '[:space:]')"
+academic_history_cursor="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
+  -d iig_academic -tAc "SELECT last_event_id FROM academic_session_history_cursor WHERE singleton=TRUE;" | tr -d '[:space:]')"
+core_event_cursor="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
+  -d qlapm_db -tAc "SELECT coalesce(max(event_id),0) FROM academic_session_source_outbox;" | tr -d '[:space:]')"
 planning_revision="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
   -d iig_academic -tAc "SELECT source_revision FROM academic_planning_projection WHERE name='planning';" | tr -d '[:space:]')"
 core_planning_revision="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
   -d qlapm_db -tAc "SELECT revision FROM academic_planning_revision WHERE singleton=TRUE;" | tr -d '[:space:]')"
 if ! [[ "$academic_rows" =~ ^[0-9]+$ ]] || [ "$academic_rows" -lt 1 ] \
-  || [ "$planning_revision" != "$core_planning_revision" ] \
-  || [ "$academic_session_revision" != "$core_session_revision" ]; then
-  echo "Academic planning/session versions are not synchronized in independent PostgreSQL"; exit 1
+  || [ "$academic_rows" != "$core_rows" ] \
+  || [ "$academic_snapshot_rows" != "0" ] \
+  || [ "$academic_history_cursor" != "$core_event_cursor" ] \
+  || [ "$planning_revision" != "$core_planning_revision" ]; then
+  echo "Academic event-derived typed sessions are not synchronized with Core"; exit 1
 fi
-echo "PASS: independent Academic planning and session projections match Core source revisions and live ACL"
+echo "PASS: Academic reads typed PostgreSQL event facts directly, without Core JSON session snapshots"
+
+# The legacy Core public write ingress must be disabled in Microservices
+# Compose even for an authenticated Admin. Academic remains the only public
+# write API, while its private Core command bridge is intentionally retained.
+bypass="$( "${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
+  --header "Authorization: Bearer ${TOKEN}" \
+  --header "Content-Type: application/json" \
+  --post-data '{"originalSessionId":"unused","reason":"bypass smoke check"}' \
+  "http://backend:8081/api/classes/${one}/reschedule" 2>&1 || true)"
+printf '%s' "$bypass" | grep -q '403' || {
+  echo "Direct Core class-session POST remains writable: bypass detected"; exit 1;
+}
+echo "PASS: direct Core class-session writes are forbidden in microservices Compose"
 
 # Phase 8i: the Core class-session trigger must publish each committed
 # INSERT/UPDATE/DELETE, with an immutable history and a local Academic tombstone.
