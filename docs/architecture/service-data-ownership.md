@@ -363,6 +363,11 @@ service-key-protected projection API after bootstrap.
 - [ ] Add version checks, idempotency keys, expiry and compensation for failed
   cross-service enrollment/assignment, while keeping last-CS-coverage and
   teacher attendance constraints correct.
+- [x] Phase 8p source provenance fix: Core's private HTTP assignment
+  projector now invokes `projectFromCore()` and never inserts into
+  Scheduling's independently owned GiST-constrained slots. Only an
+  independent source transaction can acquire those owned slots;
+  regression tests and Docker smoke verify both code and real PostgreSQL.
 - [x] Test high-concurrency cross-service schedule races and role/override
   boundaries: Scheduling PostgreSQL now enforces worker and same-class
   teaching-slot GiST exclusions across competing independent transactions.

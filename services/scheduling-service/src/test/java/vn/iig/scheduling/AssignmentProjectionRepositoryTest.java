@@ -39,6 +39,17 @@ class AssignmentProjectionRepositoryTest {
             eq("class-1"),any(),any(),any(),eq(true));
     }
 
+    @Test void legacyCoreProjectionCannotAcquireAnIndependentlyOwnedSlot() {
+        when(db.queryForObject(anyString(),eq(Integer.class))).thenReturn(1);
+        repo.projectFromCore(teacher(3,false));
+        verify(db).update(contains("scheduling_assignment_read_model.version<EXCLUDED.version"),
+            eq("TEACHING"),eq("t-1"),eq(3L),eq(false),
+            eq("teacher-001"),eq("TEACHER"),any(),eq("ASSIGNED"),contains("teacherId"));
+        verify(db,never()).update(
+            startsWith("INSERT INTO scheduling_assignment_owned_slots"),
+            any(Object[].class));
+    }
+
     @Test void deletionTombstonesCannotBeOverwrittenByOldEvents() {
         when(db.queryForObject(anyString(),eq(Integer.class))).thenReturn(1);
         repo.project(teacher(9,true));

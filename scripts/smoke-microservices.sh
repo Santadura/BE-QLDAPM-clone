@@ -1574,6 +1574,17 @@ for i in $(seq 1 70); do
   sleep 2
 done
 test "$projected" = "2" || { echo "Teacher/CS assignment projection did not arrive"; exit 1; }
+# Events mirrored from Core must NOT silently become Scheduling-owned
+# assignments subject to private GiST exclusion. Their provenance differs.
+core_owned_slots="$("${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling \
+  -d iig_scheduling -tAc \
+  "SELECT COUNT(*) FROM scheduling_assignment_owned_slots
+   WHERE schedule_id IN ('${fixture}-t','${fixture}-s');" | tr -d '[:space:]')"
+test "$core_owned_slots" = "0" || {
+  echo "Legacy Core assignment projection was incorrectly registered as owned"
+  exit 1
+}
+echo "PASS: Core mirrored assignments remain separate from independently owned exclusion slots"
 teacher_view="$(curl -fsS "${BASE}/api/teaching-schedules?weekStart=2027-02-08" -H "Authorization: Bearer ${tc_token}")"
 printf '%s' "$teacher_view" | FIXTURE_ID="${fixture}-t" python3 -c 'import os,sys,json; assert any(x.get("id")==os.environ["FIXTURE_ID"] and x.get("teacherId")=="teacher-001" and x.get("status")=="ASSIGNED" for x in json.load(sys.stdin))'
 cm_login="$(curl -fsS -X POST "${BASE}/api/auth/login" -H 'Content-Type: application/json' -d '{"username":"cm001","password":"123456"}')"
