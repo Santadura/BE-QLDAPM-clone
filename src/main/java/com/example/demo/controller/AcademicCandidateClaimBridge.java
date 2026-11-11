@@ -6,6 +6,7 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -95,6 +96,19 @@ public class AcademicCandidateClaimBridge {
         return row;
     }
 
+    public record Summary(long openClaims,long releasedClaims,long auditEvents) {}
+    @GetMapping("/summary")
+    @Transactional(readOnly=true)
+    public Summary summary(
+            @RequestHeader(value="X-Internal-Key",required=false) String supplied) {
+        requireKey(supplied);
+        return db.queryForObject(
+            "SELECT (SELECT COUNT(*) FROM academic_candidate_claims WHERE state='OPEN'),"+
+            "(SELECT COUNT(*) FROM academic_candidate_claims WHERE state='RELEASED'),"+
+            "(SELECT COUNT(*) FROM academic_candidate_claim_audit)",
+            (rs,i)->new Summary(rs.getLong(1),rs.getLong(2),rs.getLong(3)));
+    }
+
     @PostMapping
     @Transactional
     public Result acquire(
@@ -137,7 +151,9 @@ public class AcademicCandidateClaimBridge {
         if(!Long.valueOf(1).equals(matching))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Core Academic candidate source event changed or was not acknowledged");
-        int created=db.update(
+        int created;
+        try {
+            created=db.update(
             "INSERT INTO academic_candidate_claims "+
             "(actor_username,request_key,request_hash,class_id,class_session_id,"+
             "source_event_id,source_revision,academic_generation,"+
@@ -147,6 +163,10 @@ public class AcademicCandidateClaimBridge {
             claim.sessionId(),claim.sourceEventId(),claim.sourceRevision(),
             claim.academicGeneration(),claim.attendanceGeneration(),
             claim.schedulingGeneration());
+        } catch(DuplicateKeyException ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Another unresolved candidate holds the exact Academic lesson",ex);
+        }
         ClaimRow existing=lockedClaim(claim);
         if(created==1) {
             db.update("INSERT INTO academic_candidate_claim_audit "+

@@ -2381,6 +2381,64 @@ SQL
     exit 1
   }
 
+  core_claim_counts="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
+    -d qlapm_db -tAc \
+    "SELECT (SELECT COUNT(*) FROM academic_candidate_claims
+      WHERE request_key='${candidate_key}' AND state='RELEASED')
+      ||':'||(SELECT COUNT(*) FROM academic_candidate_claim_audit
+      WHERE request_key='${candidate_key}' AND event_kind='ACQUIRED')
+      ||':'||(SELECT COUNT(*) FROM academic_candidate_claim_audit
+      WHERE request_key='${candidate_key}' AND event_kind='RELEASED')
+      ||':'||(SELECT COUNT(*) FROM academic_candidate_claims WHERE state='OPEN');" |
+    tr -d '[:space:]')"
+  test "$core_claim_counts" = "1:1:1:0" || {
+    echo "Core did not durably acquire and release the exact committed Academic candidate"
+    exit 1
+  }
+  # A direct Core handback must be impossible until a claim is released.
+  # The synthetic claim exists ONLY inside a PostgreSQL transaction that
+  # always ROLLBACKs, so it cannot strand a CI or real deployment.
+  "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db \
+    -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+INSERT INTO academic_candidate_claims
+ (actor_username,request_key,request_hash,class_id,class_session_id,
+  source_event_id,source_revision,academic_generation,
+  attendance_generation,scheduling_generation)
+SELECT 'ci-freeze-operator','ci-open-claim-${GITHUB_RUN_ID}',repeat('b',64),
+  '${one}',class_session_id,source_event_id,source_revision,
+  (SELECT generation FROM academic_session_writer_control WHERE singleton=TRUE),
+  (SELECT generation FROM teacher_attendance_writer_control WHERE singleton=TRUE),
+  (SELECT writer_generation FROM scheduling_assignment_writer_control WHERE singleton=TRUE)
+FROM academic_session_source_outbox e
+WHERE e.class_session_id='${candidate_session}' AND e.event_kind='UPSERT'
+ORDER BY e.event_id DESC LIMIT 1;
+DO \$\$
+BEGIN
+  BEGIN
+    UPDATE academic_session_writer_control SET writer_mode='CORE'
+      WHERE singleton=TRUE;
+    RAISE EXCEPTION 'Unreleased claim did not block Core Academic handback';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM academic_candidate_claims
+      WHERE request_key='ci-open-claim-${GITHUB_RUN_ID}';
+    RAISE EXCEPTION 'Academic candidate Core claim could be deleted';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    UPDATE academic_candidate_claims SET request_hash=repeat('f',64)
+      WHERE request_key='ci-open-claim-${GITHUB_RUN_ID}';
+    RAISE EXCEPTION 'Academic candidate Core claim could be rewritten';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END \$\$;
+ROLLBACK;
+SQL
+  echo "PASS: Core claim acquisition/release is auditable and open claims prevent SQL writer handback"
+
+
   candidate_collision="${candidate_payload/\"RESCHEDULE\"/\"CANCEL\"}"
   candidate_collision="${candidate_collision/\"PLANNED\"/\"CANCELLED\"}"
   candidate_conflict="$(candidate_post "$candidate_collision" 2>&1 || true)"

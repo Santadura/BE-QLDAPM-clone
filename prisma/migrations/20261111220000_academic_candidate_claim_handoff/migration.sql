@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS academic_candidate_claims (
       AND released_at IS NOT NULL))
 );
 
+-- At most one unresolved proposal may hold a Core-side session claim.
+-- Multiple operator keys for one lesson cannot race a future handback.
+CREATE UNIQUE INDEX IF NOT EXISTS academic_candidate_claim_one_open_session
+  ON academic_candidate_claims(class_session_id) WHERE state='OPEN';
+
 CREATE TABLE IF NOT EXISTS academic_candidate_claim_audit (
   audit_id BIGSERIAL PRIMARY KEY,
   actor_username VARCHAR(100) NOT NULL,

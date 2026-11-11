@@ -205,6 +205,11 @@ service-key-protected projection API after bootstrap.
   private full-history readiness proof expecting success, and restore
   Academic -> Attendance -> Scheduling with a failure-safe EXIT trap.
   No production flag or Academic write ownership is activated.
+- [x] Phase 8o hardening: Core has a unique OPEN claim per lesson,
+  rejects racing candidate operators, and provides a key-protected
+  operator claim summary. A crash before local commit deliberately leaves
+  an OPEN claim rather than silently resuming Core; there is no unsafe
+  force-release path.
 - [x] Phase 8o: Core now persists a monotonic three-generation Academic
   candidate claim, an immutable acquisition/release audit trail, and a
   PostgreSQL-level QUIESCED -> CORE handback fence when ANY claim remains
