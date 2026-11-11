@@ -2471,6 +2471,46 @@ SQL
   }
   echo "PASS: Academic opt-in HTTP candidate stages exactly one atomic local command/typed slot/outbox, idempotently replays, and rejects conflicting/stale/unauthorized requests"
 
+  # Concurrent identical HTTP retries of the SAME actor/scoped request key
+  # must commit exactly one Academic candidate and one Core claim audit pair.
+  race_key="${candidate_key}-race"
+  race_payload="${candidate_payload/$candidate_key/$race_key}"
+  race_dir="$(mktemp -d)"
+  (candidate_post "$race_payload" >"$race_dir/a.json") &
+  race_a=$!
+  (candidate_post "$race_payload" >"$race_dir/b.json") &
+  race_b=$!
+  if ! wait "$race_a" || ! wait "$race_b"; then
+    echo "Concurrent candidate HTTP retry failed"
+    rm -rf "$race_dir"
+    exit 1
+  fi
+  RACE_A="$(cat "$race_dir/a.json")" RACE_B="$(cat "$race_dir/b.json")" \
+    python3 -c 'import json,os; a=json.loads(os.environ["RACE_A"]); b=json.loads(os.environ["RACE_B"]); assert a==b and a["state"]=="STAGED",(a,b)'
+  rm -rf "$race_dir"
+  parallel_counts="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
+    -d qlapm_db -tAc \
+    "SELECT (SELECT COUNT(*) FROM academic_candidate_claims
+        WHERE request_key='${race_key}' AND state='RELEASED')
+     ||':'||(SELECT COUNT(*) FROM academic_candidate_claim_audit
+        WHERE request_key='${race_key}' AND event_kind='ACQUIRED')
+     ||':'||(SELECT COUNT(*) FROM academic_candidate_claim_audit
+        WHERE request_key='${race_key}' AND event_kind='RELEASED');" |
+    tr -d '[:space:]')"
+  test "$parallel_counts" = "1:1:1" || {
+    echo "Parallel retries produced more than one Core claim/audit pair"; exit 1;
+  }
+  denied_cs="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
+    --header "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
+    --header "Authorization: Bearer ${cs_token}" \
+    --header "Content-Type: application/json" \
+    --post-data "$candidate_payload" "$academic_candidate_api" 2>&1 || true)"
+  printf '%s' "$denied_cs" | grep -q '403' || {
+    echo "Non-admin CS bypassed Academic candidate role restrictions"; exit 1;
+  }
+  echo "PASS: parallel actor-scoped Academic candidate retries produce one receipt and Core claim; CS cannot bypass Admin role"
+
+
   academic_candidate_restore
   # The private proof does not issue a writer capability or switch public
   # routing. Resume Core in inverse order before completing smoke.
@@ -2588,3 +2628,95 @@ END \$\$;
 ROLLBACK;
 SQL
 echo "PASS: candidate writer remains private/off; Academic DB candidate receipt, typed slot and nondeliverable outbox are atomic and immutable"
+
+
+# Phase 8p: a REAL inter-transaction overlap race in the Scheduling-owned
+# PostgreSQL write table. Legacy Core shadow rows are not modified.
+if [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+  race_id="ms-parallel-${GITHUB_RUN_ID}"
+  worker_id="ms-w-${GITHUB_RUN_ID}"
+  scratch="$(mktemp -d)"
+  (
+    "${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling \
+      -d iig_scheduling -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+INSERT INTO scheduling_assignment_owned_slots
+  (source_type,schedule_id,source_revision,employee_id,class_id,
+   work_date,start_time,end_time,active)
+VALUES ('STAFF','${race_id}-a',1,'${worker_id}',NULL,
+  '2027-02-20','09:00','11:00',TRUE);
+SELECT pg_sleep(1);
+COMMIT;
+SQL
+  ) >"$scratch/a.log" 2>&1 &
+  slot_a=$!
+  (
+    "${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling \
+      -d iig_scheduling -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+INSERT INTO scheduling_assignment_owned_slots
+  (source_type,schedule_id,source_revision,employee_id,class_id,
+   work_date,start_time,end_time,active)
+VALUES ('STAFF','${race_id}-b',1,'${worker_id}',NULL,
+  '2027-02-20','10:00','12:00',TRUE);
+COMMIT;
+SQL
+  ) >"$scratch/b.log" 2>&1 &
+  slot_b=$!
+  result_a=0
+  result_b=0
+  wait "$slot_a" || result_a=$?
+  wait "$slot_b" || result_b=$?
+  if ! { [ "$result_a" -eq 0 ] && [ "$result_b" -ne 0 ]; } &&
+     ! { [ "$result_a" -ne 0 ] && [ "$result_b" -eq 0 ]; }; then
+    echo "Concurrent Scheduling slot exclusion did not allow exactly one winner"
+    cat "$scratch/a.log" "$scratch/b.log"
+    exit 1
+  fi
+  owned_count="$("${COMPOSE[@]}" exec -T scheduling-postgres psql \
+    -U iig_scheduling -d iig_scheduling -tAc \
+    "SELECT count(*) FROM scheduling_assignment_owned_slots
+      WHERE schedule_id IN ('${race_id}-a','${race_id}-b')
+        AND active=TRUE;" | tr -d '[:space:]')"
+  test "$owned_count" = "1" || {
+    echo "PostgreSQL allowed multiple overlapping Scheduling-owned worker slots"
+    exit 1
+  }
+  "${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling \
+    -d iig_scheduling -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+-- Half-open time ranges permit legal adjacent shifts after either winner.
+INSERT INTO scheduling_assignment_owned_slots
+  (source_type,schedule_id,source_revision,employee_id,class_id,
+   work_date,start_time,end_time,active)
+VALUES ('STAFF','${race_id}-adjacent',1,'${worker_id}',NULL,
+  '2027-02-20','12:00','13:00',TRUE);
+-- Two different teachers cannot claim one class overlapping lesson.
+INSERT INTO scheduling_assignment_owned_slots
+  (source_type,schedule_id,source_revision,employee_id,class_id,
+   work_date,start_time,end_time,active)
+VALUES ('TEACHING','${race_id}-class-a',1,
+  '${race_id}-teacher-a','${race_id}-class',
+  '2027-02-20','09:00','11:00',TRUE);
+DO \$\$
+BEGIN
+  BEGIN
+    INSERT INTO scheduling_assignment_owned_slots
+      (source_type,schedule_id,source_revision,employee_id,class_id,
+       work_date,start_time,end_time,active)
+    VALUES ('TEACHING','${race_id}-class-b',1,
+      '${race_id}-teacher-b','${race_id}-class',
+      '2027-02-20','10:00','12:00',TRUE);
+    RAISE EXCEPTION 'Two teachers bypassed class-slot overlap exclusion';
+  EXCEPTION WHEN exclusion_violation THEN NULL;
+  END;
+END \$\$;
+ROLLBACK;
+SQL
+  "${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling \
+    -d iig_scheduling -v ON_ERROR_STOP=1 -c \
+    "DELETE FROM scheduling_assignment_owned_slots
+     WHERE schedule_id IN ('${race_id}-a','${race_id}-b');" >/dev/null
+  rm -rf "$scratch"
+  echo "PASS: simultaneous Scheduling-owned PostgreSQL transactions serialize worker conflicts, permit adjacent slots and reject dual teacher coverage"
+fi
