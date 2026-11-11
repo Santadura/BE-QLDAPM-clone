@@ -54,6 +54,82 @@ class TeacherClaimReconciliationServiceTest {
                 live?"ASSIGNED":null,live?"tc-1":null));
     }
 
+    private void abandonmentState(String state,long outgoing) throws Exception {
+        when(db.query(startsWith("SELECT state FROM scheduling_assignment_command_inbox"),
+            any(RowMapper.class),eq(ACTOR),eq(KEY))).thenReturn(List.of(state));
+        when(db.queryForObject(startsWith("SELECT count(*) FROM scheduling_assignment_domain_outbox"),
+            eq(Long.class),eq(ACTOR),eq(KEY))).thenReturn(outgoing);
+        when(db.query(startsWith("SELECT admin_username,reason"),
+            any(RowMapper.class),eq(ACTOR),eq(KEY))).thenAnswer(inv->{
+                RowMapper mapper=inv.getArgument(1);
+                ResultSet rs=mock(ResultSet.class);
+                when(rs.getString(1)).thenReturn("admin");
+                when(rs.getString(2)).thenReturn(REASON);
+                return List.of(mapper.mapRow(rs,0));
+            });
+    }
+    private static final String REASON=
+        "No Scheduling source event was committed before Core claimed authority";
+
+    @Test void stagedCommandMayBeRejectedOnlyWithZeroOutboxAndImmutableAudit()
+        throws Exception {
+        abandonmentState("STAGED",0);
+        when(db.update(startsWith("UPDATE scheduling_assignment_command_inbox"),
+            eq(ACTOR),eq(KEY))).thenReturn(1);
+        var receipt=svc.abandonLocally(ACTOR,KEY,"admin",REASON);
+        assertEquals("REJECTED",receipt.commandState());
+        var order=inOrder(db);
+        order.verify(db).query(startsWith("SELECT state FROM scheduling_assignment_command_inbox"),
+            any(RowMapper.class),eq(ACTOR),eq(KEY));
+        order.verify(db).queryForObject(startsWith("SELECT count(*) FROM scheduling_assignment_domain_outbox"),
+            eq(Long.class),eq(ACTOR),eq(KEY));
+        order.verify(db).update(startsWith("UPDATE scheduling_assignment_command_inbox"),
+            eq(ACTOR),eq(KEY));
+        order.verify(db).update(startsWith("INSERT INTO scheduling_teacher_claim_abandon_audit"),
+            eq(ACTOR),eq(KEY),eq("admin"),eq(REASON));
+        verifyNoInteractions(core);
+    }
+
+    @Test void alreadyRejectedSameAuditCanRetryCoreCallWithoutReopeningCommand()
+        throws Exception {
+        abandonmentState("REJECTED",0);
+        assertEquals("REJECTED",
+            svc.abandonLocally(ACTOR,KEY,"admin",REASON).commandState());
+        verify(db,never()).update(startsWith("UPDATE scheduling_assignment_command_inbox"),
+            any(Object[].class));
+        verifyNoInteractions(core);
+    }
+    @Test void teacherCommandWithCommittedEventCannotBeWithdrawn() throws Exception {
+        abandonmentState("STAGED",1);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.abandonLocally(ACTOR,KEY,"admin",REASON)).getStatusCode());
+        verify(db,never()).update(anyString(),any(Object[].class));
+    }
+    @Test void pendingReferenceCannotBeWithdrawnAsIfItNeverExecuted()
+        throws Exception {
+        abandonmentState("PENDING_REFERENCE",1);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.abandonLocally(ACTOR,KEY,"admin",REASON)).getStatusCode());
+        verify(db,never()).update(anyString(),any(Object[].class));
+    }
+    @Test void immutableAuditPreventsDifferentAdminOrReasonRetry()
+        throws Exception {
+        abandonmentState("REJECTED",0);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.abandonLocally(ACTOR,KEY,"different-admin",REASON))
+            .getStatusCode());
+    }
+    @Test void revokedOrphanClaimIsVisibleButNeverAutomaticallyDeleted()
+        throws Exception {
+        local("REJECTED",null,false);
+        coreClaim(true,"REVOKED",null,false);
+        assertEquals("ORPHAN_CLAIM_REVOKED",svc.diagnose(ACTOR,KEY).state());
+        verify(db,never()).update(anyString(),any(Object[].class));
+    }
+
     @Test void identifiesOrphanClaimAfterCoreAdmitsButSchedulingRollback() throws Exception {
         local("STAGED",null,false);
         coreClaim(true,"PENDING",null,false);
