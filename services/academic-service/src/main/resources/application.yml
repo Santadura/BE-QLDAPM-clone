@@ -19,6 +19,7 @@ iig:
     session-relay-enabled: ${ACADEMIC_SESSION_SOURCE_RELAY_ENABLED:false}
     event-session-read-enabled: ${ACADEMIC_EVENT_SESSION_READ_ENABLED:false}
     # Private, non-authoritative candidate-only transaction; OFF for all users.
+    candidate-handoff-recovery-enabled: ${ACADEMIC_CANDIDATE_HANDOFF_RECOVERY_ENABLED:false}
     candidate-writer-enabled: ${ACADEMIC_CANDIDATE_WRITER_ENABLED:false}
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}

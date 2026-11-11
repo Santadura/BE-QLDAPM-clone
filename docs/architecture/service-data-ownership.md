@@ -205,6 +205,14 @@ service-key-protected projection API after bootstrap.
   private full-history readiness proof expecting success, and restore
   Academic -> Attendance -> Scheduling with a failure-safe EXIT trap.
   No production flag or Academic write ownership is activated.
+- [x] Phase 8q: Academic now persists a DISTINCT immutable local Core
+  handback receipt only AFTER Core commits an exact released candidate
+  claim. A bounded, restart-safe, feature-gated reconciler retries
+  abandoned post-commit releases from exact local command/typed-slot/outbox
+  evidence; no release is permitted for a Core-only orphan with no
+  durable Academic candidate. This closes the known post-commit HTTP
+  timeout/restart hole without pretending to implement the full Academic
+  domain saga. CI checks the local receipt and its SQL tamper fence.
 - [x] Phase 8o hardening: Core has a unique OPEN claim per lesson,
   rejects racing candidate operators, and provides a key-protected
   operator claim summary. A crash before local commit deliberately leaves

@@ -66,6 +66,80 @@ public class AcademicSessionCandidateRepository {
         return proof.get(0);
     }
 
+    /**
+     * Bounded restart-safe listing of commits which have NO confirmed local
+     * Core-claim release receipt. Never auto-release a claim unless all three
+     * immutable local records are still present and match the original key.
+     */
+    public List<Evidence> pendingHandoffs(int limit) {
+        if(limit<1 || limit>50)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Academic handback recovery batch must contain 1..50 rows");
+        return db.query(
+            "SELECT c.operator_username,c.request_key,c.request_hash,c.class_id,"+
+            "c.class_session_id,c.source_event_id,c.source_revision,"+
+            "c.academic_generation,c.attendance_generation,c.scheduling_generation,"+
+            "c.command_id::text,o.payload_hash "+
+            "FROM academic_session_candidate_commands c "+
+            "JOIN academic_session_candidate_slots s ON s.command_id=c.command_id "+
+            "JOIN academic_session_candidate_outbox o ON o.command_id=c.command_id "+
+            "LEFT JOIN academic_candidate_handoff_receipts r ON r.command_id=c.command_id "+
+            "WHERE r.command_id IS NULL AND c.state='STAGED' "+
+            "AND s.class_id=c.class_id AND s.class_session_id=c.class_session_id "+
+            "AND s.source_event_id=c.source_event_id "+
+            "AND s.source_revision=c.source_revision "+
+            "AND o.event_kind='REHEARSAL_ONLY' "+
+            "ORDER BY c.created_at,c.operator_username,c.request_key LIMIT ?",
+            (rs,i)->new Evidence(rs.getString(1),rs.getString(2),rs.getString(3),
+                rs.getString(4),rs.getString(5),rs.getLong(6),rs.getLong(7),
+                rs.getLong(8),rs.getLong(9),rs.getLong(10),rs.getString(11),
+                rs.getString(12)),limit);
+    }
+
+    /** Only call AFTER the matching Core release has committed over HTTP. */
+    public void recordHandoff(Evidence committed) {
+        if(committed==null || committed.commandId()==null ||
+            committed.outboxHash()==null ||
+            !committed.outboxHash().matches("[0-9a-f]{64}"))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Cannot record an unverified Core candidate release");
+        int rows=db.update(
+            "INSERT INTO academic_candidate_handoff_receipts "+
+            "(command_id,actor_username,request_key,core_outbox_hash) "+
+            "SELECT c.command_id,c.operator_username,c.request_key,o.payload_hash "+
+            "FROM academic_session_candidate_commands c "+
+            "JOIN academic_session_candidate_slots s ON s.command_id=c.command_id "+
+            "JOIN academic_session_candidate_outbox o ON o.command_id=c.command_id "+
+            "WHERE c.command_id=CAST(? AS UUID) AND c.operator_username=? "+
+            "AND c.request_key=? AND c.request_hash=? AND c.state='STAGED' "+
+            "AND c.class_id=? AND c.class_session_id=? "+
+            "AND c.source_event_id=? AND c.source_revision=? "+
+            "AND c.academic_generation=? AND c.attendance_generation=? "+
+            "AND c.scheduling_generation=? AND o.payload_hash=? "+
+            "AND o.event_kind='REHEARSAL_ONLY' "+
+            "AND s.class_session_id=c.class_session_id "+
+            "AND s.source_revision=c.source_revision "+
+            "ON CONFLICT(command_id) DO NOTHING",
+            committed.commandId(),committed.actor(),committed.key(),
+            committed.digest(),committed.classId(),committed.sessionId(),
+            committed.eventId(),committed.revision(),
+            committed.academicGeneration(),committed.attendanceGeneration(),
+            committed.schedulingGeneration(),committed.outboxHash());
+        if(rows==0) {
+            Long exact=db.queryForObject(
+                "SELECT COUNT(*) FROM academic_candidate_handoff_receipts "+
+                "WHERE command_id=CAST(? AS UUID) AND actor_username=? "+
+                "AND request_key=? AND core_outbox_hash=?",
+                Long.class,committed.commandId(),committed.actor(),
+                committed.key(),committed.outboxHash());
+            if(!Long.valueOf(1).equals(exact))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Academic local handoff evidence does not match Core release");
+        } else if(rows!=1) {
+            throw new IllegalStateException("Ambiguous Academic candidate release receipt");
+        }
+    }
+
     public Receipt stage(Plan plan) {
         List<Shadow> source=db.query(
             "SELECT class_id,source_event_id,source_revision,event_kind "+

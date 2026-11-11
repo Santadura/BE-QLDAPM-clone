@@ -143,5 +143,8 @@ public class AcademicSessionCandidateService {
             proof.attendanceGeneration(),proof.schedulingGeneration());
         claims.release(new AcademicCandidateClaimClient.Release(
             claim,receipt.commandId(),proof.outboxHash()));
+        // Local acknowledgement only after Core's transactional RELEASED
+        // receipt. A crash at this edge is healed by the bounded reconciler.
+        candidates.recordHandoff(proof);
     }
 }

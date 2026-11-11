@@ -248,3 +248,26 @@ DROP TRIGGER IF EXISTS trg_iig_candidate_outbox_no_truncate
 CREATE TRIGGER trg_iig_candidate_outbox_no_truncate
   BEFORE TRUNCATE ON academic_session_candidate_outbox
   FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+
+
+-- Phase 8q: candidate Core handback receipts are the local "remote ack"
+-- counterpart of Core's immutable acquisition/release audit. This is NOT
+-- a candidate domain event dispatcher and has no live timetable effects.
+CREATE TABLE IF NOT EXISTS academic_candidate_handoff_receipts (
+  command_id UUID PRIMARY KEY REFERENCES academic_session_candidate_commands(command_id),
+  actor_username VARCHAR(100) NOT NULL,
+  request_key VARCHAR(128) NOT NULL,
+  core_outbox_hash CHAR(64) NOT NULL CHECK(core_outbox_hash ~ '^[0-9a-f]{64}$'),
+  released_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(actor_username,request_key)
+)@@
+DROP TRIGGER IF EXISTS trg_iig_candidate_handoff_receipt_immutable
+  ON academic_candidate_handoff_receipts@@
+CREATE TRIGGER trg_iig_candidate_handoff_receipt_immutable
+  BEFORE UPDATE OR DELETE ON academic_candidate_handoff_receipts
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_candidate_handoff_receipt_no_truncate
+  ON academic_candidate_handoff_receipts@@
+CREATE TRIGGER trg_iig_candidate_handoff_receipt_no_truncate
+  BEFORE TRUNCATE ON academic_candidate_handoff_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
