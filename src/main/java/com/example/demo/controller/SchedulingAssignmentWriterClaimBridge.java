@@ -1,6 +1,8 @@
 package com.example.demo.controller;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.Set;
@@ -35,12 +37,18 @@ public class SchedulingAssignmentWriterClaimBridge {
     private record Stored(String managerEmployeeId,String status) {}
     private record TeacherEvent(String eventId,String scheduleId,String payloadHash,
                                 long revision) {}
+    private record TeacherFacts(String teacherId,String classId,LocalDate date,
+                                LocalTime start,LocalTime end,String status,
+                                String assignedBy) {}
     public record TeacherClaimEvidence(
         boolean found,String actorUsername,String requestKey,
         String managerEmployeeId,String claimStatus,
         long referenceEventCount,String referenceEventId,
         String referenceScheduleId,String referencePayloadHash,
-        long referenceRevision,boolean coreTeacherRowExists) {}
+        long referenceRevision,boolean coreTeacherRowExists,
+        String coreTeacherId,String coreClassId,LocalDate coreDate,
+        LocalTime coreStartTime,LocalTime coreEndTime,
+        String coreStatus,String coreAssignedBy) {}
 
     private static final Set<String> SUPPORTED=
         Set.of("ASSIGN_STAFF","EDIT_STAFF","CANCEL_STAFF","ASSIGN_TEACHER");
@@ -98,17 +106,31 @@ public class SchedulingAssignmentWriterClaimBridge {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "More than one Core teaching event for a single create command");
         TeacherEvent event=events.isEmpty()?null:events.get(0);
-        Long live=event==null?0L:db.queryForObject(
-            "SELECT count(*) FROM teaching_schedules t WHERE " +
-            "t.teaching_schedule_id=? AND t.status='ASSIGNED'",
-            Long.class,event.scheduleId());
+        List<TeacherFacts> live=event==null?List.of():db.query(
+            "SELECT teacher_id,class_id,date,start_time,end_time,status,assigned_by " +
+            "FROM teaching_schedules WHERE teaching_schedule_id=?",
+            (rs,i)->new TeacherFacts(rs.getString(1),rs.getString(2),
+                rs.getObject(3,LocalDate.class),rs.getObject(4,LocalTime.class),
+                rs.getObject(5,LocalTime.class),rs.getString(6),rs.getString(7)),
+            event.scheduleId());
+        if(live.size()>1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "More than one Core TEACHING reference for this event");
+        TeacherFacts facts=live.isEmpty()?null:live.get(0);
         Stored claim=claims.isEmpty()?null:claims.get(0);
         return new TeacherClaimEvidence(claim!=null,actorUsername,requestKey,
             claim==null?null:claim.managerEmployeeId(),
             claim==null?null:claim.status(),events.size(),
             event==null?null:event.eventId(),event==null?null:event.scheduleId(),
             event==null?null:event.payloadHash(),event==null?0:event.revision(),
-            live!=null && live==1);
+            facts!=null && "ASSIGNED".equals(facts.status()),
+            facts==null?null:facts.teacherId(),
+            facts==null?null:facts.classId(),
+            facts==null?null:facts.date(),
+            facts==null?null:facts.start(),
+            facts==null?null:facts.end(),
+            facts==null?null:facts.status(),
+            facts==null?null:facts.assignedBy());
     }
 
     @PostMapping

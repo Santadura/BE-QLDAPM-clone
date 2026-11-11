@@ -18,6 +18,10 @@ class TeacherClaimReconciliationServiceTest {
     private final TeacherClaimReconciliationService svc=
         new TeacherClaimReconciliationService(db,core);
     private static final String ACTOR="tc001",KEY="cmd-1",HASH="a".repeat(64);
+    private static final String PAYLOAD="""
+        {"id":"teach-1","teacherId":"teacher-1","classId":"class-1",
+        "date":"2027-02-11","startTime":"09:00","endTime":"11:00",
+        "status":"ASSIGNED","assignedBy":"tc-1"}""";
     private void local(String state,String eventId,boolean delivered) throws Exception {
         when(db.query(startsWith("SELECT state FROM scheduling_assignment_command_inbox"),
             any(RowMapper.class),eq(ACTOR),eq(KEY)))
@@ -33,6 +37,7 @@ class TeacherClaimReconciliationServiceTest {
                 when(rs.getString(3)).thenReturn(HASH);
                 when(rs.getLong(4)).thenReturn(1L);
                 when(rs.getBoolean(5)).thenReturn(delivered);
+                when(rs.getString(6)).thenReturn(PAYLOAD);
                 return List.of(mapper.mapRow(rs,0));
             });
     }
@@ -41,7 +46,12 @@ class TeacherClaimReconciliationServiceTest {
             new SchedulingCoreClient.TeacherClaimEvidence(found,ACTOR,KEY,
                 found?"tc-1":null,status,eventId==null?0:1,
                 eventId,eventId==null?null:"teach-1",
-                eventId==null?null:HASH,eventId==null?0:1,live));
+                eventId==null?null:HASH,eventId==null?0:1,live,
+                live?"teacher-1":null,live?"class-1":null,
+                live?java.time.LocalDate.of(2027,2,11):null,
+                live?java.time.LocalTime.of(9,0):null,
+                live?java.time.LocalTime.of(11,0):null,
+                live?"ASSIGNED":null,live?"tc-1":null));
     }
 
     @Test void identifiesOrphanClaimAfterCoreAdmitsButSchedulingRollback() throws Exception {
@@ -75,6 +85,30 @@ class TeacherClaimReconciliationServiceTest {
         coreClaim(true,"CONFIRMED","unexpected-event",true);
         assertEquals("MANUAL_REVIEW_REQUIRED",svc.diagnose(ACTOR,KEY).state());
     }
+    @Test void changedCoreTeacherCannotBeMistakenForConsistentCommit() throws Exception {
+        local("COMMITTED","event-1",true);
+        var changed=new SchedulingCoreClient.TeacherClaimEvidence(
+            true,ACTOR,KEY,"tc-1","CONFIRMED",1,"event-1","teach-1",
+            HASH,1,true,"teacher-2","class-1",
+            java.time.LocalDate.of(2027,2,11),
+            java.time.LocalTime.of(9,0),java.time.LocalTime.of(11,0),
+            "ASSIGNED","tc-1");
+        when(core.teacherClaimEvidence(ACTOR,KEY)).thenReturn(changed);
+        assertEquals("MANUAL_REVIEW_REQUIRED",svc.diagnose(ACTOR,KEY).state());
+    }
+
+    @Test void changedCoreShiftCannotBeMistakenForConsistentCommit() throws Exception {
+        local("COMMITTED","event-1",true);
+        var changed=new SchedulingCoreClient.TeacherClaimEvidence(
+            true,ACTOR,KEY,"tc-1","CONFIRMED",1,"event-1","teach-1",
+            HASH,1,true,"teacher-1","class-1",
+            java.time.LocalDate.of(2027,2,11),
+            java.time.LocalTime.of(10,0),java.time.LocalTime.of(12,0),
+            "ASSIGNED","tc-1");
+        when(core.teacherClaimEvidence(ACTOR,KEY)).thenReturn(changed);
+        assertEquals("MANUAL_REVIEW_REQUIRED",svc.diagnose(ACTOR,KEY).state());
+    }
+
     @Test void missingCoreEvidenceMustNotBeCalledAConfirmedAssignment() throws Exception {
         local("STAGED",null,false);
         coreClaim(false,null,null,false);

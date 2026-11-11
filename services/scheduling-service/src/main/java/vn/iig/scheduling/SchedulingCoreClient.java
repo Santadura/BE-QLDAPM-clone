@@ -113,7 +113,10 @@ public class SchedulingCoreClient {
         String requestKey,String managerEmployeeId,String claimStatus,
         long referenceEventCount,String referenceEventId,
         String referenceScheduleId,String referencePayloadHash,
-        long referenceRevision,boolean coreTeacherRowExists) {}
+        long referenceRevision,boolean coreTeacherRowExists,
+        String coreTeacherId,String coreClassId,LocalDate coreDate,
+        LocalTime coreStartTime,LocalTime coreEndTime,
+        String coreStatus,String coreAssignedBy) {}
 
     /**
      * Read-only, key-protected Core claim evidence. Missing, partial or

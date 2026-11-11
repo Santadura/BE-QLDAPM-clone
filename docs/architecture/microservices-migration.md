@@ -660,8 +660,12 @@ Core assignment.
 
 A new PRIVATE Core read-only claim-evidence endpoint reports the exact
 actor/key, TC manager, claim status, historical reference event ID,
-schedule ID, SHA-256 digest/revision and whether the TEACHING Core
-reference row still exists. Scheduling now exposes a **separately
+schedule ID, SHA-256 digest/revision and the actual TEACHING Core
+reference worker, class, date, times, status and assigning TC. The
+diagnostic refuses to classify a confirmed claim as CONSISTENT_COMMITTED
+(or safely recoverable) unless **all current Core business fields**
+equal the immutable Scheduling event payload. A matching historical
+event digest alone is never enough. Scheduling now exposes a **separately
 opt-in**, INTERNAL, live-ADMIN-only diagnosis endpoint at
 `/internal/scheduling/assignments/reconciliation/teacher/diagnose`
 for `actorUsername` and `requestKey`. It compares the Core evidence
