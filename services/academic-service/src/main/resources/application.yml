@@ -17,6 +17,7 @@ spring:
 iig:
   academic:
     session-relay-enabled: ${ACADEMIC_SESSION_SOURCE_RELAY_ENABLED:false}
+    event-session-read-enabled: ${ACADEMIC_EVENT_SESSION_READ_ENABLED:false}
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${ACADEMIC_INTERNAL_API_KEY}

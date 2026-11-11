@@ -149,6 +149,28 @@ public class AcademicSessionSourceRepository {
         return count;
     }
 
+    /**
+     * Event-derived read from Academic PostgreSQL, not Core JSON snapshots.
+     * DELETE tombstones never appear, but CANCELLED rows remain visible.
+     */
+    public String eventBackedClassSessions(String classId) {
+        String raw=db.queryForObject(
+            "SELECT COALESCE(jsonb_agg(jsonb_build_object("+
+            "'id',class_session_id,'classId',class_id,"+
+            "'date',to_char(session_date,'YYYY-MM-DD'),"+
+            "'startTime',to_char(start_time,'HH24:MI:SS'),"+
+            "'endTime',to_char(end_time,'HH24:MI:SS'),"+
+            "'status',status) ORDER BY session_date,start_time),"+
+            "'[]'::jsonb)::text "+
+            "FROM academic_class_sessions_shadow "+
+            "WHERE class_id=? AND event_kind='UPSERT'",
+            String.class,classId);
+        if(raw==null || raw.isBlank())
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic class timetable projection unavailable");
+        return raw;
+    }
+
     @Transactional
     public void apply(AcademicSessionSourceClient.Event event,boolean historical) {
         if(event==null || event.eventId()<1 || event.sourceRevision()<1 ||

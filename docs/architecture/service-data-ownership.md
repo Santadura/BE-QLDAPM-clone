@@ -205,6 +205,14 @@ service-key-protected projection API after bootstrap.
   private full-history readiness proof expecting success, and restore
   Academic -> Attendance -> Scheduling with a failure-safe EXIT trap.
   No production flag or Academic write ownership is activated.
+- [x] Phase 8m-2: Academic public planned-session GET now
+  materializes the FE response from its own normalized PostgreSQL
+  class-session state, based on immutable Core events (not Core JSON).
+  The live actor and class ACL are checked twice using Core session
+  revision before/after the local read, with a source event-count,
+  acknowledgement and full-history cursor fence. An incomplete or
+  changed event stream fails closed; legacy deployment keeps its
+  previous GET transport until explicitly enabled.
 - [x] Phase 8m-1: the microservices Compose disables legacy Core
   public timetable PUT/POST to prevent clients from bypassing the
   independent Academic API ingress. The internal Core bridge remains

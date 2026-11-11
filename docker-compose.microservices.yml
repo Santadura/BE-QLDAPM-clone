@@ -346,6 +346,7 @@ services:
       ACADEMIC_DB_PASSWORD: ${ACADEMIC_DB_PASSWORD:-local-dev-academic-password}
       ACADEMIC_INTERNAL_API_KEY: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}
       ACADEMIC_SESSION_SOURCE_RELAY_ENABLED: ${ACADEMIC_SESSION_SOURCE_RELAY_ENABLED:-true}
+      ACADEMIC_EVENT_SESSION_READ_ENABLED: ${ACADEMIC_EVENT_SESSION_READ_ENABLED:-true}
       CORE_INTERNAL_URL: http://backend:8081
     expose:
       - "8099"

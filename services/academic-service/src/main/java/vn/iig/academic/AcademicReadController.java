@@ -1,6 +1,7 @@
 package vn.iig.academic;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -13,9 +14,14 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api")
 public class AcademicReadController {
     private final AcademicReadModelService model;
+    private final AcademicEventSessionReadService eventRead;
+    @Value("${iig.academic.event-session-read-enabled:false}")
+    private boolean eventSessionReadEnabled=false;
 
-    public AcademicReadController(AcademicReadModelService model) {
+    public AcademicReadController(AcademicReadModelService model,
+                                  AcademicEventSessionReadService eventRead) {
         this.model=model;
+        this.eventRead=eventRead;
     }
 
     @GetMapping("/class-planning")
@@ -28,7 +34,9 @@ public class AcademicReadController {
     public ResponseEntity<JsonNode> sessions(
             @PathVariable String classId,
             @RequestHeader(value="Authorization",required=false) String authorization) {
-        return response(model.sessions(classId,authorization));
+        return response(eventSessionReadEnabled
+            ?eventRead.sessions(classId,authorization)
+            :model.sessions(classId,authorization));
     }
 
     private ResponseEntity<JsonNode> response(AcademicReadModelService.Result value) {
