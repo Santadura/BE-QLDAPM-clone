@@ -34,6 +34,9 @@ class AssignmentProjectionRepositoryTest {
         verify(db).update(contains("scheduling_assignment_read_model.version<EXCLUDED.version"),
             eq("TEACHING"),eq("t-1"),eq(7L),eq(false),
             eq("teacher-001"),eq("TEACHER"),any(),eq("ASSIGNED"),contains("teacherId"));
+        verify(db).update(startsWith("INSERT INTO scheduling_assignment_owned_slots"),
+            eq("TEACHING"),eq("t-1"),eq(7L),eq("teacher-001"),
+            eq("class-1"),any(),any(),any(),eq(true));
     }
 
     @Test void deletionTombstonesCannotBeOverwrittenByOldEvents() {

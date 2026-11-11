@@ -355,7 +355,16 @@ service-key-protected projection API after bootstrap.
 - [ ] Add version checks, idempotency keys, expiry and compensation for failed
   cross-service enrollment/assignment, while keeping last-CS-coverage and
   teacher attendance constraints correct.
-- [ ] Test high-concurrency cross-service schedule races and role/override boundaries.
+- [x] Test high-concurrency cross-service schedule races and role/override
+  boundaries: Scheduling PostgreSQL now enforces worker and same-class
+  teaching-slot GiST exclusions across competing independent transactions.
+  GitHub CI runs simultaneous independent PostgreSQL sessions with
+  overlapping worker slots, validates exactly one commit and legal adjacent
+  intervals, plus Core class/source fences, private role boundaries and
+  Academic candidate idempotency/version rejection. The legacy Core mirror
+  is NOT forcibly normalized by these constraints; each opt-in standalone
+  write additionally checks a complete live frozen Core assignment manifest.
+  Public assignment ownership remains unchanged.
 
 ### D. HR and Payroll
 

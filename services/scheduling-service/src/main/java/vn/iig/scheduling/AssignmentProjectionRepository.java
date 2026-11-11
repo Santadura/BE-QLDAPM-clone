@@ -12,6 +12,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,10 +60,36 @@ public class AssignmentProjectionRepository {
             "ON CONFLICT(key) DO NOTHING");
     }
 
-    @Transactional
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
     public void project(AssignmentSnapshot item) {
         requireReady();
         put(item);
+        // Only private independent writes invoke project(). Core's source
+        // relay uses applyBatch()/put() and must not acquire owned slots.
+        // The GiST exclusion constraints enforce serializable worker/class
+        // overlap safety even under competing PostgreSQL transactions.
+        try {
+            db.update(
+                "INSERT INTO scheduling_assignment_owned_slots "+
+                "(source_type,schedule_id,source_revision,employee_id,class_id,"+
+                "work_date,start_time,end_time,active) "+
+                "VALUES(?,?,?,?,?,?,?,?,?) "+
+                "ON CONFLICT(source_type,schedule_id) DO UPDATE SET "+
+                "source_revision=EXCLUDED.source_revision,"+
+                "employee_id=EXCLUDED.employee_id,class_id=EXCLUDED.class_id,"+
+                "work_date=EXCLUDED.work_date,start_time=EXCLUDED.start_time,"+
+                "end_time=EXCLUDED.end_time,active=EXCLUDED.active,"+
+                "updated_at=NOW() "+
+                "WHERE scheduling_assignment_owned_slots.source_revision<"+
+                "EXCLUDED.source_revision",
+                item.sourceType(),item.id(),item.version(),item.employeeId(),
+                item.classId(),item.date(),item.startTime(),item.endTime(),
+                !item.deleted() && "ASSIGNED".equals(item.status()));
+        } catch(DataIntegrityViolationException conflict) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Scheduling-owned employee or class slot conflicts with a committed assignment",
+                conflict);
+        }
     }
 
     /** Commit the full incoming change batch before acknowledging Core. */
