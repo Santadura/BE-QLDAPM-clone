@@ -2701,6 +2701,22 @@ fi
 # The private API is disabled in normal Compose, so even an authenticated
 # Admin + internal service key cannot stage a candidate accidentally.
 candidate_url="http://academic-service:8099/internal/academic/cutover/sessions/candidates"
+# Recreating the Academic container returns before the JVM finishes booting.
+# "Connection refused" must not be mistaken for a disabled private endpoint.
+academic_restored=false
+for attempt in $(seq 1 80); do
+  if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    "http://academic-service:8099/actuator/health" 2>/dev/null |
+    grep -q '"UP"'; then
+    academic_restored=true
+    break
+  fi
+  sleep 2
+done
+test "$academic_restored" = "true" || {
+  echo "Academic service did not become healthy after candidate flag restore"
+  exit 1
+}
 disabled_candidate="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
   --header "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
   --header "Authorization: Bearer ${TOKEN}" \
