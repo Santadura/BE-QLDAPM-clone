@@ -671,7 +671,10 @@ TEACHING source event. The process is **irreversible and fail-closed**:
    `FOR UPDATE` lock (serializing with new claims and writer handback),
    checks claim PENDING and zero Core reference events, and calls the
    **Scheduling-owned proof endpoint over private HTTP** to verify
-   REJECTED plus zero local events plus one immutable local audit.
+   REJECTED plus zero local events plus one immutable local audit,
+   including the exact same administrator username and audit reason as
+   the Core revocation request. An audit count alone cannot authorize
+   a different administrator or reason.
    Only then Core atomically writes the immutable Core audit and updates
    PENDING to REVOKED in one transaction. A separate PostgreSQL trigger
    enforces that the exact administrator/reason audit ALREADY exists

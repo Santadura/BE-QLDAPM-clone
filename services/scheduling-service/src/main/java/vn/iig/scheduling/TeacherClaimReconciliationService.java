@@ -56,7 +56,8 @@ public class TeacherClaimReconciliationService {
     public record LocalAbandonReceipt(String actorUsername,String requestKey,
         String commandState,String adminUsername,String reason) {}
     public record AbandonProof(String actorUsername,String requestKey,
-        String state,long sourceEventCount,long immutableAuditCount) {}
+        String state,long sourceEventCount,long immutableAuditCount,
+        String auditAdminUsername,String auditReason) {}
     private record Audit(String administrator,String reason) {}
     private final SchedulingCoreClient core;
 
@@ -145,12 +146,16 @@ public class TeacherClaimReconciliationService {
             "SELECT count(*) FROM scheduling_assignment_domain_outbox " +
             "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=?",
             Long.class,actor,key);
-        Long auditCount=db.queryForObject(
-            "SELECT count(*) FROM scheduling_teacher_claim_abandon_audit " +
+        // Return the immutable actor/reason, not just a count: Core must
+        // independently match the administrator and exact audit reason.
+        List<Audit> audits=db.query(
+            "SELECT admin_username,reason FROM scheduling_teacher_claim_abandon_audit " +
             "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=?",
-            Long.class,actor,key);
+            (rs,i)->new Audit(rs.getString(1),rs.getString(2)),actor,key);
         return new AbandonProof(actor,key,state.size()==1?state.get(0):null,
-            eventCount==null?-1:eventCount,auditCount==null?-1:auditCount);
+            eventCount==null?-1:eventCount,audits.size(),
+            audits.size()==1?audits.get(0).administrator():null,
+            audits.size()==1?audits.get(0).reason():null);
     }
 
     public Diagnosis diagnose(String actor,String key) {

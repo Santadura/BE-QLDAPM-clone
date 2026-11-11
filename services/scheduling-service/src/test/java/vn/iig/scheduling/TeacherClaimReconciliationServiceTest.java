@@ -204,4 +204,29 @@ class TeacherClaimReconciliationServiceTest {
             ()->svc.diagnose("tc001;DROP TABLE x","cmd-1")).getStatusCode());
         verifyNoInteractions(db,core);
     }
+    @Test void abandonmentProofReturnsExactImmutableAdministratorAndReason()
+        throws Exception {
+        abandonmentState("REJECTED",0);
+        var proof=svc.abandonmentProof(ACTOR,KEY);
+        assertEquals("REJECTED",proof.state());
+        assertEquals(0,proof.sourceEventCount());
+        assertEquals(1,proof.immutableAuditCount());
+        assertEquals("admin",proof.auditAdminUsername());
+        assertEquals(REASON,proof.auditReason());
+        verifyNoInteractions(core);
+    }
+
+    @Test void proofWithoutMatchingImmutableAuditCannotAuthorizeRevocation()
+        throws Exception {
+        when(db.query(startsWith("SELECT state FROM scheduling_assignment_command_inbox"),
+            any(RowMapper.class),eq(ACTOR),eq(KEY))).thenReturn(List.of("REJECTED"));
+        when(db.queryForObject(startsWith("SELECT count(*) FROM scheduling_assignment_domain_outbox"),
+            eq(Long.class),eq(ACTOR),eq(KEY))).thenReturn(0L);
+        when(db.query(startsWith("SELECT admin_username,reason FROM scheduling_teacher_claim_abandon_audit"),
+            any(RowMapper.class),eq(ACTOR),eq(KEY))).thenReturn(List.of());
+        var proof=svc.abandonmentProof(ACTOR,KEY);
+        assertEquals(0,proof.immutableAuditCount());
+        assertNull(proof.auditAdminUsername());
+        assertNull(proof.auditReason());
+    }
 }

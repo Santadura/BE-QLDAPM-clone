@@ -33,7 +33,8 @@ public class SchedulingTeacherClaimRevocationBridge {
     public record Request(String actorUsername,String requestKey,String reason) {}
     public record Receipt(String actorUsername,String requestKey,String status) {}
     private record Proof(String actorUsername,String requestKey,
-                         String state,long sourceEventCount,long immutableAuditCount) {}
+                         String state,long sourceEventCount,long immutableAuditCount,
+                         String auditAdminUsername,String auditReason) {}
     private record Claim(String managerEmployeeId,String status,
                          String revokedBy,String reason) {}
     private record Audit(String adminUsername,String reason) {}
@@ -128,7 +129,9 @@ public class SchedulingTeacherClaimRevocationBridge {
         if(proof==null || !"REJECTED".equals(proof.state()) ||
                 !request.actorUsername().equals(proof.actorUsername()) ||
                 !request.requestKey().equals(proof.requestKey()) ||
-                proof.sourceEventCount()!=0 || proof.immutableAuditCount()!=1)
+                proof.sourceEventCount()!=0 || proof.immutableAuditCount()!=1 ||
+                !admin.equals(proof.auditAdminUsername()) ||
+                !reason.equals(proof.auditReason()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Scheduling command is not irreversibly rejected with zero source events");
 

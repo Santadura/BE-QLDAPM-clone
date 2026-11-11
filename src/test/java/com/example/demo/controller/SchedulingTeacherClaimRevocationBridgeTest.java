@@ -107,4 +107,45 @@ class SchedulingTeacherClaimRevocationBridgeTest {
             ()->bridge.revoke("private-key",vague,admin)).getStatusCode());
         verifyNoInteractions(db);
     }
+    private void rejectedWhenSchedulingAuditDoesNotMatch(
+        String auditAdmin,String auditReason) throws Exception {
+        com.sun.net.httpserver.HttpServer server=com.sun.net.httpserver.HttpServer.create(
+            new java.net.InetSocketAddress("127.0.0.1",0),0);
+        server.createContext(
+            "/internal/scheduling/assignments/reconciliation/teacher/proof",
+            exchange -> {
+                String body="{\"actorUsername\":\"tc001\",\"requestKey\":\"orphan-1\"," +
+                    "\"state\":\"REJECTED\",\"sourceEventCount\":0," +
+                    "\"immutableAuditCount\":1,\"auditAdminUsername\":\"" +
+                    auditAdmin+"\",\"auditReason\":\""+auditReason+"\"}";
+                byte[] bytes=body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type","application/json");
+                exchange.sendResponseHeaders(200,bytes.length);
+                try(var output=exchange.getResponseBody()){output.write(bytes);}
+            });
+        server.start();
+        try {
+            approved();
+            claim("PENDING");
+            var live=new SchedulingTeacherClaimRevocationBridge(db,"private-key",
+                "http://127.0.0.1:"+server.getAddress().getPort());
+            assertEquals(HttpStatus.CONFLICT,assertThrows(
+                ResponseStatusException.class,
+                ()->live.revoke("private-key",request(),admin)).getStatusCode());
+            verify(db,never()).update(anyString(),any(Object[].class));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test void differentSchedulingAuditAdministratorMustNotRevokeCoreClaim()
+        throws Exception {
+        rejectedWhenSchedulingAuditDoesNotMatch("different-admin",REASON);
+    }
+
+    @Test void differentSchedulingAuditReasonMustNotRevokeCoreClaim()
+        throws Exception {
+        rejectedWhenSchedulingAuditDoesNotMatch("admin",
+            "A different immutable Scheduling audit reason was recorded");
+    }
 }
