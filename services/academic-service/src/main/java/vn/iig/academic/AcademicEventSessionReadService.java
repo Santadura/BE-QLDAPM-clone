@@ -14,12 +14,14 @@ public class AcademicEventSessionReadService {
     private final AcademicCoreClient core;
     private final AcademicSessionSourceClient source;
     private final AcademicSessionSourceRepository local;
+    private final AcademicSessionSourceRelay relay;
     private final ObjectMapper json;
 
     public AcademicEventSessionReadService(AcademicCoreClient core,
             AcademicSessionSourceClient source,AcademicSessionSourceRepository local,
-            ObjectMapper json) {
-        this.core=core;this.source=source;this.local=local;this.json=json;
+            AcademicSessionSourceRelay relay,ObjectMapper json) {
+        this.core=core;this.source=source;this.local=local;
+        this.relay=relay;this.json=json;
     }
 
     public AcademicReadModelService.Result sessions(String classId,String bearer) {
@@ -30,11 +32,15 @@ public class AcademicEventSessionReadService {
             // Core's private version endpoint revalidates the exact class ACL.
             long firstRevision=core.sessionRevision(classId,bearer).revision();
             var first=source.summary();
-            if(first==null || first.eventCount()<0 || first.pendingEvents()!=0 ||
-                    first.maxEventId()<0 || first.sourceRows()<0 ||
-                    (first.eventCount()==0 && first.maxEventId()!=0) ||
-                    local.historyCursor()!=first.maxEventId() ||
-                    local.receiptCount()!=first.eventCount())
+            if(behind(first)) {
+                // Core's ACL is verified FIRST. Import only a finite number
+                // of source events synchronously, never call its JSON snapshot.
+                // The relay commits each event in Academic PG BEFORE Core ack.
+                relay.drain(3);
+                relay.backfill(3);
+                first=source.summary();
+            }
+            if(behind(first))
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                     "Academic timetable is not fully reconciled with Core");
             final JsonNode payload;
@@ -56,5 +62,12 @@ public class AcademicEventSessionReadService {
         }
         throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
             "Academic timetable changed during live source validation");
+    }    private boolean behind(AcademicSessionSourceClient.Summary state) {
+        return state==null || state.eventCount()<0 || state.pendingEvents()!=0 ||
+            state.maxEventId()<0 || state.sourceRows()<0 ||
+            (state.eventCount()==0 && state.maxEventId()!=0) ||
+            local.historyCursor()!=state.maxEventId() ||
+            local.receiptCount()!=state.eventCount();
     }
 }
+

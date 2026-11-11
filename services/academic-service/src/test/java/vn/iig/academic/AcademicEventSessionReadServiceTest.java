@@ -11,8 +11,9 @@ class AcademicEventSessionReadServiceTest {
     AcademicCoreClient core=mock(AcademicCoreClient.class);
     AcademicSessionSourceClient source=mock(AcademicSessionSourceClient.class);
     AcademicSessionSourceRepository local=mock(AcademicSessionSourceRepository.class);
+    AcademicSessionSourceRelay relay=mock(AcademicSessionSourceRelay.class);
     AcademicEventSessionReadService service=
-        new AcademicEventSessionReadService(core,source,local,new ObjectMapper());
+        new AcademicEventSessionReadService(core,source,local,relay,new ObjectMapper());
     static final String BEARER="Bearer fixture";
     static final AcademicSessionSourceClient.Summary CURRENT=
         new AcademicSessionSourceClient.Summary(3,7,0,7);
@@ -32,6 +33,17 @@ class AcademicEventSessionReadServiceTest {
             .payload().get(0).path("id").asText());
         verify(core,never()).sessionExport(anyString(),anyString());
         verify(core,times(2)).sessionRevision("c1",BEARER);
+    }
+    @Test void temporarilyLaggingSourceIsReconciledBeforeReading() {
+        ready();
+        when(source.summary()).thenReturn(
+            new AcademicSessionSourceClient.Summary(3,7,1,7),
+            CURRENT,CURRENT);
+        assertEquals("s1",service.sessions("c1",BEARER)
+            .payload().get(0).path("id").asText());
+        verify(relay).drain(3);
+        verify(relay).backfill(3);
+        verify(core,never()).sessionExport(anyString(),anyString());
     }
     @Test void refusesUnacknowledgedSourceMutation() {
         ready();

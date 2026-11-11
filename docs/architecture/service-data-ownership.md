@@ -205,6 +205,11 @@ service-key-protected projection API after bootstrap.
   private full-history readiness proof expecting success, and restore
   Academic -> Attendance -> Scheduling with a failure-safe EXIT trap.
   No production flag or Academic write ownership is activated.
+- [x] Phase 8m-3: prevent normal read-after-write lag from breaking
+  frontend business flows. After a validated class ACL, Academic GETs
+  perform bounded synchronous Core-event drain and historical replay
+  into its own PostgreSQL when behind. A failed/oversized catch-up still
+  fails closed rather than returning a stale local timetable.
 - [x] Phase 8m-2: Academic public planned-session GET now
   materializes the FE response from its own normalized PostgreSQL
   class-session state, based on immutable Core events (not Core JSON).

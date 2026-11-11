@@ -40,9 +40,19 @@ public class AcademicSessionSourceRelay {
         }
     }
     public synchronized int drain() {
+        return drain(30);
+    }
+
+    /**
+     * Bounded synchronous catch-up on an authorized Academic GET. A burst
+     * of writes should not leave clients dependent on the scheduler delay.
+     */
+    public synchronized int drain(int maxPages) {
         if(!enabled)return 0;
+        if(maxPages<1 || maxPages>30)
+            throw new IllegalArgumentException("Academic event drain must be bounded");
         int count=0;
-        for(int page=0;page<30;page++) {
+        for(int page=0;page<maxPages;page++) {
             List<AcademicSessionSourceClient.Event> batch=source.pending(100);
             if(batch==null || batch.size()>100)
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
