@@ -199,6 +199,15 @@ service-key-protected projection API after bootstrap.
   is read separation, **not** Attendance mutation ownership.
 - [ ] Move attendance event ownership and finalized evidence for Payroll to
   Attendance, preserving the lesson-start and assigned-CS-only gates.
+- [x] Phase 8k: private read-only Academic cutover readiness proof requires
+  all three Scheduling/Attendance/Academic writers QUIESCED with unchanged
+  generation stamps, no source events awaiting acknowledgement, full Core
+  live-row/outbox parity, exact per-event hash and receipt parity across the
+  COMPLETE historical feed, complete backfill cursor, equal latest session
+  and DELETE tombstone projections, and stable source evidence after scan.
+  Immutable Academic receipts are guarded against raw SQL UPDATE/DELETE/TRUNCATE.
+  This proves a snapshot ONLY; full Academic write saga, lifecycle ownership,
+  and compensation must be implemented before independent writes may begin.
 - [x] Phase 8j hardening: reject TRUNCATE on Core class_sessions,
   immutable source outbox and Academic writer-control tables, independent
   of current writer mode. Attendance cannot resume CORE while Academic is

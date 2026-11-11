@@ -248,6 +248,52 @@ for trigger in trg_iig_reject_academic_session_truncate \
 done
 echo "PASS: no Academic history/control TRUNCATE bypass or early Attendance resume"
 
+# Read-only readiness must fail CLOSED on the default CORE-authoritative
+# stack. Do not freeze writers or invoke a real cutover on this fixture.
+cutover_url="http://academic-service:8099/internal/academic/cutover/sessions/readiness"
+readiness_reply="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
+  --header "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
+  "$cutover_url" 2>&1 || true)"
+printf '%s' "$readiness_reply" | grep -q '409' || {
+  echo "Academic cutover preflight failed to reject live CORE writer"
+  printf '%s\n' "$readiness_reply"
+  exit 1
+}
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/internal/academic/cutover/sessions/readiness")" = "404"
+
+# SQL bypasses must not be able to rewrite/delete/truncate imported
+# provenance after the Academic PostgreSQL transaction has committed.
+"${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
+  -d iig_academic -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+DECLARE receipt_id BIGINT;
+BEGIN
+  SELECT event_id INTO receipt_id FROM academic_session_source_receipts LIMIT 1;
+  IF receipt_id IS NULL THEN
+    RAISE EXCEPTION 'Academic cutover preflight fixture missing event receipt';
+  END IF;
+  BEGIN
+    UPDATE academic_session_source_receipts SET payload_hash=repeat('0',64)
+      WHERE event_id=receipt_id;
+    RAISE EXCEPTION 'Academic source receipt was modified by raw SQL';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM academic_session_source_receipts WHERE event_id=receipt_id;
+    RAISE EXCEPTION 'Academic source receipt was deleted by raw SQL';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    TRUNCATE academic_session_source_receipts;
+    RAISE EXCEPTION 'Academic source receipts were truncated by raw SQL';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END \$\$;
+SQL
+echo "PASS: Academic cutover preflight rejects active writers and receipt SQL tampering"
+
+
 
 
 

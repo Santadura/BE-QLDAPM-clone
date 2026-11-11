@@ -38,4 +38,11 @@ class AcademicSessionSourceBridgeTest {
                 .getStatusCode());
         verify(db,never()).update(anyString(),any(Object[].class));
     }
+    @Test void privateIntegrityEvidenceRequiresServiceKey() {
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,()->bridge.integrity("bad")).getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,()->bridge.integrity(null)).getStatusCode());
+        verifyNoInteractions(db);
+    }
 }
