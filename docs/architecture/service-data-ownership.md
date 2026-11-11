@@ -199,6 +199,12 @@ service-key-protected projection API after bootstrap.
   is read separation, **not** Attendance mutation ownership.
 - [ ] Move attendance event ownership and finalized evidence for Payroll to
   Attendance, preserving the lesson-start and assigned-CS-only gates.
+- [x] Phase 8l positive cutover rehearsal: in disposable GitHub Actions
+  wait for Core source acknowledgement and complete Academic history/typed
+  shadow catch-up, freeze Scheduling -> Attendance -> Academic, run the
+  private full-history readiness proof expecting success, and restore
+  Academic -> Attendance -> Scheduling with a failure-safe EXIT trap.
+  No production flag or Academic write ownership is activated.
 - [x] Phase 8l: replicate class-session source events into a typed
   Academic PostgreSQL shadow table (class/date/start/end/status/version/
   DELETE tombstone) in the SAME Academic transaction as immutable source

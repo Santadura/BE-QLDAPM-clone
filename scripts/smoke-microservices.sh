@@ -2208,3 +2208,89 @@ echo "PASS: Academic SQL blocks lease tampering, stale versions, active-Core wri
 
 
 
+
+
+# PHASE 8l: positive, full-history cutover READINESS REHEARSAL.
+# Only perform a committed writer freeze in disposable GitHub Actions.
+# Never use the positive proof as permission for live Academic write cutover.
+if [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+  echo "REHEARSAL: waiting for complete Core -> Academic history import before freeze"
+  academic_rehearsal_ready=false
+  for attempt in $(seq 1 90); do
+    core_evidence="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+      "SELECT (SELECT COUNT(*) FROM academic_session_source_outbox WHERE delivered_at IS NULL)
+         || ':' || (SELECT COUNT(*) FROM academic_session_source_outbox)
+         || ':' || (SELECT COALESCE(MAX(event_id),0) FROM academic_session_source_outbox);" | tr -d '[:space:]')"
+    local_evidence="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic -d iig_academic -tAc \
+      "SELECT (SELECT COUNT(*) FROM academic_session_source_receipts)
+         || ':' || (SELECT last_event_id FROM academic_session_history_cursor WHERE singleton=TRUE)
+         || ':' || (SELECT COUNT(*) FROM academic_class_sessions_shadow)
+         || ':' || (SELECT COUNT(*) FROM academic_session_owned_projection);" | tr -d '[:space:]')"
+    IIG_CORE_EVIDENCE="$core_evidence" IIG_LOCAL_EVIDENCE="$local_evidence" python3 -c \
+      'import os,sys; a=list(map(int,os.environ["IIG_CORE_EVIDENCE"].split(":"))); b=list(map(int,os.environ["IIG_LOCAL_EVIDENCE"].split(":"))); sys.exit(0 if len(a)==3 and len(b)==4 and a[0]==0 and a[1]==b[0] and a[2]==b[1] and b[2]==b[3] else 1)' && {
+      academic_rehearsal_ready=true
+      break
+    }
+    sleep 2
+  done
+  test "$academic_rehearsal_ready" = "true" || {
+    echo "Cannot freeze: Academic historical replay or typed shadow has not caught up"
+    exit 1
+  }
+
+  # The script's EXIT trap restores Core ownership even after a failed proof.
+  # Compensate in exactly the inverse order, matching SQL transition guards.
+  academic_rehearsal_restore() {
+    "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+BEGIN;
+UPDATE academic_session_writer_control SET writer_mode='CORE'
+  WHERE singleton=TRUE AND writer_mode='QUIESCED';
+UPDATE teacher_attendance_writer_control SET writer_mode='CORE'
+  WHERE singleton=TRUE AND writer_mode='QUIESCED';
+UPDATE scheduling_assignment_writer_control SET writer_mode='CORE'
+  WHERE singleton=TRUE AND writer_mode='QUIESCED';
+COMMIT;
+SQL
+  }
+  trap academic_rehearsal_restore EXIT
+
+  # Freeze in the same Core PostgreSQL transaction; no service starts writing
+  # Academic data. The SQL guards serialise against in-flight Core writes.
+  "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+BEGIN;
+UPDATE scheduling_assignment_writer_control SET writer_mode='QUIESCED' WHERE singleton=TRUE;
+UPDATE teacher_attendance_writer_control SET writer_mode='QUIESCED' WHERE singleton=TRUE;
+UPDATE academic_session_writer_control SET writer_mode='QUIESCED' WHERE singleton=TRUE;
+COMMIT;
+SQL
+
+  academic_proof=""
+  for attempt in $(seq 1 8); do
+    if academic_proof="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+      --header "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
+      "http://academic-service:8099/internal/academic/cutover/sessions/readiness" 2>/dev/null)"; then
+      break
+    fi
+    sleep 2
+  done
+  test -n "$academic_proof" || {
+    echo "Academic positive cutover readiness did not return a proof"; exit 1;
+  }
+  printf '%s' "$academic_proof" | python3 -c \
+    'import json,sys; d=json.load(sys.stdin); assert d["sourceEvents"]>0,d; assert d["sourceRows"]>0,d; assert d["lastEventId"]>0,d; assert d["academicGeneration"]>1 and d["attendanceGeneration"]>1 and d["schedulingGeneration"]>1,d'
+  echo "PASS: positive read-only Academic readiness attests full imported history under all three frozen writer generations"
+
+  # The private proof does not issue a writer capability or switch public
+  # routing. Resume Core in inverse order before completing smoke.
+  academic_rehearsal_restore
+  trap - EXIT
+  core_modes="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+    "SELECT (SELECT writer_mode FROM academic_session_writer_control WHERE singleton=TRUE)
+      || ':' || (SELECT writer_mode FROM teacher_attendance_writer_control WHERE singleton=TRUE)
+      || ':' || (SELECT writer_mode FROM scheduling_assignment_writer_control WHERE singleton=TRUE);" | tr -d '[:space:]')"
+  test "$core_modes" = "CORE:CORE:CORE" || {
+    echo "Academic rehearsal did not safely return all writers to Core"
+    exit 1
+  }
+  echo "PASS: Academic positive rehearsal restores every Core writer, without enabling a second source of truth"
+fi
