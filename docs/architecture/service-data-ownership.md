@@ -213,6 +213,12 @@ service-key-protected projection API after bootstrap.
   private full-history readiness proof expecting success, and restore
   Academic -> Attendance -> Scheduling with a failure-safe EXIT trap.
   No production flag or Academic write ownership is activated.
+- [x] Phase 8s: Core now audits both candidate claim acquisition
+  and release at PostgreSQL trigger level, including any direct SQL
+  transition. UNIQUE actor/key/transition keys prevent duplicate audits,
+  and the handback blocker still refuses QUIESCED -> CORE while an OPEN
+  claim exists. The Core bridge no longer performs a separate
+  application-level INSERT that could diverge.
 - [x] Phase 8q: Academic now persists a DISTINCT immutable local Core
   handback receipt only AFTER Core commits an exact released candidate
   claim. A bounded, restart-safe, feature-gated reconciler retries

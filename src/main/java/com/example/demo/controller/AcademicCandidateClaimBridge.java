@@ -151,9 +151,8 @@ public class AcademicCandidateClaimBridge {
         if(!Long.valueOf(1).equals(matching))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Core Academic candidate source event changed or was not acknowledged");
-        int created;
         try {
-            created=db.update(
+            db.update(
             "INSERT INTO academic_candidate_claims "+
             "(actor_username,request_key,request_hash,class_id,class_session_id,"+
             "source_event_id,source_revision,academic_generation,"+
@@ -168,12 +167,8 @@ public class AcademicCandidateClaimBridge {
                 "Another unresolved candidate holds the exact Academic lesson",ex);
         }
         ClaimRow existing=lockedClaim(claim);
-        if(created==1) {
-            db.update("INSERT INTO academic_candidate_claim_audit "+
-                "(actor_username,request_key,request_hash,event_kind) "+
-                "VALUES(?,?,?,'ACQUIRED')",
-                claim.actor(),claim.requestKey(),claim.requestHash());
-        }
+        // PostgreSQL AFTER INSERT appends immutable ACQUIRED evidence even
+        // for direct Core SQL. The claim and audit can never diverge.
         return new Result(existing.state(),claim.actor(),claim.requestKey());
     }
 
@@ -214,13 +209,7 @@ public class AcademicCandidateClaimBridge {
             release.claim().actor(),release.claim().requestKey(),
             release.claim().requestHash());
         if(n!=1)throw new IllegalStateException("Cannot persist Core handback release");
-        db.update("INSERT INTO academic_candidate_claim_audit "+
-            "(actor_username,request_key,request_hash,event_kind,"+
-            "candidate_command_id,candidate_outbox_hash) "+
-            "VALUES(?,?,?,'RELEASED',CAST(? AS UUID),?)",
-            release.claim().actor(),release.claim().requestKey(),
-            release.claim().requestHash(),release.candidateCommandId(),
-            release.outboxHash());
+        // AFTER UPDATE appends the immutable RELEASED audit atomically.
         return new Result("RELEASED",release.claim().actor(),release.claim().requestKey());
     }
 }
