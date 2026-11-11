@@ -332,3 +332,33 @@ CREATE TABLE IF NOT EXISTS scheduling_teacher_command_preflights (
 )@@
 CREATE INDEX IF NOT EXISTS idx_scheduling_teacher_preflight_employee
   ON scheduling_teacher_command_preflights(employee_id,work_date,start_time,end_time)@@
+
+-- Phase 8g-13: rejected-but-once-claimed TC command abandonment evidence.
+-- Only STAGED commands with ZERO immutable source events may be rejected.
+-- The preexisting assignment inbox trigger is authoritative for that guard.
+-- This separate audit makes a rejected command eligible for a Core-side
+-- CLAIM REVOKED, not for a blind delete or a distributed writer handback.
+CREATE TABLE IF NOT EXISTS scheduling_teacher_claim_abandon_audit (
+  actor_username VARCHAR(100) NOT NULL,
+  operation VARCHAR(40) NOT NULL DEFAULT 'ASSIGN_TEACHER'
+    CHECK(operation='ASSIGN_TEACHER'),
+  request_key VARCHAR(128) NOT NULL,
+  admin_username VARCHAR(100) NOT NULL,
+  reason VARCHAR(300) NOT NULL CHECK(length(reason)>=20),
+  abandoned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(actor_username,operation,request_key),
+  FOREIGN KEY(actor_username,operation,request_key)
+    REFERENCES scheduling_assignment_command_inbox(actor_username,operation,request_key)
+)@@
+CREATE OR REPLACE FUNCTION iig_guard_teacher_claim_abandon_audit()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'Teacher claim abandonment audit is immutable'
+    USING ERRCODE='55000';
+END;
+$$@@
+DROP TRIGGER IF EXISTS trg_iig_teacher_claim_abandon_audit
+  ON scheduling_teacher_claim_abandon_audit@@
+CREATE TRIGGER trg_iig_teacher_claim_abandon_audit
+  BEFORE UPDATE OR DELETE ON scheduling_teacher_claim_abandon_audit
+  FOR EACH ROW EXECUTE FUNCTION iig_guard_teacher_claim_abandon_audit()@@

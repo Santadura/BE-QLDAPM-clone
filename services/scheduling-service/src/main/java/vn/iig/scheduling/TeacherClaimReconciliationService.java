@@ -8,6 +8,7 @@ import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -52,17 +53,108 @@ public class TeacherClaimReconciliationService {
         }
     }
     private final JdbcTemplate db;
+    public record LocalAbandonReceipt(String actorUsername,String requestKey,
+        String commandState,String adminUsername,String reason) {}
+    public record AbandonProof(String actorUsername,String requestKey,
+        String state,long sourceEventCount,long immutableAuditCount) {}
+    private record Audit(String administrator,String reason) {}
     private final SchedulingCoreClient core;
 
     public TeacherClaimReconciliationService(JdbcTemplate db,SchedulingCoreClient core) {
         this.db=db;this.core=core;
     }
 
-    public Diagnosis diagnose(String actor,String key) {
+    private void validate(String actor,String key) {
         if(actor==null || !actor.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,99}") ||
                 key==null || !key.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Exact TC actor and teacher command key required");
+    }
+
+    /**
+     * Local first stage of safe claim abandonment. It serializes against
+     * TeacherAssignmentExecutor's FOR UPDATE of this SAME command inbox.
+     * REJECTED is permanent and its DB state trigger forbids rejection if
+     * any immutable outbox event ever committed. The follow-up Core call
+     * is a distinct transaction; on failure the claim remains PENDING,
+     * preventing unsafe Core handback until an explicit retry.
+     */
+    @Transactional
+    public LocalAbandonReceipt abandonLocally(String actor,String key,
+                                               String admin,String reason) {
+        validate(actor,key);
+        if(admin==null || !admin.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,99}") ||
+                reason==null || reason.trim().length()<20 ||
+                reason.length()>300)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Administrator and specific 20-300 character audit reason required");
+        List<String> states=db.query(
+            "SELECT state FROM scheduling_assignment_command_inbox " +
+            "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=? FOR UPDATE",
+            (rs,i)->rs.getString(1),actor,key);
+        if(states.size()!=1 || (!"STAGED".equals(states.get(0)) &&
+                                 !"REJECTED".equals(states.get(0))))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Only a non-executed or previously rejected teacher command can be abandoned");
+        Long outgoing=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_domain_outbox " +
+            "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=?",
+            Long.class,actor,key);
+        if(outgoing==null || outgoing!=0)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Teacher source events prevent orphan-claim abandonment");
+        if("STAGED".equals(states.get(0))) {
+            int changed=db.update(
+                "UPDATE scheduling_assignment_command_inbox " +
+                "SET state='REJECTED',updated_at=NOW() " +
+                "WHERE actor_username=? AND operation='ASSIGN_TEACHER' " +
+                "AND request_key=? AND state='STAGED'",
+                actor,key);
+            if(changed!=1)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Teacher command changed during irreversible rejection");
+        }
+        db.update("INSERT INTO scheduling_teacher_claim_abandon_audit " +
+            "(actor_username,operation,request_key,admin_username,reason) " +
+            "VALUES(?,'ASSIGN_TEACHER',?,?,?) ON CONFLICT DO NOTHING",
+            actor,key,admin,reason.trim());
+        List<Audit> audits=db.query(
+            "SELECT admin_username,reason FROM scheduling_teacher_claim_abandon_audit " +
+            "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=?",
+            (rs,i)->new Audit(rs.getString(1),rs.getString(2)),actor,key);
+        if(audits.size()!=1 || !admin.equals(audits.get(0).administrator()) ||
+                !reason.trim().equals(audits.get(0).reason()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Teacher command already abandoned under a different immutable audit");
+        return new LocalAbandonReceipt(actor,key,"REJECTED",admin,reason.trim());
+    }
+
+    /**
+     * Core checks this exact immutable Scheduling state before revoking an
+     * orphan writer claim. It is a read only proof; no request body can
+     * forge REJECTED or omit an existing local source event.
+     */
+    @Transactional(readOnly=true)
+    public AbandonProof abandonmentProof(String actor,String key) {
+        validate(actor,key);
+        List<String> state=db.query(
+            "SELECT state FROM scheduling_assignment_command_inbox " +
+            "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=?",
+            (rs,i)->rs.getString(1),actor,key);
+        Long eventCount=db.queryForObject(
+            "SELECT count(*) FROM scheduling_assignment_domain_outbox " +
+            "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=?",
+            Long.class,actor,key);
+        Long auditCount=db.queryForObject(
+            "SELECT count(*) FROM scheduling_teacher_claim_abandon_audit " +
+            "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=?",
+            Long.class,actor,key);
+        return new AbandonProof(actor,key,state.size()==1?state.get(0):null,
+            eventCount==null?-1:eventCount,auditCount==null?-1:auditCount);
+    }
+
+    public Diagnosis diagnose(String actor,String key) {
+        validate(actor,key);
         core.requireCoreWriterQuiesced();
         List<String> states=db.query(
             "SELECT state FROM scheduling_assignment_command_inbox " +
@@ -99,6 +191,11 @@ public class TeacherClaimReconciliationService {
                 (local==null || "STAGED".equals(local) || "REJECTED".equals(local))) {
             state="NO_CORE_CLAIM";
             guidance="No acquired TC claim; this snapshot alone never authorizes handback";
+        } else if(remote.found() && "REVOKED".equals(remote.claimStatus()) &&
+                event==null && "REJECTED".equals(local) &&
+                remote.referenceEventCount()==0) {
+            state="ORPHAN_CLAIM_REVOKED";
+            guidance="Core claim is durably revoked; verify all other claims, references and leases before any writer handback";
         } else if(remote.found() && "PENDING".equals(remote.claimStatus()) &&
                 event==null && "STAGED".equals(local) &&
                 remote.referenceEventCount()==0) {
