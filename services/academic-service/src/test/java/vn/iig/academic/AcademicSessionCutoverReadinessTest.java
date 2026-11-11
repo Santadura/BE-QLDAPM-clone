@@ -28,6 +28,7 @@ class AcademicSessionCutoverReadinessTest {
         when(local.receiptCount()).thenReturn(2L);
         when(local.latestCount()).thenReturn(1L);
         when(local.latestDivergence()).thenReturn(0L);
+        when(local.typedDivergence()).thenReturn(0L);
         when(core.history(0,100)).thenReturn(List.of(UPSERT,DELETE));
         when(local.matchesEvent(UPSERT)).thenReturn(true);
         when(local.matchesEvent(DELETE)).thenReturn(true);
@@ -82,5 +83,12 @@ class AcademicSessionCutoverReadinessTest {
         when(core.history(0,100)).thenReturn(List.of(UPSERT));
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,service::verify).getStatusCode());
+    }
+    @Test void normalizedAcademicDomainDriftBlocksCutover() {
+        setupReady();
+        when(local.typedDivergence()).thenReturn(1L);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verify).getStatusCode());
+        verify(core,never()).history(anyLong(),anyInt());
     }
 }

@@ -3,6 +3,9 @@ package vn.iig.academic;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.format.DateTimeParseException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -120,6 +123,32 @@ public class AcademicSessionSourceRepository {
         return count;
     }
 
+    /**
+     * Parity between immutable source JSON and the normalized Academic
+     * domain-shaped store. Include DELETED tombstones: omitting those rows
+     * would make a later writer handoff unsafe.
+     */
+    public long typedDivergence() {
+        Long count=db.queryForObject(
+            "SELECT COUNT(*) FROM academic_session_owned_projection p "+
+            "FULL OUTER JOIN academic_class_sessions_shadow s "+
+            "ON s.class_session_id=p.class_session_id "+
+            "WHERE p.class_session_id IS NULL OR s.class_session_id IS NULL "+
+            "OR s.class_id IS DISTINCT FROM p.class_id "+
+            "OR s.source_event_id IS DISTINCT FROM p.source_event_id "+
+            "OR s.source_revision IS DISTINCT FROM p.source_revision "+
+            "OR s.event_kind IS DISTINCT FROM p.event_kind "+
+            "OR s.session_date IS DISTINCT FROM (p.source_payload->>'date')::date "+
+            "OR s.start_time IS DISTINCT FROM (p.source_payload->>'start_time')::time "+
+            "OR s.end_time IS DISTINCT FROM (p.source_payload->>'end_time')::time "+
+            "OR s.status IS DISTINCT FROM p.source_payload->>'status'",
+            Long.class);
+        if(count==null || count<0)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic normalized session parity unavailable");
+        return count;
+    }
+
     @Transactional
     public void apply(AcademicSessionSourceClient.Event event,boolean historical) {
         if(event==null || event.eventId()<1 || event.sourceRevision()<1 ||
@@ -147,6 +176,24 @@ public class AcademicSessionSourceRepository {
            !payload.hasNonNull("end_time") || !payload.hasNonNull("status"))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Academic event does not match a complete original Core lesson");
+
+        // Reject malformed legacy facts before inserting any immutable
+        // receipt. Even a DELETE must retain a valid source session shape.
+        final LocalDate day;
+        final LocalTime start;
+        final LocalTime end;
+        final String status=payload.path("status").asText("");
+        try {
+            day=LocalDate.parse(payload.path("date").asText());
+            start=LocalTime.parse(payload.path("start_time").asText());
+            end=LocalTime.parse(payload.path("end_time").asText());
+        } catch(DateTimeParseException ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Invalid source Academic date or time",ex);
+        }
+        if(!end.isAfter(start) || !Set.of("PLANNED","CANCELLED").contains(status))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Invalid source Academic time interval or lesson status");
 
         int inserted=db.update(
             "INSERT INTO academic_session_source_receipts "+
@@ -184,6 +231,23 @@ public class AcademicSessionSourceRepository {
             "WHERE academic_session_owned_projection.source_event_id<EXCLUDED.source_event_id",
             event.classSessionId(),event.classId(),event.eventId(),
             event.sourceRevision(),event.eventKind(),event.payloadJson());
+        // The typed Academic session and immutable receipt commit together.
+        // A retried/reordered source event never overwrites a newer session.
+        db.update(
+            "INSERT INTO academic_class_sessions_shadow "+
+            "(class_session_id,class_id,session_date,start_time,end_time,status,"+
+            "event_kind,source_event_id,source_revision) "+
+            "VALUES(?,?,CAST(? AS DATE),CAST(? AS TIME),CAST(? AS TIME),?,?,?,?) "+
+            "ON CONFLICT(class_session_id) DO UPDATE SET "+
+            "class_id=EXCLUDED.class_id,session_date=EXCLUDED.session_date,"+
+            "start_time=EXCLUDED.start_time,end_time=EXCLUDED.end_time,"+
+            "status=EXCLUDED.status,event_kind=EXCLUDED.event_kind,"+
+            "source_event_id=EXCLUDED.source_event_id,"+
+            "source_revision=EXCLUDED.source_revision,updated_at=NOW() "+
+            "WHERE academic_class_sessions_shadow.source_event_id<EXCLUDED.source_event_id",
+            event.classSessionId(),event.classId(),day.toString(),
+            start.toString(),end.toString(),status,event.eventKind(),
+            event.eventId(),event.sourceRevision());
         if(historical) {
             db.update("UPDATE academic_session_history_cursor "+
                 "SET last_event_id=GREATEST(last_event_id,?),updated_at=NOW() "+

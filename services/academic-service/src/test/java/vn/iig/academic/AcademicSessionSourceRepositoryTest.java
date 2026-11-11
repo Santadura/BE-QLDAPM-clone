@@ -44,7 +44,20 @@ class AcademicSessionSourceRepositoryTest {
         repo.apply(e,true);
         verify(db).update(startsWith("INSERT INTO academic_session_owned_projection"),
             eq("lesson-1"),eq("class-1"),eq(7L),eq(11L),eq("DELETE"),eq(payload));
+        verify(db).update(startsWith("INSERT INTO academic_class_sessions_shadow"),
+            eq("lesson-1"),eq("class-1"),eq("2027-02-11"),eq("09:00"),
+            eq("11:00"),eq("PLANNED"),eq("DELETE"),eq(7L),eq(11L));
         verify(db).update(startsWith("UPDATE academic_session_history_cursor"),
             eq(7L));
+    }
+    @Test void malformedIntervalCannotPoisonImmutableReceipts() {
+        String invalid="{\"class_session_id\":\"lesson-1\",\"class_id\":\"class-1\","+
+            "\"date\":\"2027-02-11\",\"start_time\":\"13:00:00\","+
+            "\"end_time\":\"12:00:00\",\"status\":\"PLANNED\"}";
+        var e=new AcademicSessionSourceClient.Event(8,"lesson-1","class-1",
+            "UPSERT",12,invalid,AcademicSessionSourceRepository.sha256(invalid));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,()->repo.apply(e,false)).getStatusCode());
+        verifyNoInteractions(db);
     }
 }

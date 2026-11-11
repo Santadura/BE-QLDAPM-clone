@@ -111,3 +111,48 @@ DROP TRIGGER IF EXISTS trg_iig_guard_academic_receipt_truncate
 CREATE TRIGGER trg_iig_guard_academic_receipt_truncate
   BEFORE TRUNCATE ON academic_session_source_receipts
   FOR EACH STATEMENT EXECUTE FUNCTION iig_guard_academic_source_receipt()@@
+
+
+-- Typed, independently persisted Academic timetable shadow. It is not yet
+-- a writable source of truth; the original Core class/session transaction
+-- and cross-service student/teacher/CS guards remain authoritative.
+-- Tombstones are retained with their original source values.
+CREATE TABLE IF NOT EXISTS academic_class_sessions_shadow (
+  class_session_id VARCHAR(50) PRIMARY KEY,
+  class_id VARCHAR(50) NOT NULL,
+  session_date DATE NOT NULL,
+  start_time TIME(0) NOT NULL,
+  end_time TIME(0) NOT NULL,
+  status VARCHAR(20) NOT NULL CHECK(status IN ('PLANNED','CANCELLED')),
+  event_kind VARCHAR(10) NOT NULL CHECK(event_kind IN ('UPSERT','DELETE')),
+  source_event_id BIGINT NOT NULL CHECK(source_event_id>0),
+  source_revision BIGINT NOT NULL CHECK(source_revision>0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT academic_shadow_time_valid CHECK(end_time>start_time)
+)@@
+CREATE INDEX IF NOT EXISTS academic_shadow_by_class_slot
+  ON academic_class_sessions_shadow(class_id,session_date,start_time)@@
+
+-- Safe upgrade of an already-running Academic read model. Import all
+-- pre-existing latest JSON rows, not only new events after startup.
+-- Never regress a more recent source event in the shadow.
+INSERT INTO academic_class_sessions_shadow
+  (class_session_id,class_id,session_date,start_time,end_time,status,
+   event_kind,source_event_id,source_revision)
+SELECT class_session_id,class_id,
+       (source_payload->>'date')::date,
+       (source_payload->>'start_time')::time,
+       (source_payload->>'end_time')::time,
+       source_payload->>'status',event_kind,source_event_id,source_revision
+FROM academic_session_owned_projection
+ON CONFLICT(class_session_id) DO UPDATE SET
+  class_id=EXCLUDED.class_id,
+  session_date=EXCLUDED.session_date,
+  start_time=EXCLUDED.start_time,
+  end_time=EXCLUDED.end_time,
+  status=EXCLUDED.status,
+  event_kind=EXCLUDED.event_kind,
+  source_event_id=EXCLUDED.source_event_id,
+  source_revision=EXCLUDED.source_revision,
+  updated_at=NOW()
+WHERE academic_class_sessions_shadow.source_event_id<EXCLUDED.source_event_id@@

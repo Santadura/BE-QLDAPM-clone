@@ -51,7 +51,7 @@ public class AcademicSessionCutoverReadiness {
         if(local.historyCursor()!=source.maxEventId() ||
                 local.receiptCount()!=source.eventCount() ||
                 local.latestCount()!=source.distinctSessions() ||
-                local.latestDivergence()!=0)
+                local.latestDivergence()!=0 || local.typedDivergence()!=0)
             throw incomplete("Academic history cursor or projection parity mismatch");
 
         long cursor=0, scanned=0;
