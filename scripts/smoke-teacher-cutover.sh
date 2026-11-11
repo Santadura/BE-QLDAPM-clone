@@ -75,6 +75,7 @@ test -n "$class_version" && test -n "$session_version"
 # Recreate only the two participating JVM containers with explicit private
 # TEACHING flags. Base CI already proved every flag defaults to OFF.
 SCHEDULING_TEACHER_REFERENCE_WRITES_ENABLED=true \
+SCHEDULING_TEACHER_CLAIM_RECOVERY_ENABLED=true \
   "${COMPOSE[@]}" up -d --no-deps --force-recreate backend
 for attempt in $(seq 1 60); do
   if private_get "http://backend:8081/internal/scheduling/assignments/writer-state" \
@@ -224,3 +225,67 @@ printf '%s' "$orphan_diagnosis" | python3 -c \
 test "$(core_sql "SELECT count(*) FROM scheduling_assignment_writer_claims WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER' AND request_key='${orphan_key}' AND status='PENDING';")" = "1"
 test "$(scheduling_sql "SELECT count(*) FROM scheduling_assignment_domain_outbox WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER' AND request_key='${orphan_key}';")" = "0"
 echo "PASS: admin-only, non-mutating distributed claim diagnosis distinguishes committed teaching from orphan writer claims"
+
+# Phase 8g-13: rollback a stranded PRE-COMMIT TC claim, not an already
+# committed teacher assignment. Under the audited protocol, Scheduling
+# irreversibly rejects its STAGED command, then Core verifies that terminal
+# state via private HTTP under the Core writer lock before marking the
+# unconfirmed claim REVOKED. A retry must keep both audits immutable.
+reason="Isolated CI forced Core admission with no Scheduling source write"
+abandon_json="$(printf \
+ '{"actorUsername":"tc001","requestKey":"%s","reason":"%s"}' \
+ "$orphan_key" "$reason")"
+abandon_url="http://scheduling-service:8098/internal/scheduling/assignments/reconciliation/teacher/abandon"
+for attempt in 1 2; do
+  abandon_result="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    --header "X-Internal-Key: ${service_key}" \
+    --header "Authorization: Bearer ${admin_token}" \
+    --header "Content-Type: application/json" \
+    --post-data "$abandon_json" "$abandon_url")"
+  printf '%s' "$abandon_result" | python3 -c \
+   'import json,sys; d=json.load(sys.stdin); assert d["localState"]=="REJECTED" and d["coreClaimState"]=="REVOKED"'
+done
+test "$(scheduling_sql "SELECT count(*) FROM scheduling_teacher_claim_abandon_audit WHERE actor_username='tc001' AND request_key='${orphan_key}' AND admin_username='admin';")" = "1"
+test "$(core_sql "SELECT count(*) FROM scheduling_teacher_claim_revocation_audit WHERE actor_username='tc001' AND request_key='${orphan_key}' AND admin_username='admin';")" = "1"
+test "$(core_sql "SELECT count(*) FROM scheduling_assignment_writer_claims WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER' AND request_key='${orphan_key}' AND status='REVOKED';")" = "1"
+test "$(scheduling_sql "SELECT count(*) FROM scheduling_assignment_command_inbox WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER' AND request_key='${orphan_key}' AND state='REJECTED';")" = "1"
+revoked_diagnosis="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${service_key}" \
+  --header "Authorization: Bearer ${admin_token}" \
+  "$orphan_diagnose_url")"
+printf '%s' "$revoked_diagnosis" | python3 -c \
+ 'import json,sys; d=json.load(sys.stdin); assert d["state"]=="ORPHAN_CLAIM_REVOKED"'
+
+# Direct SQL cannot tamper with either side's immutable recovery audit.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  BEGIN
+    UPDATE scheduling_teacher_claim_revocation_audit SET reason='forged'
+    WHERE actor_username='tc001' AND request_key='${orphan_key}';
+    RAISE EXCEPTION 'Core claim revocation audit could be forged';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    UPDATE scheduling_assignment_writer_control SET writer_mode='CORE'
+    WHERE singleton=TRUE;
+    RAISE EXCEPTION 'Confirmed TEACHING claim was ignored for Core handback';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END
+\$\$;
+SQL
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling \
+  -d iig_scheduling -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  BEGIN
+    UPDATE scheduling_teacher_claim_abandon_audit SET reason='forged'
+    WHERE actor_username='tc001' AND request_key='${orphan_key}';
+    RAISE EXCEPTION 'Scheduling abandonment audit could be forged';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END
+\$\$;
+SQL
+echo "PASS: audited, two-DB TC claim revocation is idempotent; confirmed references still fence Core handback"

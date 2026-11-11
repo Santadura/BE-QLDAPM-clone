@@ -1627,7 +1627,18 @@ test "$teacher_gateway_status" = "404" || {
   echo "Private TEACHING command unexpectedly exposed through public Gateway"
   exit 1
 }
-echo "PASS: private TEACHING preflight, writer and Core reference are OFF by default and isolated from Gateway"
+teacher_abandon_url="http://scheduling-service:8098/internal/scheduling/assignments/reconciliation/teacher/abandon"
+core_revoke_url="http://backend:8081/internal/scheduling/assignments/claims/teacher/revoke"
+for private_url in "$teacher_abandon_url" "$core_revoke_url"; do
+  if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    --header "X-Internal-Key: ${scheduling_key}" \
+    --header "Content-Type: application/json" \
+    --post-data '{}' "$private_url" >/dev/null 2>&1; then
+    echo "Orphan claim recovery endpoint active without operator opt-in"
+    exit 1
+  fi
+done
+echo "PASS: private TEACHING preflight, writer, reference and audited recovery OFF by default"
 
 cancel_executor_url="http://scheduling-service:8098/internal/scheduling/assignments/commands/standalone/${stage_key}/cancel"
 if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \

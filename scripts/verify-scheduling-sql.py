@@ -137,6 +137,13 @@ def main() -> None:
         raise AssertionError("Core TEACHING receiver flag must be OFF by default")
     if "SCHEDULING_TEACHER_EXECUTOR_ENABLED:false" not in app:
         raise AssertionError("Scheduling TEACHING executor default is not OFF")
+    if (
+        "      SCHEDULING_TEACHER_CLAIM_RECOVERY_ENABLED: "
+        "${SCHEDULING_TEACHER_CLAIM_RECOVERY_ENABLED:-false}"
+    ) not in backend:
+        raise AssertionError("Core TC claim recovery must be OFF by default")
+    if "iig_guard_teacher_claim_abandon_audit" not in schema:
+        raise AssertionError("Immutable Scheduling TC abandonment audit is missing")
     print(
         f"PASS: Scheduling SQL parser: {len(parsed)} top-level SQL statements; "
         "PL/pgSQL function bodies preserved; control flags wired to Scheduling"

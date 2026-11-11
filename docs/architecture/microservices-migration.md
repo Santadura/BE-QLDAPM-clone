@@ -649,6 +649,47 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-13: immutable two-database orphan TC-claim withdrawal (OFF)
+
+A separate opt-in, ADMIN-only private operation now closes one
+specific distributed failure safely: Core admitted a TC
+`ASSIGN_TEACHER` writer claim, but Scheduling NEVER committed any
+TEACHING source event. The process is **irreversible and fail-closed**:
+
+1. Scheduling locks that exact actor/command receipt (same row lock as
+   teacher executor), requires STAGED or an identically audited prior
+   REJECTED state and ZERO source outbox events. It advances STAGED to
+   terminal REJECTED and writes an immutable Scheduling audit with the
+   current ADMIN username and nontrivial reason, in one local transaction.
+2. Using the same live ADMIN bearer and internal service key, the operator
+   asks Core to revoke that exact orphan claim. Core independently
+   revalidates the current ADMIN, obtains the writer-control
+   `FOR UPDATE` lock (serializing with new claims and writer handback),
+   checks claim PENDING and zero Core reference events, and calls the
+   **Scheduling-owned proof endpoint over private HTTP** to verify
+   REJECTED plus zero local events plus one immutable local audit.
+   Only then Core atomically updates PENDING to REVOKED and records an
+   immutable Core audit.
+3. Both operations can be retried by the identical administrator/reason
+   after an HTTP timeout. If Scheduling rejection succeeds but Core
+   confirmation fails, the Core PENDING claim remains, blocking handback.
+   Core refuses CONFIRMED claims; committed teacher references must use
+   ordinary receipt reconciliation, never orphan revocation.
+
+The writer-mode SQL fence now excludes ONLY audited REVOKED claims.
+It **continues to block** all PENDING/CONFIRMED claims, existing Core
+reference receipts and live Academic leases. It does not enable
+automatic Core handback. Both Core
+`SCHEDULING_TEACHER_CLAIM_RECOVERY_ENABLED` and Scheduling
+`SCHEDULING_RECOVERY_ENABLED` default OFF and require an isolated
+operator-controlled maintenance window.
+
+The disposable PostgreSQL CI smoke now injects a genuine orphan claim,
+verifies ADMIN-only diagnosis, executes the two-phase withdrawal twice
+with no duplicate audits, rejects audit SQL tampering and confirms a
+separately committed TEACHING reference still prevents Core handback.
+No public Gateway/FE assignment mutation route is changed.
+
 ## Phase 8g-12: admin-only orphan TC claim diagnosis and disaster-recovery triage
 
 An independent TEACHING executor intentionally acquires a durable Core
