@@ -60,7 +60,7 @@ public class AssignmentProjectionRepository {
             "ON CONFLICT(key) DO NOTHING");
     }
 
-    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
+    @Transactional
     public void project(AssignmentSnapshot item) {
         requireReady();
         put(item);

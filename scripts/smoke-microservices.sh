@@ -2406,7 +2406,7 @@ INSERT INTO academic_candidate_claims
   source_event_id,source_revision,academic_generation,
   attendance_generation,scheduling_generation)
 SELECT 'ci-freeze-operator','ci-open-claim-${GITHUB_RUN_ID}',repeat('b',64),
-  '${one}',class_session_id,source_event_id,source_revision,
+  '${one}',e.class_session_id,e.event_id,e.source_revision,
   (SELECT generation FROM academic_session_writer_control WHERE singleton=TRUE),
   (SELECT generation FROM teacher_attendance_writer_control WHERE singleton=TRUE),
   (SELECT writer_generation FROM scheduling_assignment_writer_control WHERE singleton=TRUE)
