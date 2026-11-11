@@ -41,7 +41,7 @@ public class AcademicSessionCandidateService {
                 req.sessionId()==null ||
                 !req.sessionId().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
                 req.expectedEventId()<1 || req.expectedRevision()<1 ||
-                !Set.of("RESCHEDULE","CANCEL").contains(req.action()) ||
+                req.action()==null || !Set.of("RESCHEDULE","CANCEL").contains(req.action()) ||
                 req.status()==null ||
                 !("RESCHEDULE".equals(req.action())?"PLANNED".equals(req.status()):
                     "CANCELLED".equals(req.status())))

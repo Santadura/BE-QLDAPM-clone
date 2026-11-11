@@ -82,4 +82,13 @@ class AcademicSessionCandidateServiceTest {
             ()->service.stage("Bearer admin",bad)).getStatusCode());
         verifyNoInteractions(identity,readiness,core,repo);
     }
+    @Test void missingActionIsRejectedWithoutRemoteEffects() {
+        var missing=new AcademicSessionCandidateService.Request(
+            "key","class-1","lesson-1",5,3,null,
+            "2027-02-12","09:00","11:00","PLANNED");
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,
+            ()->service.stage("Bearer admin",missing)).getStatusCode());
+        verifyNoInteractions(identity,readiness,core,repo);
+    }
 }

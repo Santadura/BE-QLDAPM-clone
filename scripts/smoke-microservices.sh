@@ -2320,3 +2320,104 @@ SQL
   }
   echo "PASS: Academic positive rehearsal restores every Core writer, without enabling a second source of truth"
 fi
+
+
+# PHASE 8n: rehearsal command schema in INDEPENDENT Academic PostgreSQL.
+# The private API is disabled in normal Compose, so even an authenticated
+# Admin + internal service key cannot stage a candidate accidentally.
+candidate_url="http://academic-service:8099/internal/academic/cutover/sessions/candidates"
+disabled_candidate="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
+  --header "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
+  --header "Authorization: Bearer ${TOKEN}" \
+  --header "Content-Type: application/json" \
+  --post-data '{}' "$candidate_url" 2>&1 || true)"
+printf '%s' "$disabled_candidate" | grep -q '404' || {
+  echo "Academic candidate API was exposed without explicit opt-in"
+  printf '%s\n' "$disabled_candidate"
+  exit 1
+}
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/internal/academic/cutover/sessions/candidates")" = "404"
+
+# Only insert/rollback an isolated synthetic receipt/event/typed candidate.
+# The transactional immutable guards are exercised via raw PostgreSQL SQL,
+# not just mocked Java repository calls. No live session row is changed.
+"${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic -d iig_academic \
+  -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+INSERT INTO academic_session_candidate_commands
+  (operator_username,request_key,command_id,request_hash,class_id,
+   class_session_id,source_event_id,source_revision,academic_generation,
+   attendance_generation,scheduling_generation,action)
+SELECT 'admin','academic-candidate-smoke',
+       '00000000-0000-4000-8000-000000000111'::uuid,repeat('a',64),
+       class_id,class_session_id,source_event_id,source_revision,2,2,2,
+       'RESCHEDULE'
+FROM academic_class_sessions_shadow
+WHERE class_id='${one}' AND event_kind='UPSERT'
+ORDER BY source_event_id DESC LIMIT 1;
+INSERT INTO academic_session_candidate_slots
+  (command_id,class_id,class_session_id,session_date,start_time,end_time,
+   status,source_event_id,source_revision)
+SELECT '00000000-0000-4000-8000-000000000111'::uuid,
+       class_id,class_session_id,session_date,start_time,end_time,
+       status,source_event_id,source_revision
+FROM academic_class_sessions_shadow
+WHERE class_id='${one}' AND event_kind='UPSERT'
+ORDER BY source_event_id DESC LIMIT 1;
+INSERT INTO academic_session_candidate_outbox
+  (outbox_id,command_id,event_kind,payload,payload_hash)
+VALUES('00000000-0000-4000-8000-000000000112'::uuid,
+       '00000000-0000-4000-8000-000000000111'::uuid,
+       'REHEARSAL_ONLY','{"rehearsal":true}'::jsonb,repeat('a',64));
+DO \$\$
+BEGIN
+  IF (SELECT COUNT(*) FROM academic_session_candidate_commands
+      WHERE request_key='academic-candidate-smoke')<>1 OR
+     (SELECT COUNT(*) FROM academic_session_candidate_slots
+      WHERE command_id='00000000-0000-4000-8000-000000000111'::uuid)<>1 OR
+     (SELECT COUNT(*) FROM academic_session_candidate_outbox
+      WHERE command_id='00000000-0000-4000-8000-000000000111'::uuid)<>1 THEN
+    RAISE EXCEPTION 'Academic candidate not committed as one receipt/slot/outbox';
+  END IF;
+  BEGIN
+    UPDATE academic_session_candidate_commands SET request_hash=repeat('b',64)
+      WHERE request_key='academic-candidate-smoke';
+    RAISE EXCEPTION 'Academic candidate command receipt was editable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    UPDATE academic_session_candidate_slots SET status='CANCELLED'
+      WHERE command_id='00000000-0000-4000-8000-000000000111'::uuid;
+    RAISE EXCEPTION 'Academic candidate typed slot was editable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM academic_session_candidate_outbox
+      WHERE command_id='00000000-0000-4000-8000-000000000111'::uuid;
+    RAISE EXCEPTION 'Academic candidate outbox event was erasable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    TRUNCATE academic_session_candidate_outbox;
+    RAISE EXCEPTION 'Academic candidate event outbox was truncatable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO academic_session_candidate_commands
+      (operator_username,request_key,command_id,request_hash,class_id,
+       class_session_id,source_event_id,source_revision,academic_generation,
+       attendance_generation,scheduling_generation,action)
+    SELECT 'admin','academic-candidate-smoke',
+           '00000000-0000-4000-8000-000000000113'::uuid,
+           repeat('c',64),class_id,class_session_id,source_event_id,
+           source_revision,2,2,2,'RESCHEDULE'
+    FROM academic_class_sessions_shadow
+    WHERE class_id='${one}' AND event_kind='UPSERT'
+    ORDER BY source_event_id DESC LIMIT 1;
+    RAISE EXCEPTION 'Duplicate scoped candidate key created another receipt';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+END \$\$;
+ROLLBACK;
+echo "PASS: candidate writer remains private/off; Academic DB candidate receipt, typed slot and nondeliverable outbox are atomic and immutable"
