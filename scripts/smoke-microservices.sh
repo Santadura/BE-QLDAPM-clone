@@ -293,6 +293,46 @@ END \$\$;
 SQL
 echo "PASS: Academic cutover preflight rejects active writers and receipt SQL tampering"
 
+# Exercise the REAL Core integrity query, not merely its Java DTO. The
+# outbox is the authoritative history of both current and deleted sessions.
+academic_source_integrity="$("${COMPOSE[@]}" exec -T scheduling-postgres \
+  wget -qO- --header \
+  "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
+  "http://backend:8081/internal/academic/sessions/events/integrity")"
+printf '%s' "$academic_source_integrity" | python3 -c \
+  'import json,sys; d=json.load(sys.stdin); assert d["sourceRows"] == d["trackedLiveRows"],d; assert d["divergentRows"] == 0,d; assert d["eventCount"] >= d["distinctSessions"] and d["eventCount"] > 0,d'
+
+# Exercise the FULL JOIN used by the Academic private verifier. Import
+# may still be catching up after other smoke business writes; reject any
+# structurally divergent persisted projection once history has settled.
+academic_latest_drift=""
+for attempt in $(seq 1 50); do
+  academic_latest_drift="$("${COMPOSE[@]}" exec -T academic-postgres \
+    psql -U iig_academic -d iig_academic -tAc \
+    "SELECT COUNT(*) FROM (
+       SELECT DISTINCT ON(class_session_id) class_session_id,class_id,event_id,
+         source_revision,event_kind,source_payload
+       FROM academic_session_source_receipts
+       ORDER BY class_session_id,event_id DESC
+     ) last
+     FULL OUTER JOIN academic_session_owned_projection p
+       ON p.class_session_id=last.class_session_id
+     WHERE last.class_session_id IS NULL OR p.class_session_id IS NULL
+       OR p.class_id IS DISTINCT FROM last.class_id
+       OR p.source_event_id IS DISTINCT FROM last.event_id
+       OR p.source_revision IS DISTINCT FROM last.source_revision
+       OR p.event_kind IS DISTINCT FROM last.event_kind
+       OR p.source_payload IS DISTINCT FROM last.source_payload;" | tr -d '[:space:]')"
+  test "$academic_latest_drift" = "0" && break
+  sleep 2
+done
+test "$academic_latest_drift" = "0" || {
+  echo "Academic latest projection differs from immutable event history"
+  exit 1
+}
+echo "PASS: real Core source/outbox integrity SQL and Academic latest/tombstone parity SQL"
+
+
 
 
 
