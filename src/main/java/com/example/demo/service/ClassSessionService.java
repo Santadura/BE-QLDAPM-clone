@@ -112,6 +112,15 @@ public class ClassSessionService {
      * Academic snapshot/version bridge. Never permit an independently cached
      * class timetable without revalidating these same business permissions.
      */
+    /** Recheck live manager scope before any idempotency receipt replay. */
+    public String requireSessionManager(String classId,Authentication auth) {
+        Identity actor=identity(auth);
+        if(!manages(classId,actor))
+            throw new ApiException(HttpStatus.FORBIDDEN,"Only Admin or managing CS may change lessons");
+        requirePlannedSessionMigration();
+        return actor.username();
+    }
+
     public void authorizeSessions(String classId, Authentication auth) {
         Identity actor = identity(auth);
         if (!canView(classId, actor)) {
