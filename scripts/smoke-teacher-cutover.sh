@@ -83,6 +83,7 @@ for attempt in $(seq 1 60); do
   sleep 2
 done
 SCHEDULING_TEACHER_EXECUTOR_ENABLED=true \
+SCHEDULING_RECOVERY_ENABLED=true \
 SCHEDULING_TEACHER_PREFLIGHT_ENABLED=true \
 SCHEDULING_ACADEMIC_LEASE_COORDINATOR_ENABLED=true \
 SCHEDULING_REFERENCE_RELAY_ENABLED=true \
@@ -171,3 +172,55 @@ VISIBLE="$visible" SCHEDULE_ID="$schedule_id" python3 -c \
 test "$(curl -sS -o /dev/null -w '%{http_code}' \
   "${BASE}/internal/scheduling/assignments/commands/teacher/${key}/execute")" = "404"
 echo "PASS: isolated Scheduling TEACHING write, Core idempotent reference, TC claim, read route and replay"
+
+# The operational boundary must distinguish a lost Core response from
+# an orphan TC claim caused by a Scheduling rollback. This diagnostic
+# is ADMIN-only, is not routed through Gateway, and performs NO writes.
+admin_login="$(curl -fsS -X POST "${BASE}/api/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"123456"}')"
+admin_token="$(printf '%s' "$admin_login" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["token"])')"
+teacher_diagnose_url="http://scheduling-service:8098/internal/scheduling/assignments/reconciliation/teacher/diagnose?actorUsername=tc001&requestKey=${key}"
+teacher_diagnosis="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${service_key}" \
+  --header "Authorization: Bearer ${admin_token}" \
+  "$teacher_diagnose_url")"
+printf '%s' "$teacher_diagnosis" | python3 -c \
+  'import json,sys; d=json.load(sys.stdin); assert d["state"]=="CONSISTENT_COMMITTED" and d["coreTeacherRowExists"] is True'
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${service_key}" \
+  --header "Authorization: Bearer ${tc_token}" \
+  "$teacher_diagnose_url" >/dev/null 2>&1; then
+  echo "Non-ADMIN TC unexpectedly accessed distributed claim diagnosis"
+  exit 1
+fi
+
+# Fault injection: Core accepted a writer claim but the Scheduling source
+# has not committed anything. The claim MUST remain for human review;
+# diagnostic is never an automatic claim cleanup or writer handback.
+orphan_key="${key}-orphan"
+orphan_body="${stage_body/${key}/${orphan_key}}"
+staged_orphan="$(private_post "$stage_url" "$orphan_body")"
+printf '%s' "$staged_orphan" | python3 -c \
+ 'import json,sys; assert json.load(sys.stdin)["state"]=="STAGED"'
+orphan_claim_body="$(printf \
+ '{"actorUsername":"tc001","managerEmployeeId":"%s","operation":"ASSIGN_TEACHER","requestKey":"%s"}' \
+ "$tc_id" "$orphan_key")"
+claim_result="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${service_key}" \
+  --header "Content-Type: application/json" \
+  --post-data "$orphan_claim_body" \
+  "http://backend:8081/internal/scheduling/assignments/claims")"
+printf '%s' "$claim_result" | python3 -c \
+ 'import json,sys; assert json.load(sys.stdin)["status"]=="PENDING"'
+orphan_diagnose_url="http://scheduling-service:8098/internal/scheduling/assignments/reconciliation/teacher/diagnose?actorUsername=tc001&requestKey=${orphan_key}"
+orphan_diagnosis="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${service_key}" \
+  --header "Authorization: Bearer ${admin_token}" \
+  "$orphan_diagnose_url")"
+printf '%s' "$orphan_diagnosis" | python3 -c \
+ 'import json,sys; d=json.load(sys.stdin); assert d["state"]=="ORPHAN_CORE_CLAIM" and d["localEventId"] is None and d["coreClaimState"]=="PENDING"'
+test "$(core_sql "SELECT count(*) FROM scheduling_assignment_writer_claims WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER' AND request_key='${orphan_key}' AND status='PENDING';")" = "1"
+test "$(scheduling_sql "SELECT count(*) FROM scheduling_assignment_domain_outbox WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER' AND request_key='${orphan_key}';")" = "0"
+echo "PASS: admin-only, non-mutating distributed claim diagnosis distinguishes committed teaching from orphan writer claims"

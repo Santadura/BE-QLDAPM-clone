@@ -649,6 +649,39 @@ independent producer, full Academic/session and worker lease integration,
 payroll/attendance reconciliation, split-brain fencing and green regression
 suites. The legacy `CORE` mode and all FE API contracts remain unchanged.
 
+## Phase 8g-12: admin-only orphan TC claim diagnosis and disaster-recovery triage
+
+An independent TEACHING executor intentionally acquires a durable Core
+writer claim **before** committing its Scheduling transaction. Network
+loss, SQL failure or process crash can therefore leave a Core claim
+without any Scheduling event. Such an orphan claim correctly fences Core
+writer handback, but is distinct from an in-flight or already confirmed
+Core assignment.
+
+A new PRIVATE Core read-only claim-evidence endpoint reports the exact
+actor/key, TC manager, claim status, historical reference event ID,
+schedule ID, SHA-256 digest/revision and whether the TEACHING Core
+reference row still exists. Scheduling now exposes a **separately
+opt-in**, INTERNAL, live-ADMIN-only diagnosis endpoint at
+`/internal/scheduling/assignments/reconciliation/teacher/diagnose`
+for `actorUsername` and `requestKey`. It compares the Core evidence
+with the independently committed Scheduling command and immutable
+outbox and classifies:
+`ORPHAN_CORE_CLAIM`, `AWAITING_CORE_REFERENCE`,
+`CORE_COMMITTED_LOCAL_ACK_MISSING`, `CONSISTENT_COMMITTED`,
+`NO_CORE_CLAIM` or `MANUAL_REVIEW_REQUIRED`/conflict.
+It refuses inspection when Core is not QUIESCED and never trusts a
+missing Core response as "no claim".
+
+**This is observational, not a distributed transaction.** The endpoint
+cannot delete a claim, acknowledge an outbox event, change teacher
+status or switch Core's writer mode. An orphan still requires the
+audited, coordinated cleanup/handback protocol before production
+can resume Core writes. The default recovery toggle remains OFF.
+CI separately enables the private diagnostic on disposable PostgreSQL,
+then verifies both a confirmed teacher and an intentionally stranded
+Core TC writer claim without rewriting either DB.
+
 ## Phase 8g-11: exact current Core TEACHING evidence during recovery
 
 A verified historical TEACHING receipt is not sufficient if an
