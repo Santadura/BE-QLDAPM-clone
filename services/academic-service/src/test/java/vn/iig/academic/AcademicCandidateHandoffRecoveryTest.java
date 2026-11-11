@@ -81,4 +81,34 @@ class AcademicCandidateHandoffRecoveryTest {
         assertThrows(IllegalArgumentException.class,()->relay.recover(invalid));
         verifyNoInteractions(repo,core);
     }
+
+    @Test void coreOnlyClaimWithoutAcademicEvidenceNeverEntersReleaseQueue() {
+        // Crash edge: Core committed an OPEN claim before Academic committed
+        // even its command row. A scheduler has no authority to fabricate it.
+        when(repo.pendingHandoffs(25)).thenReturn(List.of());
+        relay.reconcile();
+        verifyNoInteractions(core);
+        verify(repo,never()).recordHandoff(any());
+    }
+
+    @Test void crashAfterCoreReleaseButBeforeLocalAckReplaysExactReceipt() {
+        // Core committed RELEASED, then the Academic local receipt failed.
+        // A restart must repeat the idempotent remote request, not invent a
+        // different command/outbox proof or skip the final acknowledgement.
+        var event=proof("lost-local-ack");
+        when(repo.committedEvidence(event.actor(),event.key(),event.commandId()))
+            .thenReturn(event);
+        doThrow(new IllegalStateException("Academic PostgreSQL unavailable"))
+            .doNothing().when(repo).recordHandoff(event);
+        assertThrows(IllegalStateException.class,()->relay.recover(event));
+        assertDoesNotThrow(()->relay.recover(event));
+        var expected=new AcademicCandidateClaimClient.Release(
+            new AcademicCandidateClaimClient.Claim(
+                event.actor(),event.key(),event.digest(),event.classId(),
+                event.sessionId(),event.eventId(),event.revision(),
+                event.academicGeneration(),event.attendanceGeneration(),
+                event.schedulingGeneration()),event.commandId(),event.outboxHash());
+        verify(core,times(2)).release(expected);
+        verify(repo,times(2)).recordHandoff(event);
+    }
 }
