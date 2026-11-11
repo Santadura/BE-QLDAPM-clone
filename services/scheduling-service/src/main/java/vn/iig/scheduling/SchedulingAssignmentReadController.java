@@ -60,6 +60,6 @@ public class SchedulingAssignmentReadController {
         byte[] actual=supplied==null?new byte[0]:supplied.getBytes(StandardCharsets.UTF_8);
         if(!MessageDigest.isEqual(key,actual))
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Invalid Scheduling service key");
-        repository.project(snapshot);
+        repository.projectFromCore(snapshot);
     }
 }

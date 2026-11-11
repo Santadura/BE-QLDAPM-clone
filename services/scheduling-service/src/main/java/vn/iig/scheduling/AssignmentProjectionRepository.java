@@ -60,6 +60,13 @@ public class AssignmentProjectionRepository {
             "ON CONFLICT(key) DO NOTHING");
     }
 
+    /** Core source events mirror to the read model, never the owned write slots. */
+    @Transactional
+    public void projectFromCore(AssignmentSnapshot item) {
+        requireReady();
+        put(item);
+    }
+
     @Transactional
     public void project(AssignmentSnapshot item) {
         requireReady();
