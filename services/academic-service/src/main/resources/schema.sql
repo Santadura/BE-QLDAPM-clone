@@ -9,9 +9,9 @@ CREATE TABLE IF NOT EXISTS academic_read_snapshots (
   resource_kind VARCHAR(30) NOT NULL CHECK (resource_kind IN ('CLASS_PLANNING','PLANNED_SESSIONS')),
   payload JSONB NOT NULL CHECK (jsonb_typeof(payload)='array'),
   synchronized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+)@@
 CREATE INDEX IF NOT EXISTS academic_read_snapshots_actor
-  ON academic_read_snapshots (username,role_id,synchronized_at DESC);
+  ON academic_read_snapshots (username,role_id,synchronized_at DESC)@@
 
 -- This is the actual Academic-owned class-planning read source. Core holds
 -- the monotonic revision clock; Academic keeps a validated local snapshot,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS academic_planning_projection (
   source_revision BIGINT NOT NULL CHECK(source_revision>=1),
   payload JSONB NOT NULL CHECK(jsonb_typeof(payload)='array'),
   synchronized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+)@@
 
 -- Shared per-class Academic read projection: never returned unless a
 -- separate live Core class-level authorization and version check succeeds.
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS academic_session_projections (
   source_revision BIGINT NOT NULL CHECK(source_revision>=1),
   payload JSONB NOT NULL CHECK(jsonb_typeof(payload)='array'),
   synchronized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+)@@
 
 
 -- Transitional Academic HTTP command ingress; Core remains the ONLY writer.
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS academic_session_command_inbox (
     (state='PENDING' AND response_payload IS NULL AND completed_at IS NULL) OR
     (state='COMMITTED' AND jsonb_typeof(response_payload)='array' AND completed_at IS NOT NULL)
   )
-);
+)@@
 
 
 -- Full immutable source-event receipts, plus an independently persisted latest
@@ -66,9 +66,9 @@ CREATE TABLE IF NOT EXISTS academic_session_source_receipts (
   payload_hash CHAR(64) NOT NULL,
   source_payload JSONB NOT NULL CHECK(jsonb_typeof(source_payload)='object'),
   imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+)@@
 CREATE INDEX IF NOT EXISTS academic_session_receipts_by_session
-  ON academic_session_source_receipts(class_session_id,event_id DESC);
+  ON academic_session_source_receipts(class_session_id,event_id DESC)@@
 
 CREATE TABLE IF NOT EXISTS academic_session_owned_projection (
   class_session_id VARCHAR(50) PRIMARY KEY,
@@ -78,17 +78,17 @@ CREATE TABLE IF NOT EXISTS academic_session_owned_projection (
   event_kind VARCHAR(10) NOT NULL CHECK(event_kind IN ('UPSERT','DELETE')),
   source_payload JSONB NOT NULL CHECK(jsonb_typeof(source_payload)='object'),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+)@@
 CREATE INDEX IF NOT EXISTS academic_owned_sessions_by_class
-  ON academic_session_owned_projection(class_id,event_kind,source_event_id);
+  ON academic_session_owned_projection(class_id,event_kind,source_event_id)@@
 
 CREATE TABLE IF NOT EXISTS academic_session_history_cursor (
   singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton=TRUE),
   last_event_id BIGINT NOT NULL DEFAULT 0 CHECK(last_event_id>=0),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+)@@
 INSERT INTO academic_session_history_cursor(singleton,last_event_id)
-  VALUES(TRUE,0) ON CONFLICT(singleton) DO NOTHING;
+  VALUES(TRUE,0) ON CONFLICT(singleton) DO NOTHING@@
 
 
 -- Receipt evidence may not be re-written or silently deleted, even by a
@@ -100,14 +100,14 @@ BEGIN
   RAISE EXCEPTION 'Academic source receipts are immutable'
     USING ERRCODE='55000';
 END;
-$$;
+$$@@
 DROP TRIGGER IF EXISTS trg_iig_guard_academic_receipt_mutation
-  ON academic_session_source_receipts;
+  ON academic_session_source_receipts@@
 CREATE TRIGGER trg_iig_guard_academic_receipt_mutation
   BEFORE UPDATE OR DELETE ON academic_session_source_receipts
-  FOR EACH ROW EXECUTE FUNCTION iig_guard_academic_source_receipt();
+  FOR EACH ROW EXECUTE FUNCTION iig_guard_academic_source_receipt()@@
 DROP TRIGGER IF EXISTS trg_iig_guard_academic_receipt_truncate
-  ON academic_session_source_receipts;
+  ON academic_session_source_receipts@@
 CREATE TRIGGER trg_iig_guard_academic_receipt_truncate
   BEFORE TRUNCATE ON academic_session_source_receipts
-  FOR EACH STATEMENT EXECUTE FUNCTION iig_guard_academic_source_receipt();
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_guard_academic_source_receipt()@@
