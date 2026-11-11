@@ -24,8 +24,9 @@ class StandaloneStaffEditExecutorTest {
     private final AssignmentWriteConflictGuard conflicts=mock(AssignmentWriteConflictGuard.class);
     private final AssignmentDomainOutboxRepository outbox=mock(AssignmentDomainOutboxRepository.class);
     private final AssignmentCommandLifecycleService lifecycle=mock(AssignmentCommandLifecycleService.class);
+    private final AssignmentCutoverVerificationService cutover=mock(AssignmentCutoverVerificationService.class);
     private final StandaloneStaffEditExecutor executor=new StandaloneStaffEditExecutor(
-        db,json,core,projection,conflicts,outbox,lifecycle);
+        db,json,core,projection,conflicts,outbox,lifecycle,cutover);
 
     private final String request="""
         {"operation":"EDIT_STAFF","targetId":"shift-1","payload":{
@@ -117,6 +118,7 @@ class StandaloneStaffEditExecutorTest {
         verify(lifecycle).markLocallyApplied("cm001","EDIT_STAFF","edit-1");
         verify(core).acquireAssignmentWriterClaim(
             "cm001","cm-1","EDIT_STAFF","edit-1");
+        verify(cutover).requireStagedReady("cm001","EDIT_STAFF","edit-1");
     }
 
     @Test void cannotEditLegacyCoreShiftEvenIfItsReadModelLooksIdentical()

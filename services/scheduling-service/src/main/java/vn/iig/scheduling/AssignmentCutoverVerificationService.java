@@ -46,10 +46,23 @@ public class AssignmentCutoverVerificationService {
      * does not exempt any PENDING_REFERENCE or COMPENSATING command.
      */
     public Report verifyStaged(String actor,String operation,String requestKey) {
-        if(!"ASSIGN_TEACHER".equals(operation))
+        if(!java.util.Set.of("ASSIGN_TEACHER","ASSIGN_STAFF",
+                "EDIT_STAFF","CANCEL_STAFF").contains(operation))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "Only a staged teacher command may request preflight parity");
+                "Only an exact staged supported assignment command may request preflight parity");
         return verifyInternal(actor,operation,requestKey);
+    }
+
+    /**
+     * A private Scheduling writer MUST prove full committed Core manifest
+     * parity before its local transaction changes the normalized shadow.
+     * No write proceeds on unresolved/pending source events or stale copies.
+     */
+    public void requireStagedReady(String actor,String operation,String key) {
+        var evidence=verifyStaged(actor,operation,key);
+        if(!evidence.ready())
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Core committed assignment parity not ready: "+evidence.state());
     }
 
     private Report verifyInternal(String actor,String operation,String requestKey) {

@@ -23,9 +23,10 @@ class StandaloneStaffCancellationExecutorTest {
     private final AssignmentProjectionRepository projection=mock(AssignmentProjectionRepository.class);
     private final AssignmentDomainOutboxRepository outbox=mock(AssignmentDomainOutboxRepository.class);
     private final AssignmentCommandLifecycleService lifecycle=mock(AssignmentCommandLifecycleService.class);
+    private final AssignmentCutoverVerificationService cutover=mock(AssignmentCutoverVerificationService.class);
     private final StandaloneStaffCancellationExecutor service=
         new StandaloneStaffCancellationExecutor(db,new ObjectMapper(),core,
-            projection,outbox,lifecycle);
+            projection,outbox,lifecycle,cutover);
 
     private final String persisted=("{\"id\":\"shift-1\"," +
         "\"employeeId\":\"cs-001\",\"employeeName\":\"CS One\"," +
@@ -100,6 +101,7 @@ class StandaloneStaffCancellationExecutorTest {
         order.verify(lifecycle).markLocallyApplied("cm001","CANCEL_STAFF","cancel-1");
         verify(core).acquireAssignmentWriterClaim(
             "cm001","cm-1","CANCEL_STAFF","cancel-1");
+        verify(cutover).requireStagedReady("cm001","CANCEL_STAFF","cancel-1");
     }
 
     @Test void repeatedCancelDoesNotWriteAnotherRevision() throws Exception {

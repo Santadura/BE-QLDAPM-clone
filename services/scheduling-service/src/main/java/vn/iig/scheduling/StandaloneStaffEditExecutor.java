@@ -35,14 +35,17 @@ public class StandaloneStaffEditExecutor {
     private final AssignmentWriteConflictGuard conflicts;
     private final AssignmentDomainOutboxRepository outbox;
     private final AssignmentCommandLifecycleService lifecycle;
+    private final AssignmentCutoverVerificationService cutover;
 
     public StandaloneStaffEditExecutor(JdbcTemplate db,ObjectMapper json,
             SchedulingCoreClient core,AssignmentProjectionRepository projection,
             AssignmentWriteConflictGuard conflicts,
             AssignmentDomainOutboxRepository outbox,
-            AssignmentCommandLifecycleService lifecycle) {
+            AssignmentCommandLifecycleService lifecycle,
+            AssignmentCutoverVerificationService cutover) {
         this.db=db;this.json=json;this.core=core;this.projection=projection;
         this.conflicts=conflicts;this.outbox=outbox;this.lifecycle=lifecycle;
+        this.cutover=cutover;
     }
 
     @Transactional
@@ -234,6 +237,10 @@ public class StandaloneStaffEditExecutor {
 
         // Prevent QUIESCED -> CORE during an independent edit commit,
         // including the interval before the new event reaches Core.
+        // Existing Core assignments are authoritative until exact frozen
+        // source-to-shadow parity has been proven in this same operation.
+        // A stale asynchronous projection is NEVER sufficient for a write.
+        cutover.requireStagedReady(username,"EDIT_STAFF",requestKey);
         core.acquireAssignmentWriterClaim(username,managerId,
             "EDIT_STAFF",requestKey);
         projection.project(snapshot);

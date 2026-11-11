@@ -343,8 +343,15 @@ service-key-protected projection API after bootstrap.
   before enabling the two reference feature flags.
 - [ ] Introduce idempotent, durable commands for staff/teacher assignment,
   attendance and Academic session reservation; remove direct Academic SQL.
-- [ ] Check existing committed assignment conflicts in the new authoritative
-  Scheduling write model (the current asynchronous copy is insufficient).
+- [x] Check existing committed assignment conflicts in the new authoritative
+  Scheduling write model before EVERY opt-in TEACHING/STAFF transaction:
+  each exact actor-scoped STAGED command now requires a full paged Core
+  assignment manifest, source version/tombstone parity, Core outbox
+  emptiness, no other unresolved command, and a matching normalized
+  Scheduling shadow while Core writers remain QUIESCED. Scheduling's
+  transactional worker/class advisory locks then enforce local overlap.
+  Incomplete/asynchronous snapshots fail CLOSED; public assignment
+  cutover remains disabled.
 - [ ] Add version checks, idempotency keys, expiry and compensation for failed
   cross-service enrollment/assignment, while keeping last-CS-coverage and
   teacher attendance constraints correct.

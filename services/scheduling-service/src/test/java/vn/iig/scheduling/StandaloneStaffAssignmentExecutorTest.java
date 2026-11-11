@@ -25,9 +25,10 @@ class StandaloneStaffAssignmentExecutorTest {
     private final AssignmentWriteConflictGuard conflicts=mock(AssignmentWriteConflictGuard.class);
     private final AssignmentDomainOutboxRepository outbox=mock(AssignmentDomainOutboxRepository.class);
     private final AssignmentCommandLifecycleService lifecycle=mock(AssignmentCommandLifecycleService.class);
+    private final AssignmentCutoverVerificationService cutover=mock(AssignmentCutoverVerificationService.class);
     private final StandaloneStaffAssignmentExecutor service=
         new StandaloneStaffAssignmentExecutor(db,mapper,core,projection,conflicts,
-            outbox,lifecycle);
+            outbox,lifecycle,cutover);
 
     private String request(String extra) {
         return "{\"operation\":\"ASSIGN_STAFF\",\"targetId\":null,\"payload\":{"+
@@ -105,8 +106,25 @@ class StandaloneStaffAssignmentExecutorTest {
         verify(core).acquireAssignmentWriterClaim(
             "cm001","cm-001","ASSIGN_STAFF","cmd-1");
         verify(conflicts).requireUnoccupied(any());
+        verify(cutover).requireStagedReady("cm001","ASSIGN_STAFF","cmd-1");
     }
 
+    @Test void staleCoreManifestBlocksBeforeClaimOrIndependentWrite()
+            throws Exception {
+        staged("STAGED",request(""));
+        approvedLease();
+        doThrow(new ResponseStatusException(HttpStatus.CONFLICT,
+            "Source manifest changed")).when(cutover)
+                .requireStagedReady("cm001","ASSIGN_STAFF","cmd-1");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.execute("cm001","cm-001","CM","cmd-1"))
+            .getStatusCode());
+        verify(core,never()).acquireAssignmentWriterClaim(anyString(),anyString(),
+            anyString(),anyString());
+        verify(projection,never()).project(any());
+        verifyNoInteractions(outbox,lifecycle);
+    }
     @Test void coreMustBeQuiescedBeforeAnySchedulingSql() {
         doThrow(new ResponseStatusException(HttpStatus.CONFLICT,"Core is active"))
             .when(core).requireCoreWriterQuiesced();

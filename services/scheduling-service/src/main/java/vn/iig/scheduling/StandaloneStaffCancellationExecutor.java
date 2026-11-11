@@ -34,13 +34,16 @@ public class StandaloneStaffCancellationExecutor {
     private final AssignmentProjectionRepository projection;
     private final AssignmentDomainOutboxRepository outbox;
     private final AssignmentCommandLifecycleService lifecycle;
+    private final AssignmentCutoverVerificationService cutover;
 
     public StandaloneStaffCancellationExecutor(JdbcTemplate db,ObjectMapper json,
             SchedulingCoreClient core,AssignmentProjectionRepository projection,
             AssignmentDomainOutboxRepository outbox,
-            AssignmentCommandLifecycleService lifecycle) {
+            AssignmentCommandLifecycleService lifecycle,
+            AssignmentCutoverVerificationService cutover) {
         this.db=db;this.json=json;this.core=core;
         this.projection=projection;this.outbox=outbox;this.lifecycle=lifecycle;
+        this.cutover=cutover;
     }
 
     @Transactional
@@ -181,6 +184,10 @@ public class StandaloneStaffCancellationExecutor {
 
         // Durable Core claim is required before advancing source revision.
         // An uncertain local rollback must not permit Core split-brain writes.
+        // Existing Core assignments are authoritative until exact frozen
+        // source-to-shadow parity has been proven in this same operation.
+        // A stale asynchronous projection is NEVER sufficient for a write.
+        cutover.requireStagedReady(actorUsername,"CANCEL_STAFF",requestKey);
         core.acquireAssignmentWriterClaim(actorUsername,actorEmployeeId,
             "CANCEL_STAFF",requestKey);
         projection.project(snapshot);

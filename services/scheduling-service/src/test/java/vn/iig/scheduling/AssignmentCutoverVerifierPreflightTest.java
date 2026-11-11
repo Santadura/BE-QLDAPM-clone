@@ -13,10 +13,10 @@ class AssignmentCutoverVerifierPreflightTest {
     private final AssignmentCutoverVerificationService verifier=
         new AssignmentCutoverVerificationService(model,core);
 
-    @Test void onlyExactStagedTeacherCommandCanBeExemptedFromManifestReadiness() {
+    @Test void unsupportedCommandCannotBeExemptedFromManifestReadiness() {
         assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
             ResponseStatusException.class,
-            ()->verifier.verifyStaged("tc001","EDIT_STAFF","key")).getStatusCode());
+            ()->verifier.verifyStaged("tc001","DELETE_USER","key")).getStatusCode());
         verifyNoInteractions(core,model);
     }
 
@@ -31,6 +31,19 @@ class AssignmentCutoverVerifierPreflightTest {
         assertEquals("UNRESOLVED_ASSIGNMENT_COMMANDS",report.state());
         verify(model).pendingCommandsExceptStaged("tc001","ASSIGN_TEACHER","key");
         verify(model,never()).pendingAssignmentCommands();
+    }
+
+    @Test void exactStagedStaffCommandChecksAllOtherInFlightCommands() {
+        var zero=new SchedulingCoreClient.AssignmentManifestSummary(0,0,0,0,0);
+        when(core.assignmentManifestSummary()).thenReturn(zero);
+        when(core.assignmentManifest("","",250)).thenReturn(List.of());
+        when(model.pendingCommandsExceptStaged("cm001","ASSIGN_STAFF","key"))
+            .thenReturn(1L);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->verifier.requireStagedReady("cm001","ASSIGN_STAFF","key"))
+            .getStatusCode());
+        verify(model).pendingCommandsExceptStaged("cm001","ASSIGN_STAFF","key");
     }
 
     @Test void normalCutoverNeverExemptsAStagedCandidate() {
