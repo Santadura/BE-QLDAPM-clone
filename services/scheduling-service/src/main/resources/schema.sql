@@ -391,3 +391,55 @@ DROP TRIGGER IF EXISTS trg_iig_teacher_event_requires_staged
 CREATE TRIGGER trg_iig_teacher_event_requires_staged
   BEFORE INSERT ON scheduling_assignment_domain_outbox
   FOR EACH ROW EXECUTE FUNCTION iig_guard_teacher_event_requires_staged_command()@@
+
+
+-- Phase 8p: PostgreSQL exclusion for PRIVATE Scheduling-owned sources.
+-- The legacy Core mirror may include historical overlaps, so only genuine
+-- Scheduling events populate this constrained table.
+CREATE EXTENSION IF NOT EXISTS btree_gist@@
+CREATE TABLE IF NOT EXISTS scheduling_assignment_owned_slots (
+  source_type VARCHAR(12) NOT NULL CHECK(source_type IN ('STAFF','TEACHING')),
+  schedule_id VARCHAR(50) NOT NULL,
+  source_revision BIGINT NOT NULL CHECK(source_revision>0),
+  employee_id VARCHAR(50) NOT NULL,
+  class_id VARCHAR(50),
+  work_date DATE NOT NULL,
+  start_time TIME NOT NULL,
+  end_time TIME NOT NULL,
+  active BOOLEAN NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(source_type,schedule_id),
+  CONSTRAINT scheduling_owned_slot_valid CHECK(end_time>start_time),
+  CONSTRAINT scheduling_owned_teacher_class_required CHECK(
+    source_type<>'TEACHING' OR class_id IS NOT NULL),
+  CONSTRAINT scheduling_owned_one_worker_no_overlap EXCLUDE USING gist (
+    employee_id WITH =,
+    (tsrange(work_date+start_time,work_date+end_time,'[)')) WITH &&
+  ) WHERE (active),
+  CONSTRAINT scheduling_owned_one_teacher_per_class_slot EXCLUDE USING gist (
+    class_id WITH =,
+    (tsrange(work_date+start_time,work_date+end_time,'[)')) WITH &&
+  ) WHERE (active AND source_type='TEACHING')
+)@@
+
+-- Backfill ONLY previously committed independent Scheduling assignments,
+-- never treat all historical Core mirror rows as owned sources.
+INSERT INTO scheduling_assignment_owned_slots (
+  source_type,schedule_id,source_revision,employee_id,class_id,work_date,
+  start_time,end_time,active)
+SELECT s.source_type,s.schedule_id,s.version,s.employee_id,s.class_id,
+  s.work_date,s.start_time,s.end_time,
+  s.deleted=FALSE AND s.status='ASSIGNED'
+FROM scheduling_assignment_write_shadow s
+WHERE s.employee_id IS NOT NULL AND s.work_date IS NOT NULL
+  AND s.start_time IS NOT NULL AND s.end_time IS NOT NULL
+  AND EXISTS(
+    SELECT 1 FROM scheduling_assignment_domain_outbox o
+    WHERE o.source_type=s.source_type AND o.schedule_id=s.schedule_id
+      AND o.event_kind='UPSERT')
+ON CONFLICT(source_type,schedule_id) DO UPDATE SET
+  source_revision=EXCLUDED.source_revision,
+  employee_id=EXCLUDED.employee_id,class_id=EXCLUDED.class_id,
+  work_date=EXCLUDED.work_date,start_time=EXCLUDED.start_time,
+  end_time=EXCLUDED.end_time,active=EXCLUDED.active,updated_at=NOW()
+WHERE scheduling_assignment_owned_slots.source_revision<EXCLUDED.source_revision@@
