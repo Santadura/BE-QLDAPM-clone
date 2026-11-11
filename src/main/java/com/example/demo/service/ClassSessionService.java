@@ -107,12 +107,21 @@ public class ClassSessionService {
             "WHERE c.status IN ('READY','RUNNING') ORDER BY c.start_date,c.class_code");
     }
 
-    public List<Map<String,Object>> sessions(String classId, Authentication auth) {
+    /**
+     * Live, per-class ACL shared by the Core public GET and the private
+     * Academic snapshot/version bridge. Never permit an independently cached
+     * class timetable without revalidating these same business permissions.
+     */
+    public void authorizeSessions(String classId, Authentication auth) {
         Identity actor = identity(auth);
         if (!canView(classId, actor)) {
             throw new ApiException(HttpStatus.FORBIDDEN, "No access to class planned sessions");
         }
         requirePlannedSessionMigration();
+    }
+
+    public List<Map<String,Object>> sessions(String classId, Authentication auth) {
+        authorizeSessions(classId, auth);
         return readSessions(classId);
     }
 
