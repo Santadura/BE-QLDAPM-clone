@@ -672,8 +672,11 @@ TEACHING source event. The process is **irreversible and fail-closed**:
    checks claim PENDING and zero Core reference events, and calls the
    **Scheduling-owned proof endpoint over private HTTP** to verify
    REJECTED plus zero local events plus one immutable local audit.
-   Only then Core atomically updates PENDING to REVOKED and records an
-   immutable Core audit.
+   Only then Core atomically writes the immutable Core audit and updates
+   PENDING to REVOKED in one transaction. A separate PostgreSQL trigger
+   enforces that the exact administrator/reason audit ALREADY exists
+   before permitting REVOKED status, and blocks all later rewrites of
+   revoked claims, including attempted direct SQL bypasses.
 3. Both operations can be retried by the identical administrator/reason
    after an HTTP timeout. If Scheduling rejection succeeds but Core
    confirmation fails, the Core PENDING claim remains, blocking handback.

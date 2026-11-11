@@ -155,17 +155,21 @@ public class SchedulingTeacherClaimRevocationBridge {
         if(!"PENDING".equals(claim.status()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Cannot revoke an already processed writer claim");
+        // The PostgreSQL BEFORE UPDATE guard independently demands a
+        // matching immutable audit. Insert it FIRST in this very same
+        // Core transaction, then move PENDING -> REVOKED. If either step
+        // fails both changes roll back as a unit.
+        if(db.update("INSERT INTO scheduling_teacher_claim_revocation_audit " +
+                "(actor_username,operation,request_key,admin_username,reason) " +
+                "VALUES(?,'ASSIGN_TEACHER',?,?,?)",
+                request.actorUsername(),request.requestKey(),admin,reason)!=1)
+            throw new IllegalStateException("Core claim revocation audit not committed");
         if(db.update("UPDATE scheduling_assignment_writer_claims SET " +
                 "status='REVOKED',revoked_at=NOW(),revoked_by=?,revocation_reason=? " +
                 "WHERE actor_username=? AND operation='ASSIGN_TEACHER' " +
                 "AND request_key=? AND status='PENDING'",
                 admin,reason,request.actorUsername(),request.requestKey())!=1)
             throw new IllegalStateException("Core claim revoke lost writer ownership");
-        if(db.update("INSERT INTO scheduling_teacher_claim_revocation_audit " +
-                "(actor_username,operation,request_key,admin_username,reason) " +
-                "VALUES(?,'ASSIGN_TEACHER',?,?,?)",
-                request.actorUsername(),request.requestKey(),admin,reason)!=1)
-            throw new IllegalStateException("Core claim revocation audit not committed");
         return new Receipt(request.actorUsername(),request.requestKey(),"REVOKED");
     }
 }

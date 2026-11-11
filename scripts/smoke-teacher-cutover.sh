@@ -226,6 +226,24 @@ test "$(core_sql "SELECT count(*) FROM scheduling_assignment_writer_claims WHERE
 test "$(scheduling_sql "SELECT count(*) FROM scheduling_assignment_domain_outbox WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER' AND request_key='${orphan_key}';")" = "0"
 echo "PASS: admin-only, non-mutating distributed claim diagnosis distinguishes committed teaching from orphan writer claims"
 
+# Core SQL may NOT fabricate REVOKED status before the verified
+# administrator/Scheduling proof transaction inserts its immutable audit.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  BEGIN
+    UPDATE scheduling_assignment_writer_claims
+      SET status='REVOKED',revoked_at=NOW(),revoked_by='admin',
+          revocation_reason='SQL bypass without verified Scheduling proof'
+      WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER'
+        AND request_key='${orphan_key}';
+    RAISE EXCEPTION 'Core accepted a revoked claim without immutable audit';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END
+\$\$;
+SQL
+
 # Phase 8g-13: rollback a stranded PRE-COMMIT TC claim, not an already
 # committed teacher assignment. Under the audited protocol, Scheduling
 # irreversibly rejects its STAGED command, then Core verifies that terminal
