@@ -151,6 +151,14 @@ service-key-protected projection API after bootstrap.
 - [x] Phase 8b-3c: expose version-checked Academic session lease acquire,
   renew and release, including a stable command retry key and PostgreSQL
   mutation fences. Leases are disabled while CORE is the live writer.
+- [x] Phase 8r: completed teacher references now have an opt-in,
+  restart-safe Academic lease FINALIZER. It rereads the exact immutable
+  Core TEACHING event receipt and versioned teacher/class/slot facts
+  before idempotently releasing the original Academic session lease;
+  only then does it delete the Scheduling lease binding. COMMITTED
+  commands without a matching Core receipt remain locked for recovery.
+  This closes the successful-reference cleanup path but NOT the
+  complete compensation/attendance/payroll saga.
 - [ ] Integrate lease renewal through the **entire** Scheduling command/saga
   (including crashes and compensation); enforce resulting reference versions
   in Core attendance/Payroll consumers. The five-minute lease primitive

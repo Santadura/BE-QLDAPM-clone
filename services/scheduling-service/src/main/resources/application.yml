@@ -24,6 +24,7 @@ iig:
     # Internal-only standalone CS/Sale writer: opt in under controlled cutover.
     assignment-executor-enabled: ${SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED:false}
     # Staged teacher Academic lease coordination is private and disabled by default.
+    academic-lease-completion-enabled: ${SCHEDULING_ACADEMIC_LEASE_COMPLETION_ENABLED:false}
     academic-lease-coordinator-enabled: ${SCHEDULING_ACADEMIC_LEASE_COORDINATOR_ENABLED:false}
     teacher-preflight-enabled: ${SCHEDULING_TEACHER_PREFLIGHT_ENABLED:false}
     # Private only. Do not enable before Core writer maintenance quiescence,
