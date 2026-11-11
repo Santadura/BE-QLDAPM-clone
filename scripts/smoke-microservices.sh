@@ -190,6 +190,13 @@ BEGIN
   IF target_id IS NULL THEN
     RAISE EXCEPTION 'Academic writer fence fixture has no planned session';
   END IF;
+  -- Attendance must not resume until Academic is reopened.
+  BEGIN
+    UPDATE teacher_attendance_writer_control SET writer_mode='CORE'
+      WHERE singleton=TRUE;
+    RAISE EXCEPTION 'Attendance reopened while Academic remained QUIESCED';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
   BEGIN
     UPDATE class_sessions SET status=status WHERE class_session_id=target_id;
     RAISE EXCEPTION 'Academic writer freeze allowed SQL update';
@@ -210,6 +217,37 @@ END \$\$;
 ROLLBACK;
 SQL
 echo "PASS: Academic Core writer fence blocks direct SQL, enforces ordered freeze and generations"
+
+# TRUNCATE bypasses row triggers. The source event table and writer control
+# must never permit an untracked bulk deletion, even in CORE mode.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+DO \$\$
+BEGIN
+  BEGIN
+    TRUNCATE academic_session_source_outbox;
+    RAISE EXCEPTION 'Academic source outbox can be truncated';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    TRUNCATE academic_session_writer_control;
+    RAISE EXCEPTION 'Academic writer control can be truncated';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END \$\$;
+ROLLBACK;
+SQL
+for trigger in trg_iig_reject_academic_session_truncate \
+               trg_iig_reject_academic_outbox_truncate \
+               trg_iig_reject_academic_writer_control_truncate; do
+  installed="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
+    -d qlapm_db -tAc "SELECT count(*) FROM pg_trigger WHERE tgname='$trigger' AND tgenabled='O';" | tr -d '[:space:]')"
+  test "$installed" = "1" || {
+    echo "Academic TRUNCATE guard missing: $trigger"; exit 1;
+  }
+done
+echo "PASS: no Academic history/control TRUNCATE bypass or early Attendance resume"
+
 
 
 
