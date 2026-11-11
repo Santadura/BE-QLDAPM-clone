@@ -22,7 +22,12 @@ class AcademicSessionCandidateControllerTest {
     @Test void onlyPrivateKeyMayReachValidatedService() {
         var req=new AcademicSessionCandidateService.Request("key","c1","s1",1,1,
             "CANCEL","2027-02-12","09:00","11:00","CANCELLED");
-        controller.stage("private-key","Bearer admin",req);
-        verify(service).stage("Bearer admin",req);
+        var receipt=new AcademicSessionCandidateRepository.Receipt(
+            "00000000-0000-4000-8000-000000000111","key","c1","s1",1,1,"STAGED");
+        when(service.stage("Bearer admin",req)).thenReturn(receipt);
+        assertEquals(receipt,controller.stage("private-key","Bearer admin",req));
+        var ordered=inOrder(service);
+        ordered.verify(service).stage("Bearer admin",req);
+        ordered.verify(service).acknowledge("Bearer admin",req,receipt);
     }
 }

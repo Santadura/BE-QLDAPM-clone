@@ -35,6 +35,9 @@ public class AcademicSessionCandidateController {
         if(!MessageDigest.isEqual(key,candidate))
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
                 "Private Academic operator service key required");
-        return service.stage(bearer,body);
+        // Finish the Academic PG transaction BEFORE remote handback release.
+        var receipt=service.stage(bearer,body);
+        service.acknowledge(bearer,body,receipt);
+        return receipt;
     }
 }

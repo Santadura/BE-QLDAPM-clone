@@ -35,6 +35,37 @@ public class AcademicSessionCandidateRepository {
         this.db=db;this.json=json;
     }
 
+    public record Evidence(String actor,String key,String digest,String classId,
+        String sessionId,long eventId,long revision,long academicGeneration,
+        long attendanceGeneration,long schedulingGeneration,String commandId,
+        String outboxHash) {}
+
+    /** Durable local proof, read only AFTER the @Transactional stage commits. */
+    public Evidence committedEvidence(String actor,String key,String commandId) {
+        List<Evidence> proof=db.query(
+            "SELECT c.operator_username,c.request_key,c.request_hash,c.class_id,"+
+            "c.class_session_id,c.source_event_id,c.source_revision,"+
+            "c.academic_generation,c.attendance_generation,c.scheduling_generation,"+
+            "c.command_id::text,o.payload_hash "+
+            "FROM academic_session_candidate_commands c "+
+            "JOIN academic_session_candidate_slots s ON s.command_id=c.command_id "+
+            "JOIN academic_session_candidate_outbox o ON o.command_id=c.command_id "+
+            "WHERE c.operator_username=? AND c.request_key=? "+
+            "AND c.command_id=CAST(? AS UUID) AND c.state='STAGED' "+
+            "AND s.class_id=c.class_id AND s.class_session_id=c.class_session_id "+
+            "AND s.source_event_id=c.source_event_id "+
+            "AND s.source_revision=c.source_revision AND o.event_kind='REHEARSAL_ONLY'",
+            (rs,i)->new Evidence(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getString(4),rs.getString(5),rs.getLong(6),
+                rs.getLong(7),rs.getLong(8),rs.getLong(9),rs.getLong(10),
+                rs.getString(11),rs.getString(12)),actor,key,commandId);
+        if(proof.size()!=1 || proof.get(0).outboxHash()==null ||
+            !proof.get(0).outboxHash().matches("[0-9a-f]{64}"))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic candidate has no atomic durable command, slot and outbox");
+        return proof.get(0);
+    }
+
     public Receipt stage(Plan plan) {
         List<Shadow> source=db.query(
             "SELECT class_id,source_event_id,source_revision,event_kind "+

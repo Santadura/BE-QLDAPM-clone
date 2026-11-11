@@ -11,8 +11,9 @@ class AcademicSessionCandidateServiceTest {
     AcademicSessionCutoverReadiness readiness=mock(AcademicSessionCutoverReadiness.class);
     AcademicSessionSourceClient core=mock(AcademicSessionSourceClient.class);
     AcademicSessionCandidateRepository repo=mock(AcademicSessionCandidateRepository.class);
+    AcademicCandidateClaimClient claims=mock(AcademicCandidateClaimClient.class);
     AcademicSessionCandidateService service=
-        new AcademicSessionCandidateService(identity,readiness,core,repo);
+        new AcademicSessionCandidateService(identity,readiness,core,repo,claims);
     AcademicSessionCandidateService.Request request() {
         return new AcademicSessionCandidateService.Request(
             "dryrun-key","class-1","lesson-1",5,3,"RESCHEDULE",
@@ -36,6 +37,10 @@ class AcademicSessionCandidateServiceTest {
             p.schedulingGeneration()==6));
         verify(identity).sessionRevision("class-1","Bearer admin");
         verify(readiness).verify();
+        var order=inOrder(claims,repo);
+        order.verify(claims).acquire(any());
+        order.verify(repo).stage(any());
+        verify(claims,never()).release(any());
     }
     @Test void wrongRoleNeverCallsReadinessOrWrites() {
         when(identity.currentPrincipal("Bearer tc")).thenReturn(
@@ -43,7 +48,7 @@ class AcademicSessionCandidateServiceTest {
         assertEquals(HttpStatus.FORBIDDEN,assertThrows(
             ResponseStatusException.class,
             ()->service.stage("Bearer tc",request())).getStatusCode());
-        verifyNoInteractions(readiness,repo);
+        verifyNoInteractions(readiness,repo,claims);
     }
     @Test void incompleteHistoryNeverStages() {
         allow();
@@ -52,7 +57,7 @@ class AcademicSessionCandidateServiceTest {
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,
             ()->service.stage("Bearer admin",request())).getStatusCode());
-        verifyNoInteractions(repo);
+        verifyNoInteractions(repo,claims);
     }
     @Test void staleGenerationRejectsTransaction() {
         allow();
@@ -63,6 +68,7 @@ class AcademicSessionCandidateServiceTest {
             ResponseStatusException.class,
             ()->service.stage("Bearer admin",request())).getStatusCode());
         verify(repo).stage(any());
+        verify(claims).acquire(any());
     }
     @Test void malformedTimesFailBeforeCoreOrLocalSql() {
         var bad=new AcademicSessionCandidateService.Request(
@@ -71,7 +77,7 @@ class AcademicSessionCandidateServiceTest {
         assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
             ResponseStatusException.class,
             ()->service.stage("Bearer admin",bad)).getStatusCode());
-        verifyNoInteractions(identity,readiness,core,repo);
+        verifyNoInteractions(identity,readiness,core,repo,claims);
     }
     @Test void rescheduleCannotInventCanceledState() {
         var bad=new AcademicSessionCandidateService.Request(
@@ -80,7 +86,7 @@ class AcademicSessionCandidateServiceTest {
         assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
             ResponseStatusException.class,
             ()->service.stage("Bearer admin",bad)).getStatusCode());
-        verifyNoInteractions(identity,readiness,core,repo);
+        verifyNoInteractions(identity,readiness,core,repo,claims);
     }
     @Test void missingActionIsRejectedWithoutRemoteEffects() {
         var missing=new AcademicSessionCandidateService.Request(
@@ -89,6 +95,6 @@ class AcademicSessionCandidateServiceTest {
         assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
             ResponseStatusException.class,
             ()->service.stage("Bearer admin",missing)).getStatusCode());
-        verifyNoInteractions(identity,readiness,core,repo);
+        verifyNoInteractions(identity,readiness,core,repo,claims);
     }
 }

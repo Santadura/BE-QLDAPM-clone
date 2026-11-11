@@ -23,13 +23,15 @@ public class AcademicSessionCandidateService {
     private final AcademicSessionCutoverReadiness readiness;
     private final AcademicSessionSourceClient source;
     private final AcademicSessionCandidateRepository candidates;
+    private final AcademicCandidateClaimClient claims;
 
     public AcademicSessionCandidateService(AcademicCoreClient identity,
             AcademicSessionCutoverReadiness readiness,
             AcademicSessionSourceClient source,
-            AcademicSessionCandidateRepository candidates) {
+            AcademicSessionCandidateRepository candidates,
+            AcademicCandidateClaimClient claims) {
         this.identity=identity;this.readiness=readiness;this.source=source;
-        this.candidates=candidates;
+        this.candidates=candidates;this.claims=claims;
     }
 
     @Transactional
@@ -82,6 +84,14 @@ public class AcademicSessionCandidateService {
             req.expectedEventId(),req.expectedRevision(),req.action(),
             day,from,to,req.status(),evidence.academicGeneration(),
             evidence.attendanceGeneration(),evidence.schedulingGeneration());
+        // The independently committed Core claim serializes with the
+        // Core writer-control handback before Academic writes candidate facts.
+        var bound=new AcademicCandidateClaimClient.Claim(
+            actor.username(),req.requestKey(),digest,req.classId(),req.sessionId(),
+            req.expectedEventId(),req.expectedRevision(),
+            evidence.academicGeneration(),evidence.attendanceGeneration(),
+            evidence.schedulingGeneration());
+        claims.acquire(bound);
         var receipt=candidates.stage(plan); // one Academic PG transaction
         var end=source.writerFence();
         if(!"QUIESCED".equals(end.academicMode()) ||
@@ -93,5 +103,45 @@ public class AcademicSessionCandidateService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Academic candidate writer generations changed; local transaction rolled back");
         return receipt;
+    }
+
+    /**
+     * Called ONLY after stage's separate Academic transaction commits.
+     * A timeout on Core release leaves OPEN and safely blocks Core handback.
+     * Retrying the SAME key reuses immutable local command/outbox evidence.
+     */
+    public void acknowledge(String bearer,Request request,
+            AcademicSessionCandidateRepository.Receipt receipt) {
+        if(receipt==null || receipt.commandId()==null || request==null)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "No committed Academic candidate receipt");
+        var actor=identity.currentPrincipal(bearer);
+        if(actor==null || actor.username()==null ||
+            !"ROLE_ADMIN".equals(actor.role()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Active Admin required for Core claim release");
+
+        var proof=candidates.committedEvidence(
+            actor.username(),request.requestKey(),receipt.commandId());
+        String canonical="academic-candidate-v1\n"+request.classId()+"\n"+
+            request.sessionId()+"\n"+request.expectedEventId()+"\n"+
+            request.expectedRevision()+"\n"+request.action()+"\n"+
+            java.time.LocalDate.parse(request.date())+"\n"+
+            java.time.LocalTime.parse(request.startTime())+"\n"+
+            java.time.LocalTime.parse(request.endTime())+"\n"+request.status();
+        String digest=AcademicSessionSourceRepository.sha256(canonical);
+        if(!digest.equals(proof.digest()) ||
+            !request.classId().equals(proof.classId()) ||
+            !request.sessionId().equals(proof.sessionId()) ||
+            request.expectedEventId()!=proof.eventId() ||
+            request.expectedRevision()!=proof.revision())
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Submitted Academic claim differs from committed local evidence");
+        var claim=new AcademicCandidateClaimClient.Claim(
+            proof.actor(),proof.key(),proof.digest(),proof.classId(),proof.sessionId(),
+            proof.eventId(),proof.revision(),proof.academicGeneration(),
+            proof.attendanceGeneration(),proof.schedulingGeneration());
+        claims.release(new AcademicCandidateClaimClient.Release(
+            claim,receipt.commandId(),proof.outboxHash()));
     }
 }
