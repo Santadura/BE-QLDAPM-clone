@@ -109,6 +109,37 @@ public class AcademicCandidateClaimBridge {
             (rs,i)->new Summary(rs.getLong(1),rs.getLong(2),rs.getLong(3)));
     }
 
+    /**
+     * Read-only operations view of claims that BLOCK Core handback.
+     * A missing Academic command/outbox cannot be inferred from Core alone;
+     * an operator must compare this snapshot with Academic's committed
+     * evidence before performing any manual repair. This endpoint has no
+     * capability to release, delete, or bypass a frozen writer generation.
+     */
+    public record OpenClaim(String actor,String requestKey,String classId,
+        String sessionId,long eventId,long revision,
+        java.time.OffsetDateTime createdAt) {}
+
+    @GetMapping("/open")
+    @Transactional(readOnly=true)
+    public List<OpenClaim> openClaims(
+            @RequestHeader(value="X-Internal-Key",required=false) String supplied,
+            @RequestParam(defaultValue="25") int limit) {
+        requireKey(supplied);
+        if(limit<1 || limit>50)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Core candidate claim inspection limit must be 1..50");
+        return db.query(
+            "SELECT actor_username,request_key,class_id,class_session_id,"+
+            "source_event_id,source_revision,created_at "+
+            "FROM academic_candidate_claims WHERE state='OPEN' "+
+            "ORDER BY created_at,actor_username,request_key LIMIT ?",
+            (rs,i)->new OpenClaim(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getString(4),rs.getLong(5),rs.getLong(6),
+                rs.getObject(7,java.time.OffsetDateTime.class)),
+            limit);
+    }
+
     @PostMapping
     @Transactional
     public Result acquire(
