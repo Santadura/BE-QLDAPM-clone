@@ -2420,4 +2420,5 @@ BEGIN
   END;
 END \$\$;
 ROLLBACK;
+SQL
 echo "PASS: candidate writer remains private/off; Academic DB candidate receipt, typed slot and nondeliverable outbox are atomic and immutable"
