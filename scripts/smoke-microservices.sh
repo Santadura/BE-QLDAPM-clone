@@ -124,6 +124,35 @@ if ! [[ "$academic_rows" =~ ^[0-9]+$ ]] || [ "$academic_rows" -lt 1 ] \
 fi
 echo "PASS: independent Academic planning and session projections match Core source revisions and live ACL"
 
+# Isolated Academic write ingress must preserve legacy public paths and
+# atomically persist one Core command receipt plus its Academic-local inbox.
+academic_write_class="$(create_class "MS-PLAN-${GITHUB_RUN_ID:-LOCAL}")"
+academic_write_key="academic-plan-${GITHUB_RUN_ID:-local}"
+academic_write_body='[{"date":"2027-02-11","startTime":"09:00","endTime":"11:00"},{"date":"2027-02-12","startTime":"09:00","endTime":"11:00"}]'
+academic_write_url="${BASE}/api/classes/${academic_write_class}/planned-sessions"
+first_plan="$(curl -fsS -X PUT "$academic_write_url" \
+  -H "Authorization: Bearer ${TOKEN}" -H "Idempotency-Key: ${academic_write_key}" \
+  -H 'Content-Type: application/json' -d "$academic_write_body")"
+replay_plan="$(curl -fsS -X PUT "$academic_write_url" \
+  -H "Authorization: Bearer ${TOKEN}" -H "Idempotency-Key: ${academic_write_key}" \
+  -H 'Content-Type: application/json' -d "$academic_write_body")"
+ACADEMIC_FIRST="$first_plan" ACADEMIC_REPLAY="$replay_plan" python3 -c \
+  'import json,os; a=json.loads(os.environ["ACADEMIC_FIRST"]); b=json.loads(os.environ["ACADEMIC_REPLAY"]); assert isinstance(a,list) and len(a)==2 and a==b'
+core_plan_receipt="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM scheduling_command_receipts WHERE actor_username='admin' AND command_type='ACADEMIC:PLAN:${academic_write_class}' AND request_key='${academic_write_key}' AND completed_at IS NOT NULL;" | tr -d '[:space:]')"
+academic_plan_receipt="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic -d iig_academic -tAc \
+  "SELECT count(*) FROM academic_session_command_inbox WHERE actor_username='admin' AND class_id='${academic_write_class}' AND operation='PLAN' AND request_key='${academic_write_key}' AND state='COMMITTED';" | tr -d '[:space:]')"
+test "$core_plan_receipt" = "1" && test "$academic_plan_receipt" = "1"
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$academic_write_url" \
+  -H "Authorization: Bearer ${TOKEN}" -H "Idempotency-Key: ${academic_write_key}" \
+  -H 'Content-Type: application/json' -d '[]')" = "409"
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$academic_write_url" \
+  -H 'Content-Type: application/json' -d "$academic_write_body")" = "401"
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+  "${BASE}/internal/academic/commands/classes/${academic_write_class}/reschedule")" = "404"
+echo "PASS: Academic command ingress, replay, mismatch, private route and two durable receipts"
+
+
 # Attendance read extraction has its own DB but Core remains the actual
 # attendance writer. The seeded cs001 owns class-0001 scope; compare the
 # exact FE-visible JSON to Core under the same live CS token.

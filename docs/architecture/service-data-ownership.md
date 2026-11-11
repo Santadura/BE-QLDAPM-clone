@@ -199,6 +199,15 @@ service-key-protected projection API after bootstrap.
   is read separation, **not** Attendance mutation ownership.
 - [ ] Move attendance event ownership and finalized evidence for Payroll to
   Attendance, preserving the lesson-start and assigned-CS-only gates.
+- [x] Phase 8h: route public timetable PUT and reschedule POST to Academic
+  Service while retaining the original locked Core transaction as the ONLY
+  authoritative writer. The Core private bridge enforces X-Internal-Key,
+  live JWT, current class-manager scope, and an atomic Core command receipt.
+  Academic PostgreSQL stores a separate PENDING/COMMITTED ingress ledger.
+  A retry always consults Core with the same key; local receipts never bypass
+  current authorization. This is a transitional write INGRESS, not independent
+  Academic domain write ownership. Full Academic/Scheduling/Attendance sagas
+  and Core write-fence handback still remain.
 - [x] Phase 8g: independently persist per-class planned-session JSON in Academic
   PostgreSQL under a Core transactional session revision clock. Core checks
   exact current CS/Teacher class visibility on every revision lookup, including

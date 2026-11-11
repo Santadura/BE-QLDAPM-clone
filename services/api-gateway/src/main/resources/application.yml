@@ -49,6 +49,18 @@ spring:
           predicates:
             - Path=/api/classes/*/planned-sessions
             - Method=GET
+        # Transitional Academic writes arrive at Academic but still use
+        # Core's original locked timetable mutation and audit transaction.
+        - id: academic-planned-sessions-write
+          uri: ${ACADEMIC_SERVICE_URI:http://localhost:8099}
+          predicates:
+            - Path=/api/classes/*/planned-sessions
+            - Method=PUT
+        - id: academic-reschedule-write
+          uri: ${ACADEMIC_SERVICE_URI:http://localhost:8099}
+          predicates:
+            - Path=/api/classes/*/reschedule
+            - Method=POST
         # Teacher attendance GET has its own role-scoped persistence and
         # checks the current Core JWT and CS class access on every request.
         # The public PUT ingress is Attendance, but the original locked
