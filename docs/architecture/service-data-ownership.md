@@ -205,6 +205,16 @@ service-key-protected projection API after bootstrap.
   private full-history readiness proof expecting success, and restore
   Academic -> Attendance -> Scheduling with a failure-safe EXIT trap.
   No production flag or Academic write ownership is activated.
+- [x] Phase 8n foundation: add a private, opt-in only Academic
+  candidate mutation transaction. Under verified live ADMIN JWT and private
+  internal key, require all three Core writers QUIESCED, full history
+  parity and unchanged writer generations; apply exact expected source
+  revision/event id with PostgreSQL row lock and scoped idempotency.
+  Atomically commit a typed candidate slot, immutable command receipt and
+  REHEARSAL_ONLY event outbox in Academic's own DB. This does NOT update
+  active Academic/Core lessons, route public commands, deliver outbox
+  events, or transfer writer authority. Full cross-service reference
+  saga and Core-handback still required.
 - [x] Phase 8m-3: prevent normal read-after-write lag from breaking
   frontend business flows. After a validated class ACL, Academic GETs
   perform bounded synchronous Core-event drain and historical replay

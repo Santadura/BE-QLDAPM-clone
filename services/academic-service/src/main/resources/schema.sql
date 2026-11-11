@@ -157,3 +157,94 @@ ON CONFLICT(class_session_id) DO UPDATE SET
   source_revision=EXCLUDED.source_revision,
   updated_at=NOW()
 WHERE academic_class_sessions_shadow.source_event_id<EXCLUDED.source_event_id@@
+
+
+-- Phase 8n: locally owned, ATOMIC but NON-AUTHORITATIVE Academic command
+-- rehearsal. A candidate never modifies the Core-source projection and the
+-- outbox event is deliberately not delivered to Core/Scheduling/Attendance.
+-- An approved domain-writer cutover must use separate ownership migrations.
+CREATE TABLE IF NOT EXISTS academic_session_candidate_commands (
+  operator_username VARCHAR(100) NOT NULL,
+  request_key VARCHAR(128) NOT NULL,
+  command_id UUID NOT NULL UNIQUE,
+  request_hash CHAR(64) NOT NULL,
+  class_id VARCHAR(50) NOT NULL,
+  class_session_id VARCHAR(50) NOT NULL,
+  source_event_id BIGINT NOT NULL CHECK(source_event_id>0),
+  source_revision BIGINT NOT NULL CHECK(source_revision>0),
+  academic_generation BIGINT NOT NULL CHECK(academic_generation>0),
+  attendance_generation BIGINT NOT NULL CHECK(attendance_generation>0),
+  scheduling_generation BIGINT NOT NULL CHECK(scheduling_generation>0),
+  action VARCHAR(15) NOT NULL CHECK(action IN ('RESCHEDULE','CANCEL')),
+  state VARCHAR(12) NOT NULL DEFAULT 'STAGED' CHECK(state='STAGED'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(operator_username,request_key)
+)@@
+CREATE INDEX IF NOT EXISTS academic_candidate_by_session
+  ON academic_session_candidate_commands(class_session_id,created_at DESC)@@
+
+CREATE TABLE IF NOT EXISTS academic_session_candidate_slots (
+  command_id UUID PRIMARY KEY REFERENCES academic_session_candidate_commands(command_id)
+    ON DELETE RESTRICT,
+  class_id VARCHAR(50) NOT NULL,
+  class_session_id VARCHAR(50) NOT NULL,
+  session_date DATE NOT NULL,
+  start_time TIME(0) NOT NULL,
+  end_time TIME(0) NOT NULL,
+  status VARCHAR(20) NOT NULL CHECK(status IN ('PLANNED','CANCELLED')),
+  source_event_id BIGINT NOT NULL CHECK(source_event_id>0),
+  source_revision BIGINT NOT NULL CHECK(source_revision>0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT academic_candidate_slot_time_valid CHECK(end_time>start_time)
+)@@
+
+CREATE TABLE IF NOT EXISTS academic_session_candidate_outbox (
+  outbox_id UUID PRIMARY KEY,
+  command_id UUID NOT NULL UNIQUE REFERENCES academic_session_candidate_commands(command_id)
+    ON DELETE RESTRICT,
+  event_kind VARCHAR(30) NOT NULL DEFAULT 'REHEARSAL_ONLY'
+    CHECK(event_kind='REHEARSAL_ONLY'),
+  payload JSONB NOT NULL CHECK(jsonb_typeof(payload)='object'),
+  payload_hash CHAR(64) NOT NULL CHECK(payload_hash ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+
+-- Database-level guarantees: no direct SQL may silently rewrite a
+-- committed candidate or forge a delivered domain mutation after staging.
+CREATE OR REPLACE FUNCTION iig_block_academic_candidate_tampering()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'Academic candidate commands, slots and outbox are immutable'
+    USING ERRCODE='55000';
+END;
+$$@@
+DROP TRIGGER IF EXISTS trg_iig_candidate_command_immutable
+  ON academic_session_candidate_commands@@
+CREATE TRIGGER trg_iig_candidate_command_immutable
+  BEFORE UPDATE OR DELETE ON academic_session_candidate_commands
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_candidate_command_no_truncate
+  ON academic_session_candidate_commands@@
+CREATE TRIGGER trg_iig_candidate_command_no_truncate
+  BEFORE TRUNCATE ON academic_session_candidate_commands
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_candidate_slot_immutable
+  ON academic_session_candidate_slots@@
+CREATE TRIGGER trg_iig_candidate_slot_immutable
+  BEFORE UPDATE OR DELETE ON academic_session_candidate_slots
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_candidate_slot_no_truncate
+  ON academic_session_candidate_slots@@
+CREATE TRIGGER trg_iig_candidate_slot_no_truncate
+  BEFORE TRUNCATE ON academic_session_candidate_slots
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_candidate_outbox_immutable
+  ON academic_session_candidate_outbox@@
+CREATE TRIGGER trg_iig_candidate_outbox_immutable
+  BEFORE UPDATE OR DELETE ON academic_session_candidate_outbox
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_candidate_outbox_no_truncate
+  ON academic_session_candidate_outbox@@
+CREATE TRIGGER trg_iig_candidate_outbox_no_truncate
+  BEFORE TRUNCATE ON academic_session_candidate_outbox
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
