@@ -12,6 +12,8 @@ spring:
       mode: always
       continue-on-error: false
 iig:
+  academic:
+    session-relay-enabled: ${ACADEMIC_SESSION_SOURCE_RELAY_ENABLED:false}
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${ACADEMIC_INTERNAL_API_KEY}

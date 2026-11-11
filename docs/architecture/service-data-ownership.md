@@ -199,6 +199,13 @@ service-key-protected projection API after bootstrap.
   is read separation, **not** Attendance mutation ownership.
 - [ ] Move attendance event ownership and finalized evidence for Payroll to
   Attendance, preserving the lesson-start and assigned-CS-only gates.
+- [x] Phase 8i: Core PostgreSQL now records immutable, revision-stamped
+  class-session INSERT/UPDATE/DELETE events and initial backfill, with SHA-256
+  checked acknowledgements. Academic imports the complete session event feed,
+  DELETE tombstones and durable source receipts into its OWN PostgreSQL,
+  keeping a monotonic latest-session projection and replay cursor. This is
+  an independently persisted source/restore foundation, not an Academic
+  domain writer; public timetable writes still commit under Core locks.
 - [x] Phase 8h: route public timetable PUT and reschedule POST to Academic
   Service while retaining the original locked Core transaction as the ONLY
   authoritative writer. The Core private bridge enforces X-Internal-Key,

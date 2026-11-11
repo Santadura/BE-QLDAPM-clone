@@ -124,6 +124,39 @@ if ! [[ "$academic_rows" =~ ^[0-9]+$ ]] || [ "$academic_rows" -lt 1 ] \
 fi
 echo "PASS: independent Academic planning and session projections match Core source revisions and live ACL"
 
+# Phase 8i: the Core class-session trigger must publish each committed
+# INSERT/UPDATE/DELETE, with an immutable history and a local Academic tombstone.
+academic_source_id="ms-academic-event-${GITHUB_RUN_ID:-local}"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -c \
+  "INSERT INTO class_sessions(class_session_id,class_id,date,start_time,end_time,status)
+   VALUES('${academic_source_id}','${two}','2027-02-12','13:00','14:00','PLANNED');
+   UPDATE class_sessions SET status='CANCELLED' WHERE class_session_id='${academic_source_id}';
+   DELETE FROM class_sessions WHERE class_session_id='${academic_source_id}';"
+academic_imported=0
+for attempt in $(seq 1 90); do
+  academic_imported="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
+    -d iig_academic -tAc \
+    "SELECT count(*) FROM academic_session_owned_projection
+     WHERE class_session_id='${academic_source_id}' AND class_id='${two}'
+       AND event_kind='DELETE' AND source_payload->>'status'='CANCELLED'
+       AND (SELECT count(*) FROM academic_session_source_receipts
+            WHERE class_session_id='${academic_source_id}')=3;" | tr -d '[:space:]')"
+  test "$academic_imported" = "1" && break
+  sleep 2
+done
+test "$academic_imported" = "1" || {
+  echo "Academic source event backfill and DELETE tombstone not reconciled"; exit 1;
+}
+academic_pending="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
+  -d qlapm_db -tAc \
+  "SELECT COUNT(*) FROM academic_session_source_outbox
+   WHERE class_session_id='${academic_source_id}' AND delivered_at IS NULL;" | tr -d '[:space:]')"
+test "$academic_pending" = "0" || {
+  echo "Core Academic source event acknowledgement missing"; exit 1;
+}
+echo "PASS: Academic separate PostgreSQL imports every session mutation, immutable receipts and DELETE tombstone"
+
+
 # Isolated Academic write ingress must preserve legacy public paths and
 # atomically persist one Core command receipt plus its Academic-local inbox.
 academic_write_class="$(create_class "MS-PLAN-${GITHUB_RUN_ID:-LOCAL}")"
