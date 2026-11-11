@@ -43,6 +43,7 @@ on:
       - 'src/main/resources/application.yml'
       - 'prisma/**'
       - 'scripts/smoke-microservices.sh'
+      - 'scripts/smoke-academic-core-only-claim.sh'
       - '.github/workflows/iig-microservices.yml'
   push:
     branches:
@@ -162,6 +163,13 @@ jobs:
         env:
           CI: 'true'
         run: bash scripts/smoke-teacher-cutover.sh
+      # Terminal/destructive-by-design: run AFTER all browser and writer smokes.
+      # This fixture intentionally leaves an OPEN orphan and QUIESCED writers;
+      # the always() cleanup below destroys every disposable PostgreSQL volume.
+      - name: Reject Core handback after Academic crash without local outbox
+        env:
+          IIG_TERMINAL_ORPHAN_PROBE: 'true'
+        run: bash scripts/smoke-academic-core-only-claim.sh
       - name: Print service logs when smoke fails
         if: failure()
         run: docker compose -f docker-compose.microservices.yml logs --no-color --tail=160 db-init postgres backend api-gateway attendance-service attendance-postgres academic-service academic-postgres audit-service catalog-service identity-service reporting-service hr-service payroll-service scheduling-service
