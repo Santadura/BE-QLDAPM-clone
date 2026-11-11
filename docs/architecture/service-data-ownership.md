@@ -205,6 +205,10 @@ service-key-protected projection API after bootstrap.
   private full-history readiness proof expecting success, and restore
   Academic -> Attendance -> Scheduling with a failure-safe EXIT trap.
   No production flag or Academic write ownership is activated.
+- [x] Phase 8m-1: the microservices Compose disables legacy Core
+  public timetable PUT/POST to prevent clients from bypassing the
+  independent Academic API ingress. The internal Core bridge remains
+  the sole domain writer while full cutover is incomplete.
 - [x] Phase 8l: replicate class-session source events into a typed
   Academic PostgreSQL shadow table (class/date/start/end/status/version/
   DELETE tombstone) in the SAME Academic transaction as immutable source

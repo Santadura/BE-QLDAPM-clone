@@ -43,6 +43,7 @@ services:
       ATTENDANCE_PUBLIC_WRITE_ENABLED: "false"
       ATTENDANCE_INTERNAL_API_KEY: ${ATTENDANCE_INTERNAL_API_KEY:-local-dev-attendance-key-change-before-deployment}
       ACADEMIC_BRIDGE_ENABLED: "true"
+      ACADEMIC_PUBLIC_WRITE_ENABLED: "false"
       ACADEMIC_INTERNAL_API_KEY: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}
       SCHEDULING_BRIDGE_ENABLED: "true"
       SCHEDULING_ASSIGNMENT_RELAY_ENABLED: "true"

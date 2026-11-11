@@ -5,6 +5,9 @@ import com.example.demo.service.ClassSessionService.PlannedSessionInput;
 import com.example.demo.service.ClassSessionService.RescheduleRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,6 +19,14 @@ import java.util.Map;
 @RequestMapping("/api")
 public class ClassSessionController {
     private final ClassSessionService sessions;
+    @Value("${iig.academic.public-write-enabled:true}")
+    private boolean publicWriteEnabled=true;
+
+    private void requireAcademicIngress() {
+        if (!publicWriteEnabled)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Use Academic Service for class-session writes");
+    }
 
     @GetMapping("/class-planning")
     public List<Map<String,Object>> planning(Authentication authentication) {
@@ -32,6 +43,7 @@ public class ClassSessionController {
             @PathVariable String classId,
             @RequestBody RescheduleRequest body,
             Authentication authentication) {
+        requireAcademicIngress();
         return sessions.reschedule(classId, body, authentication);
     }
 
@@ -39,6 +51,7 @@ public class ClassSessionController {
     public List<Map<String,Object>> replace(@PathVariable String classId,
             @RequestBody List<@Valid PlannedSessionInput> sessionsInput,
             Authentication authentication) {
+        requireAcademicIngress();
         return sessions.replace(classId, sessionsInput, authentication);
     }
 }
