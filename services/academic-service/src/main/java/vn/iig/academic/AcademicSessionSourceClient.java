@@ -17,6 +17,9 @@ public class AcademicSessionSourceClient {
         String eventKind,long sourceRevision,String payloadJson,String payloadHash) {}
     public record Ack(long eventId,String payloadHash) {}
     public record Summary(long sourceRows,long eventCount,long pendingEvents,long maxEventId) {}
+    public record WriterFence(String academicMode,long academicGeneration,
+        String attendanceMode,long attendanceGeneration,
+        String schedulingMode,long schedulingGeneration) {}
     private final RestClient client;
     private final String secret;
 
@@ -49,6 +52,24 @@ public class AcademicSessionSourceClient {
     }
     public List<Event> pending(int limit) {return get(0,limit,false);}
     public List<Event> history(long cursor,int limit) {return get(cursor,limit,true);}
+
+    /** Live Core fences: read-only evidence, never authorizes write ownership. */
+    public WriterFence writerFence() {
+        try {
+            WriterFence state=client.get().uri("/internal/academic/sessions/events/fence")
+                .header("X-Internal-Key",secret).retrieve().body(WriterFence.class);
+            if(state==null || state.academicMode()==null ||
+                    state.attendanceMode()==null || state.schedulingMode()==null ||
+                    state.academicGeneration()<1 || state.attendanceGeneration()<1 ||
+                    state.schedulingGeneration()<1)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Incomplete Core Academic writer fence");
+            return state;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core Academic writer fence unavailable",ex);
+        }
+    }
 
     public Summary summary() {
         try {

@@ -156,6 +156,62 @@ test "$academic_pending" = "0" || {
 }
 echo "PASS: Academic separate PostgreSQL imports every session mutation, immutable receipts and DELETE tombstone"
 
+# Phase 8j: a maintenance-only Academic writer fence must serialize direct
+# SQL with the other two Core writer controls. Every temporary flip rolls
+# back in this disposable PostgreSQL transaction (never changes deployment).
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+DO \$\$
+BEGIN
+  BEGIN
+    UPDATE academic_session_writer_control
+      SET writer_mode='QUIESCED' WHERE singleton=TRUE;
+    RAISE EXCEPTION 'Academic writer froze without Scheduling and Attendance';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END \$\$;
+UPDATE scheduling_assignment_writer_control
+  SET writer_mode='QUIESCED',changed_at=NOW() WHERE singleton=TRUE;
+UPDATE teacher_attendance_writer_control
+  SET writer_mode='QUIESCED' WHERE singleton=TRUE;
+UPDATE academic_session_writer_control
+  SET writer_mode='QUIESCED' WHERE singleton=TRUE;
+DO \$\$
+DECLARE target_id VARCHAR(50);
+DECLARE current_generation BIGINT;
+BEGIN
+  SELECT generation INTO current_generation
+    FROM academic_session_writer_control WHERE singleton=TRUE;
+  IF current_generation<=1 THEN
+    RAISE EXCEPTION 'Academic writer generation did not advance';
+  END IF;
+  SELECT class_session_id INTO target_id
+    FROM class_sessions WHERE class_id='${two}' LIMIT 1;
+  IF target_id IS NULL THEN
+    RAISE EXCEPTION 'Academic writer fence fixture has no planned session';
+  END IF;
+  BEGIN
+    UPDATE class_sessions SET status=status WHERE class_session_id=target_id;
+    RAISE EXCEPTION 'Academic writer freeze allowed SQL update';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM class_sessions WHERE class_session_id=target_id;
+    RAISE EXCEPTION 'Academic writer freeze allowed SQL delete';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO class_sessions(class_session_id,class_id,date,start_time,end_time,status)
+    VALUES('academic-fence-smoke','${two}','2027-02-12','15:00','16:00','PLANNED');
+    RAISE EXCEPTION 'Academic writer freeze allowed SQL insert';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END \$\$;
+ROLLBACK;
+SQL
+echo "PASS: Academic Core writer fence blocks direct SQL, enforces ordered freeze and generations"
+
+
 
 # Isolated Academic write ingress must preserve legacy public paths and
 # atomically persist one Core command receipt plus its Academic-local inbox.

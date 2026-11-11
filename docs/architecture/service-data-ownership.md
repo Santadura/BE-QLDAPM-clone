@@ -199,6 +199,14 @@ service-key-protected projection API after bootstrap.
   is read separation, **not** Attendance mutation ownership.
 - [ ] Move attendance event ownership and finalized evidence for Payroll to
   Attendance, preserving the lesson-start and assigned-CS-only gates.
+- [x] Phase 8j: PostgreSQL Academic timetable write fence defaults to CORE.
+  A CORE/QUIESCED transition is generation-stamped and requires Scheduling
+  and Attendance already QUIESCED. All class_sessions INSERT/UPDATE/DELETE
+  paths hold the singleton row FOR SHARE so active Core transactions finish
+  before freeze, and SQL writes fail closed while QUIESCED. Resume reverses
+  the order. There is deliberately no ACADEMIC mode or automatic cutover:
+  class and student lifecycle ownership and cross-service compensation
+  remain unresolved.
 - [x] Phase 8i: Core PostgreSQL now records immutable, revision-stamped
   class-session INSERT/UPDATE/DELETE events and initial backfill, with SHA-256
   checked acknowledgements. Academic imports the complete session event feed,

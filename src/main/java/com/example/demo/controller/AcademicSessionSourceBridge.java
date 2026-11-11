@@ -88,6 +88,26 @@ public class AcademicSessionSourceBridge {
             "WHERE event_id>? ORDER BY event_id LIMIT ?",after,limit);
     }
 
+    public record WriterFence(String academicMode,long academicGeneration,
+                              String attendanceMode,long attendanceGeneration,
+                              String schedulingMode,long schedulingGeneration) {}
+
+    @GetMapping("/fence")
+    @Transactional(readOnly=true)
+    public WriterFence writerFence(
+            @RequestHeader(value="X-Internal-Key",required=false) String supplied) {
+        requireKey(supplied);
+        return db.queryForObject(
+            "SELECT a.writer_mode,a.generation,t.writer_mode,t.generation,"+
+            "s.writer_mode,s.writer_generation "+
+            "FROM academic_session_writer_control a "+
+            "JOIN teacher_attendance_writer_control t ON t.singleton=TRUE "+
+            "JOIN scheduling_assignment_writer_control s ON s.singleton=TRUE "+
+            "WHERE a.singleton=TRUE",
+            (rs,i)->new WriterFence(rs.getString(1),rs.getLong(2),
+                rs.getString(3),rs.getLong(4),rs.getString(5),rs.getLong(6)));
+    }
+
     @GetMapping("/summary")
     @Transactional(readOnly=true)
     public Summary summary(@RequestHeader(value="X-Internal-Key",required=false) String supplied) {
