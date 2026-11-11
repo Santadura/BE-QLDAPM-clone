@@ -50,6 +50,7 @@ services:
       # Phase 8g TEACHING reference receiver: private, independent switch.
       # Never enable in a normal Core-authoritative deployment.
       SCHEDULING_TEACHER_REFERENCE_WRITES_ENABLED: ${SCHEDULING_TEACHER_REFERENCE_WRITES_ENABLED:-false}
+      SCHEDULING_TEACHER_CLAIM_RECOVERY_ENABLED: ${SCHEDULING_TEACHER_CLAIM_RECOVERY_ENABLED:-false}
       SCHEDULING_AVAILABILITY_EXTERNAL: "true"
       SCHEDULING_INTERNAL_API_KEY: ${SCHEDULING_INTERNAL_API_KEY:-local-dev-scheduling-key-change-before-deployment}
       SCHEDULING_SERVICE_URL: http://scheduling-service:8098

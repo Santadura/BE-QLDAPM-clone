@@ -145,6 +145,43 @@ public class SchedulingCoreClient {
         }
     }
 
+    public record TeacherClaimRevocationReceipt(String actorUsername,
+        String requestKey,String status) {}
+
+    /**
+     * Finalize irreversible local rejection with an independently checked
+     * Core claim revocation. Only the original live ADMIN bearer is forwarded;
+     * Core independently reauthenticates the admin and checks Scheduling's
+     * own immutable proof under its writer-mode DB lock.
+     */
+    public TeacherClaimRevocationReceipt revokeOrphanTeacherClaim(
+        String actor,String requestKey,String reason,String adminBearer) {
+        try {
+            TeacherClaimRevocationReceipt receipt=client.post()
+                .uri("/internal/scheduling/assignments/claims/teacher/revoke")
+                .header("X-Internal-Key",key)
+                .header("Authorization",adminBearer)
+                .body(java.util.Map.of("actorUsername",actor,
+                    "requestKey",requestKey,"reason",reason))
+                .retrieve().body(TeacherClaimRevocationReceipt.class);
+            if(receipt==null || !actor.equals(receipt.actorUsername()) ||
+                    !requestKey.equals(receipt.requestKey()) ||
+                    !"REVOKED".equals(receipt.status()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Core did not confirm the same durable orphan TC claim revocation");
+            return receipt;
+        } catch(HttpClientErrorException.Conflict ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Core rejected teacher claim withdrawal",ex);
+        } catch(HttpClientErrorException.Forbidden ex) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Core administrator authorization rejected",ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core claim revocation could not be confirmed; local rejection is durable",ex);
+        }
+    }
+
     public record AssignmentWriterState(String mode) {}
 
     /**
