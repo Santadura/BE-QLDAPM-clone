@@ -89,3 +89,25 @@ CREATE TABLE IF NOT EXISTS academic_session_history_cursor (
 );
 INSERT INTO academic_session_history_cursor(singleton,last_event_id)
   VALUES(TRUE,0) ON CONFLICT(singleton) DO NOTHING;
+
+
+-- Receipt evidence may not be re-written or silently deleted, even by a
+-- direct SQL maintenance operation. A duplicate ID with different JSON must
+-- be caught by the importer, not repaired by changing immutable provenance.
+CREATE OR REPLACE FUNCTION iig_guard_academic_source_receipt()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'Academic source receipts are immutable'
+    USING ERRCODE='55000';
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_iig_guard_academic_receipt_mutation
+  ON academic_session_source_receipts;
+CREATE TRIGGER trg_iig_guard_academic_receipt_mutation
+  BEFORE UPDATE OR DELETE ON academic_session_source_receipts
+  FOR EACH ROW EXECUTE FUNCTION iig_guard_academic_source_receipt();
+DROP TRIGGER IF EXISTS trg_iig_guard_academic_receipt_truncate
+  ON academic_session_source_receipts;
+CREATE TRIGGER trg_iig_guard_academic_receipt_truncate
+  BEFORE TRUNCATE ON academic_session_source_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_guard_academic_source_receipt();

@@ -121,6 +121,42 @@ public class AcademicSessionSourceBridge {
                 rs.getLong(3),rs.getLong(4)));
     }
 
+    /**
+     * Cutover evidence is read-only: verify that every current Core lesson
+     * has a source event and that the newest event equals its actual row,
+     * including deleted lessons (tombstones). This endpoint does NOT freeze
+     * writers or transfer ownership.
+     */
+    public record Integrity(long sourceRows,long trackedLiveRows,long eventCount,
+        long pendingEvents,long maxEventId,long distinctSessions,long divergentRows) {}
+
+    @GetMapping("/integrity")
+    @Transactional(readOnly=true)
+    public Integrity integrity(
+            @RequestHeader(value="X-Internal-Key",required=false) String supplied) {
+        requireKey(supplied);
+        return db.queryForObject(
+            "SELECT "+
+            "(SELECT COUNT(*) FROM class_sessions),"+
+            "(SELECT COUNT(*) FROM class_sessions s WHERE EXISTS "+
+            " (SELECT 1 FROM academic_session_source_outbox e "+
+            "  WHERE e.class_session_id=s.class_session_id)),"+
+            "(SELECT COUNT(*) FROM academic_session_source_outbox),"+
+            "(SELECT COUNT(*) FROM academic_session_source_outbox WHERE delivered_at IS NULL),"+
+            "(SELECT COALESCE(MAX(event_id),0) FROM academic_session_source_outbox),"+
+            "(SELECT COUNT(DISTINCT class_session_id) FROM academic_session_source_outbox),"+
+            "(SELECT COUNT(*) FROM ("+
+            " SELECT DISTINCT ON (class_session_id) class_session_id,event_kind,payload "+
+            " FROM academic_session_source_outbox "+
+            " ORDER BY class_session_id,event_id DESC) newest "+
+            " LEFT JOIN class_sessions s ON s.class_session_id=newest.class_session_id "+
+            " WHERE (newest.event_kind='UPSERT' AND "+
+            "  (s.class_session_id IS NULL OR newest.payload IS DISTINCT FROM to_jsonb(s))) "+
+            " OR (newest.event_kind='DELETE' AND s.class_session_id IS NOT NULL))",
+            (rs,i)->new Integrity(rs.getLong(1),rs.getLong(2),rs.getLong(3),
+                rs.getLong(4),rs.getLong(5),rs.getLong(6),rs.getLong(7)));
+    }
+
     @PostMapping("/ack")
     @Transactional
     public Ack acknowledge(

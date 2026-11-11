@@ -66,6 +66,60 @@ public class AcademicSessionSourceRepository {
         return value;
     }
 
+    /** Full immutable evidence for a single Core source event. */
+    public boolean matchesEvent(AcademicSessionSourceClient.Event event) {
+        if(event==null || event.payloadJson()==null ||
+                !sha256(event.payloadJson()).equals(event.payloadHash()))
+            return false;
+        record Stored(String sessionId,String classId,String kind,long revision,
+                      String digest,String payload) {}
+        List<Stored> existing=db.query(
+            "SELECT class_session_id,class_id,event_kind,source_revision,"+
+            "payload_hash,source_payload::text "+
+            "FROM academic_session_source_receipts WHERE event_id=?",
+            (rs,i)->new Stored(rs.getString(1),rs.getString(2),rs.getString(3),
+                rs.getLong(4),rs.getString(5),rs.getString(6)),
+            event.eventId());
+        if(existing.size()!=1)return false;
+        Stored row=existing.get(0);
+        try {
+            return event.classSessionId().equals(row.sessionId()) &&
+                event.classId().equals(row.classId()) &&
+                event.eventKind().equals(row.kind()) &&
+                event.sourceRevision()==row.revision() &&
+                event.payloadHash().equals(row.digest()) &&
+                json.readTree(event.payloadJson()).equals(json.readTree(row.payload()));
+        } catch(Exception ex) {
+            return false;
+        }
+    }
+
+    /**
+     * A count alone cannot prove latest-row parity: SQL FULL JOIN detects
+     * missing/extra tombstones, wrong revisions, and altered payload JSON.
+     */
+    public long latestDivergence() {
+        Long count=db.queryForObject(
+            "SELECT COUNT(*) FROM ("+
+            " SELECT DISTINCT ON(class_session_id) "+
+            " class_session_id,class_id,event_id,source_revision,event_kind,source_payload "+
+            " FROM academic_session_source_receipts "+
+            " ORDER BY class_session_id,event_id DESC) last "+
+            " FULL OUTER JOIN academic_session_owned_projection p "+
+            " ON p.class_session_id=last.class_session_id "+
+            " WHERE last.class_session_id IS NULL OR p.class_session_id IS NULL "+
+            " OR p.class_id IS DISTINCT FROM last.class_id "+
+            " OR p.source_event_id IS DISTINCT FROM last.event_id "+
+            " OR p.source_revision IS DISTINCT FROM last.source_revision "+
+            " OR p.event_kind IS DISTINCT FROM last.event_kind "+
+            " OR p.source_payload IS DISTINCT FROM last.source_payload",
+            Long.class);
+        if(count==null || count<0)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic latest projection parity unavailable");
+        return count;
+    }
+
     @Transactional
     public void apply(AcademicSessionSourceClient.Event event,boolean historical) {
         if(event==null || event.eventId()<1 || event.sourceRevision()<1 ||

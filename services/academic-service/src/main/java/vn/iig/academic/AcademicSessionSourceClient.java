@@ -17,6 +17,8 @@ public class AcademicSessionSourceClient {
         String eventKind,long sourceRevision,String payloadJson,String payloadHash) {}
     public record Ack(long eventId,String payloadHash) {}
     public record Summary(long sourceRows,long eventCount,long pendingEvents,long maxEventId) {}
+    public record Integrity(long sourceRows,long trackedLiveRows,long eventCount,
+        long pendingEvents,long maxEventId,long distinctSessions,long divergentRows) {}
     public record WriterFence(String academicMode,long academicGeneration,
         String attendanceMode,long attendanceGeneration,
         String schedulingMode,long schedulingGeneration) {}
@@ -68,6 +70,23 @@ public class AcademicSessionSourceClient {
         } catch(RestClientException ex) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Core Academic writer fence unavailable",ex);
+        }
+    }
+
+    public Integrity integrity() {
+        try {
+            Integrity state=client.get().uri("/internal/academic/sessions/events/integrity")
+                .header("X-Internal-Key",secret).retrieve().body(Integrity.class);
+            if(state==null || state.sourceRows()<0 || state.trackedLiveRows()<0 ||
+                    state.eventCount()<0 || state.pendingEvents()<0 ||
+                    state.maxEventId()<0 || state.distinctSessions()<0 ||
+                    state.divergentRows()<0)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Invalid Core Academic integrity evidence");
+            return state;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core Academic integrity evidence unavailable",ex);
         }
     }
 
