@@ -9,12 +9,18 @@ if [ "${IIG_ALLOW_CUTOVER_CHECK:-}" != "1" ]; then
   exit 2
 fi
 COMPOSE=(docker compose -f docker-compose.microservices.yml)
-# Do not run an automatic CORE-resume dry-run while a separate writer or
-# Core reference relay is active. Inspect the running containers, not just
-# the current shell environment, to prevent accidental split-brain handoff.
+# Do not run an automatic CORE-resume dry-run while ANY independent
+# teacher/staff writer, claim recovery or reference relay is active.
+# Read the running containers (not shell defaults), and refuse missing
+# flags rather than treating an unknown runtime state as safely disabled.
 for item in "backend:SCHEDULING_REFERENCE_WRITES_ENABLED" \
+            "backend:SCHEDULING_TEACHER_REFERENCE_WRITES_ENABLED" \
+            "backend:SCHEDULING_TEACHER_CLAIM_RECOVERY_ENABLED" \
             "scheduling-service:SCHEDULING_REFERENCE_RELAY_ENABLED" \
             "scheduling-service:SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED" \
+            "scheduling-service:SCHEDULING_ACADEMIC_LEASE_COORDINATOR_ENABLED" \
+            "scheduling-service:SCHEDULING_TEACHER_PREFLIGHT_ENABLED" \
+            "scheduling-service:SCHEDULING_TEACHER_EXECUTOR_ENABLED" \
             "scheduling-service:SCHEDULING_RECOVERY_ENABLED"; do
   service_name="${item%%:*}"
   flag_name="${item#*:}"
@@ -25,7 +31,8 @@ for item in "backend:SCHEDULING_REFERENCE_WRITES_ENABLED" \
   fi
   flag_value="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_id" | \
     sed -n "s/^${flag_name}=//p")"
-  if [ "${flag_value:-false}" != "false" ]; then
+  # Missing/unknown flag is NOT proof the writer is disabled.
+  if [ "$flag_value" != "false" ]; then
     echo "Refusing cutover dry-run: $flag_name is active or unknown."
     exit 1
   fi

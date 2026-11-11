@@ -13,6 +13,18 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "services/scheduling-service/src/main/resources/schema.sql"
 APPLICATION = ROOT / "services/scheduling-service/src/main/resources/application.yml"
 COMPOSE = ROOT / "docker-compose.microservices.yml"
+CUTOVER = ROOT / "scripts/check-scheduling-cutover.sh"
+CUTOVER_BLOCKING_FLAGS = (
+    ("backend", "SCHEDULING_REFERENCE_WRITES_ENABLED"),
+    ("backend", "SCHEDULING_TEACHER_REFERENCE_WRITES_ENABLED"),
+    ("backend", "SCHEDULING_TEACHER_CLAIM_RECOVERY_ENABLED"),
+    ("scheduling-service", "SCHEDULING_REFERENCE_RELAY_ENABLED"),
+    ("scheduling-service", "SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED"),
+    ("scheduling-service", "SCHEDULING_ACADEMIC_LEASE_COORDINATOR_ENABLED"),
+    ("scheduling-service", "SCHEDULING_TEACHER_PREFLIGHT_ENABLED"),
+    ("scheduling-service", "SCHEDULING_TEACHER_EXECUTOR_ENABLED"),
+    ("scheduling-service", "SCHEDULING_RECOVERY_ENABLED"),
+)
 FLAGS = (
     "SCHEDULING_REFERENCE_RELAY_ENABLED",
     "SCHEDULING_ASSIGNMENT_EXECUTOR_ENABLED",
@@ -105,6 +117,14 @@ def main() -> None:
     schema = SCHEMA.read_text(encoding="utf-8")
     app = APPLICATION.read_text(encoding="utf-8")
     compose = COMPOSE.read_text(encoding="utf-8")
+    cutover = CUTOVER.read_text(encoding="utf-8")
+    for service_name, flag in CUTOVER_BLOCKING_FLAGS:
+        if f'"{service_name}:{flag}"' not in cutover:
+            raise AssertionError(
+                f"Cutover check is missing active writer guard: {service_name}:{flag}"
+            )
+    if 'if [ "$flag_value" != "false" ]; then' not in cutover:
+        raise AssertionError("Cutover must refuse missing/unknown runtime flags")
     if 'separator: "@@"' not in app:
         raise AssertionError("Scheduling Spring SQL initializer must use @@")
     parsed = statements(schema)
