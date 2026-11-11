@@ -33,6 +33,14 @@ public class SchedulingAssignmentWriterClaimBridge {
     public record ClaimReceipt(String actorUsername,String operation,
                                String requestKey,String status) {}
     private record Stored(String managerEmployeeId,String status) {}
+    private record TeacherEvent(String eventId,String scheduleId,String payloadHash,
+                                long revision) {}
+    public record TeacherClaimEvidence(
+        boolean found,String actorUsername,String requestKey,
+        String managerEmployeeId,String claimStatus,
+        long referenceEventCount,String referenceEventId,
+        String referenceScheduleId,String referencePayloadHash,
+        long referenceRevision,boolean coreTeacherRowExists) {}
 
     private static final Set<String> SUPPORTED=
         Set.of("ASSIGN_STAFF","EDIT_STAFF","CANCEL_STAFF","ASSIGN_TEACHER");
@@ -46,6 +54,61 @@ public class SchedulingAssignmentWriterClaimBridge {
             throw new IllegalArgumentException("SCHEDULING_INTERNAL_API_KEY required");
         this.db=db;
         this.secret=key.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Operator diagnostic ONLY: no claim release, "safe to handback"
+     * assertion or private writer mutation. Independent Scheduling must
+     * compare these Core facts with its own durable inbox/outbox evidence.
+     * A one-shot HTTP read is NOT an atomic distributed recovery fence.
+     */
+    @GetMapping("/teacher/diagnose")
+    @Transactional(readOnly=true)
+    public TeacherClaimEvidence diagnoseTeacher(
+            @RequestHeader(value="X-Internal-Key",required=false) String key,
+            @RequestParam String actorUsername,@RequestParam String requestKey) {
+        byte[] supplied=key==null?new byte[0]:key.getBytes(StandardCharsets.UTF_8);
+        if(!MessageDigest.isEqual(secret,supplied))
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                "Invalid Core teacher claim diagnostic key");
+        if(actorUsername==null ||
+                !actorUsername.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,99}") ||
+                requestKey==null ||
+                !requestKey.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Exact TC actor and command key required");
+
+        List<Stored> claims=db.query(
+            "SELECT manager_employee_id,status FROM scheduling_assignment_writer_claims " +
+            "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=?",
+            (rs,i)->new Stored(rs.getString(1),rs.getString(2)),actorUsername,requestKey);
+        if(claims.size()>1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Duplicated Core teacher writer claims");
+        List<TeacherEvent> events=db.query(
+            "SELECT event_id,schedule_id,payload_hash,revision " +
+            "FROM scheduling_assignment_reference_event_receipts " +
+            "WHERE actor_username=? AND operation='ASSIGN_TEACHER' AND request_key=? " +
+            "ORDER BY event_id LIMIT 2",
+            (rs,i)->new TeacherEvent(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getLong(4)),actorUsername,requestKey);
+        // Multiple historical receipts are reported as a conflict. A
+        // create-only teacher command currently permits exactly one event.
+        if(events.size()>1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "More than one Core teaching event for a single create command");
+        TeacherEvent event=events.isEmpty()?null:events.get(0);
+        Long live=event==null?0L:db.queryForObject(
+            "SELECT count(*) FROM teaching_schedules t WHERE " +
+            "t.teaching_schedule_id=? AND t.status='ASSIGNED'",
+            Long.class,event.scheduleId());
+        Stored claim=claims.isEmpty()?null:claims.get(0);
+        return new TeacherClaimEvidence(claim!=null,actorUsername,requestKey,
+            claim==null?null:claim.managerEmployeeId(),
+            claim==null?null:claim.status(),events.size(),
+            event==null?null:event.eventId(),event==null?null:event.scheduleId(),
+            event==null?null:event.payloadHash(),event==null?0:event.revision(),
+            live!=null && live==1);
     }
 
     @PostMapping

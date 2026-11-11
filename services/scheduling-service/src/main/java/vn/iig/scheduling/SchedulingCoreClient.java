@@ -109,6 +109,39 @@ public class SchedulingCoreClient {
         }
     }
 
+    public record TeacherClaimEvidence(boolean found,String actorUsername,
+        String requestKey,String managerEmployeeId,String claimStatus,
+        long referenceEventCount,String referenceEventId,
+        String referenceScheduleId,String referencePayloadHash,
+        long referenceRevision,boolean coreTeacherRowExists) {}
+
+    /**
+     * Read-only, key-protected Core claim evidence. Missing, partial or
+     * unavailable responses NEVER authorize a claim to be removed.
+     */
+    public TeacherClaimEvidence teacherClaimEvidence(String actor,String requestKey) {
+        try {
+            TeacherClaimEvidence result=client.get()
+                .uri(uri->uri.path("/internal/scheduling/assignments/claims/teacher/diagnose")
+                    .queryParam("actorUsername",actor)
+                    .queryParam("requestKey",requestKey).build())
+                .header("X-Internal-Key",key)
+                .retrieve().body(TeacherClaimEvidence.class);
+            if(result==null || !actor.equals(result.actorUsername()) ||
+                    !requestKey.equals(result.requestKey()) ||
+                    result.referenceEventCount()<0 || result.referenceEventCount()>1)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Core teacher claim evidence is incomplete or mismatched");
+            return result;
+        } catch(HttpClientErrorException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core claim diagnostic unavailable",ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core claim diagnostic transport unavailable",ex);
+        }
+    }
+
     public record AssignmentWriterState(String mode) {}
 
     /**
