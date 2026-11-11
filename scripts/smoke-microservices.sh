@@ -2306,6 +2306,114 @@ SQL
     'import json,sys; d=json.load(sys.stdin); assert d["sourceEvents"]>0,d; assert d["sourceRows"]>0,d; assert d["lastEventId"]>0,d; assert d["academicGeneration"]>1 and d["attendanceGeneration"]>1 and d["schedulingGeneration"]>1,d'
   echo "PASS: positive read-only Academic readiness attests full imported history under all three frozen writer generations"
 
+  # Private POSITIVE API test: temporarily opt into the non-authoritative
+  # Academic candidate only on GitHub's disposable database. This proves the
+  # Java transactional route, not just direct SQL insertion with a mocked DB.
+  # On interruption, EXIT trap restores the service flag AND the Core fences.
+  academic_candidate_restore() {
+    ACADEMIC_CANDIDATE_WRITER_ENABLED=false "${COMPOSE[@]}" up -d \
+      --no-deps --force-recreate academic-service >/dev/null
+  }
+  academic_candidate_and_core_restore() {
+    set +e
+    academic_candidate_restore
+    academic_rehearsal_restore
+  }
+  trap academic_candidate_and_core_restore EXIT
+  ACADEMIC_CANDIDATE_WRITER_ENABLED=true "${COMPOSE[@]}" up -d \
+    --no-deps --force-recreate academic-service >/dev/null
+  candidate_ready=false
+  for attempt in $(seq 1 80); do
+    if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+      "http://academic-service:8099/actuator/health" 2>/dev/null |
+      grep -q '"UP"'; then
+      candidate_ready=true
+      break
+    fi
+    sleep 2
+  done
+  test "$candidate_ready" = "true" || {
+    echo "Opt-in Academic candidate service could not become healthy"; exit 1;
+  }
+  candidate_row="$("${COMPOSE[@]}" exec -T academic-postgres psql \
+    -U iig_academic -d iig_academic -tAF '|' -c \
+    "SELECT class_session_id,source_event_id,source_revision,
+       to_char(session_date,'YYYY-MM-DD'),
+       to_char(start_time,'HH24:MI:SS'),to_char(end_time,'HH24:MI:SS')
+     FROM academic_class_sessions_shadow
+     WHERE class_id='${one}' AND event_kind='UPSERT'
+     ORDER BY source_event_id DESC LIMIT 1;" | tr -d '\r')"
+  IFS='|' read -r candidate_session candidate_event candidate_revision \
+    candidate_date candidate_start candidate_end <<< "$candidate_row"
+  test -n "$candidate_session" && test -n "$candidate_event" ||
+    { echo "No frozen Academic source row available for candidate"; exit 1; }
+  candidate_key="academic-ci-${GITHUB_RUN_ID}"
+  candidate_payload="$(printf \
+    '{"requestKey":"%s","classId":"%s","sessionId":"%s","expectedEventId":%s,"expectedRevision":%s,"action":"RESCHEDULE","date":"%s","startTime":"%s","endTime":"%s","status":"PLANNED"}' \
+    "$candidate_key" "${one}" "$candidate_session" \
+    "$candidate_event" "$candidate_revision" "$candidate_date" \
+    "$candidate_start" "$candidate_end")"
+  academic_candidate_api="http://academic-service:8099/internal/academic/cutover/sessions/candidates"
+  candidate_post() {
+    "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+      --header "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
+      --header "Authorization: Bearer ${TOKEN}" \
+      --header "Content-Type: application/json" \
+      --post-data "$1" "$academic_candidate_api"
+  }
+  candidate_first="$(candidate_post "$candidate_payload")"
+  candidate_again="$(candidate_post "$candidate_payload")"
+  CANDIDATE_FIRST="$candidate_first" CANDIDATE_REPLAY="$candidate_again" \
+    python3 -c 'import json,os; a=json.loads(os.environ["CANDIDATE_FIRST"]); b=json.loads(os.environ["CANDIDATE_REPLAY"]); assert a==b and a["state"]=="STAGED" and len(a["commandId"])==36, (a,b)'
+  candidate_counts="$("${COMPOSE[@]}" exec -T academic-postgres psql \
+    -U iig_academic -d iig_academic -tAc \
+    "SELECT (SELECT COUNT(*) FROM academic_session_candidate_commands
+       WHERE request_key='${candidate_key}')
+      ||':'||(SELECT COUNT(*) FROM academic_session_candidate_slots s
+       JOIN academic_session_candidate_commands c ON c.command_id=s.command_id
+       WHERE c.request_key='${candidate_key}')
+      ||':'||(SELECT COUNT(*) FROM academic_session_candidate_outbox o
+       JOIN academic_session_candidate_commands c ON c.command_id=o.command_id
+       WHERE c.request_key='${candidate_key}' AND o.event_kind='REHEARSAL_ONLY');" |
+    tr -d '[:space:]')"
+  test "$candidate_counts" = "1:1:1" || {
+    echo "Positive candidate route did not atomically stage one command/slot/outbox"
+    exit 1
+  }
+
+  candidate_collision="${candidate_payload/\"RESCHEDULE\"/\"CANCEL\"}"
+  candidate_collision="${candidate_collision/\"PLANNED\"/\"CANCELLED\"}"
+  candidate_conflict="$(candidate_post "$candidate_collision" 2>&1 || true)"
+  # wget -q may hide status: explicitly request its response headers.
+  candidate_conflict="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
+    --header "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
+    --header "Authorization: Bearer ${TOKEN}" \
+    --header "Content-Type: application/json" \
+    --post-data "$candidate_collision" "$academic_candidate_api" 2>&1 || true)"
+  printf '%s' "$candidate_conflict" | grep -q '409' || {
+    echo "Reused Academic candidate idempotency key was not rejected"; exit 1;
+  }
+  candidate_stale="${candidate_payload/$candidate_key/$candidate_key-stale}"
+  candidate_stale="${candidate_stale/\"expectedRevision\":$candidate_revision/\"expectedRevision\":$((candidate_revision+1))}"
+  stale_result="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
+    --header "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
+    --header "Authorization: Bearer ${TOKEN}" \
+    --header "Content-Type: application/json" \
+    --post-data "$candidate_stale" "$academic_candidate_api" 2>&1 || true)"
+  printf '%s' "$stale_result" | grep -q '409' || {
+    echo "Stale Academic candidate source revision was accepted"; exit 1;
+  }
+  bad_key="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
+    --header "X-Internal-Key: incorrect-internal-key" \
+    --header "Authorization: Bearer ${TOKEN}" \
+    --header "Content-Type: application/json" \
+    --post-data "$candidate_payload" "$academic_candidate_api" 2>&1 || true)"
+  printf '%s' "$bad_key" | grep -q '401' || {
+    echo "Academic candidate did not enforce private operator key"; exit 1;
+  }
+  echo "PASS: Academic opt-in HTTP candidate stages exactly one atomic local command/typed slot/outbox, idempotently replays, and rejects conflicting/stale/unauthorized requests"
+
+  academic_candidate_restore
   # The private proof does not issue a writer capability or switch public
   # routing. Resume Core in inverse order before completing smoke.
   academic_rehearsal_restore
