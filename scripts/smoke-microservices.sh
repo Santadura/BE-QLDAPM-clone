@@ -2395,6 +2395,16 @@ SQL
     echo "Core did not durably acquire and release the exact committed Academic candidate"
     exit 1
   }
+  local_release_count="$("${COMPOSE[@]}" exec -T academic-postgres psql \
+    -U iig_academic -d iig_academic -tAc \
+    "SELECT COUNT(*) FROM academic_candidate_handoff_receipts
+     WHERE request_key='${candidate_key}' AND actor_username='admin';" |
+    tr -d '[:space:]')"
+  test "$local_release_count" = "1" || {
+    echo "Academic local handback receipt missing after Core acknowledged release"
+    exit 1
+  }
+
   # A direct Core handback must be impossible until a claim is released.
   # The synthetic claim exists ONLY inside a PostgreSQL transaction that
   # always ROLLBACKs, so it cannot strand a CI or real deployment.
@@ -2510,6 +2520,114 @@ SQL
   }
   echo "PASS: parallel actor-scoped Academic candidate retries produce one receipt and Core claim; CS cannot bypass Admin role"
 
+
+  # Crash/restart replay: Core claim COMMITTED OPEN, Academic DB has an
+  # exact durable command/typed slot/outbox, but no local handback receipt.
+  # An opt-in scheduled repair must perform the exact Core release and then
+  # persist its independent immutable local acknowledgement. This is a
+  # disposable CI fixture, never a write to a real timetable session.
+  recovery_key="${candidate_key}-ambiguous"
+  IFS='|' read -r ag tg sg <<< "$("${COMPOSE[@]}" exec -T postgres \
+    psql -U postgres -d qlapm_db -tAF '|' -c \
+    "SELECT a.generation,t.generation,s.writer_generation
+     FROM academic_session_writer_control a
+     JOIN teacher_attendance_writer_control t ON t.singleton=TRUE
+     JOIN scheduling_assignment_writer_control s ON s.singleton=TRUE
+     WHERE a.singleton=TRUE;" | tr -d '\r')"
+  test -n "$ag" && test -n "$tg" && test -n "$sg" || {
+    echo "No frozen Core generations for Academic post-commit recovery"
+    exit 1
+  }
+  "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db \
+    -v ON_ERROR_STOP=1 <<SQL
+INSERT INTO academic_candidate_claims
+ (actor_username,request_key,request_hash,class_id,class_session_id,
+  source_event_id,source_revision,academic_generation,
+  attendance_generation,scheduling_generation)
+SELECT 'ci-recovery','${recovery_key}',repeat('d',64),
+  e.class_id,e.class_session_id,e.event_id,e.source_revision,
+  ${ag},${tg},${sg}
+FROM academic_session_source_outbox e
+WHERE e.class_session_id='${candidate_session}' AND e.event_kind='UPSERT'
+ORDER BY e.event_id DESC LIMIT 1;
+SQL
+  "${COMPOSE[@]}" exec -T academic-postgres psql \
+    -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+INSERT INTO academic_session_candidate_commands
+ (operator_username,request_key,command_id,request_hash,class_id,
+  class_session_id,source_event_id,source_revision,academic_generation,
+  attendance_generation,scheduling_generation,action)
+SELECT 'ci-recovery','${recovery_key}',
+ '00000000-0000-4000-8000-000000000151'::uuid,repeat('d',64),
+ s.class_id,s.class_session_id,s.source_event_id,s.source_revision,
+ ${ag},${tg},${sg},'RESCHEDULE'
+FROM academic_class_sessions_shadow s
+WHERE s.class_session_id='${candidate_session}' AND s.event_kind='UPSERT';
+INSERT INTO academic_session_candidate_slots
+ (command_id,class_id,class_session_id,session_date,start_time,end_time,
+  status,source_event_id,source_revision)
+SELECT '00000000-0000-4000-8000-000000000151'::uuid,
+ s.class_id,s.class_session_id,s.session_date,s.start_time,s.end_time,
+ 'PLANNED',s.source_event_id,s.source_revision
+FROM academic_class_sessions_shadow s
+WHERE s.class_session_id='${candidate_session}' AND s.event_kind='UPSERT';
+INSERT INTO academic_session_candidate_outbox
+ (outbox_id,command_id,event_kind,payload,payload_hash)
+VALUES ('00000000-0000-4000-8000-000000000152'::uuid,
+ '00000000-0000-4000-8000-000000000151'::uuid,
+ 'REHEARSAL_ONLY','{"ciRecovery":true}'::jsonb,repeat('e',64));
+COMMIT;
+SQL
+  recovery_complete=false
+  for attempt in $(seq 1 35); do
+    if [ "$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
+      -d qlapm_db -tAc \
+      "SELECT COUNT(*) FROM academic_candidate_claims
+       WHERE request_key='${recovery_key}' AND state='RELEASED';" |
+      tr -d '[:space:]')" = "1" ] &&
+       [ "$("${COMPOSE[@]}" exec -T academic-postgres psql \
+       -U iig_academic -d iig_academic -tAc \
+       "SELECT COUNT(*) FROM academic_candidate_handoff_receipts
+        WHERE request_key='${recovery_key}'
+        AND core_outbox_hash=repeat('e',64);" |
+        tr -d '[:space:]')" = "1" ]; then
+      recovery_complete=true
+      break
+    fi
+    sleep 2
+  done
+  test "$recovery_complete" = "true" || {
+    echo "Post-commit Academic/Core claim handback recovery did not reconcile"
+    exit 1
+  }
+  "${COMPOSE[@]}" exec -T academic-postgres psql \
+    -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+DO \$\$
+BEGIN
+  BEGIN
+    UPDATE academic_candidate_handoff_receipts
+      SET core_outbox_hash=repeat('c',64)
+      WHERE request_key='${recovery_key}';
+    RAISE EXCEPTION 'Academic Core handback receipt was editable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM academic_candidate_handoff_receipts
+      WHERE request_key='${recovery_key}';
+    RAISE EXCEPTION 'Academic Core handback receipt was erasable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    TRUNCATE academic_candidate_handoff_receipts;
+    RAISE EXCEPTION 'Academic Core handback receipts were truncatable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END \$\$;
+ROLLBACK;
+SQL
+  echo "PASS: independent Academic restart recovery releases exact Core OPEN claim, acknowledges immutable local proof, and refuses SQL receipt tampering"
 
   academic_candidate_restore
   # The private proof does not issue a writer capability or switch public
