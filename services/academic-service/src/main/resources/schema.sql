@@ -145,6 +145,7 @@ SELECT class_session_id,class_id,
        (source_payload->>'end_time')::time,
        source_payload->>'status',event_kind,source_event_id,source_revision
 FROM academic_session_owned_projection
+WHERE TRUE -- disambiguate INSERT .. SELECT .. ON CONFLICT for PostgreSQL
 ON CONFLICT(class_session_id) DO UPDATE SET
   class_id=EXCLUDED.class_id,
   session_date=EXCLUDED.session_date,
