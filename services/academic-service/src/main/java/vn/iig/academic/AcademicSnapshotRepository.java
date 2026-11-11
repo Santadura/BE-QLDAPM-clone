@@ -47,6 +47,40 @@ public class AcademicSnapshotRepository {
         return saved;
     }
 
+
+    public record SessionSnapshot(long sourceRevision,String payload,Instant synchronizedAt) {}
+
+    public SessionSnapshot loadSessions(String classId) {
+        var rows=db.query(
+            "SELECT source_revision,payload::text,synchronized_at " +
+            "FROM academic_session_projections WHERE class_id=?",
+            (rs,i)->new SessionSnapshot(rs.getLong(1),rs.getString(2),
+                rs.getTimestamp(3).toInstant()),classId);
+        return rows.isEmpty()?null:rows.get(0);
+    }
+
+    @Transactional
+    public SessionSnapshot saveSessions(String classId,long revision,String payload) {
+        if(classId==null || classId.isBlank() || classId.length()>50 ||
+                revision<1 || payload==null || payload.isBlank())
+            throw new IllegalArgumentException("Invalid Academic session projection");
+        // An older concurrently fetched snapshot can never overwrite a
+        // newer version that has already committed to Academic PostgreSQL.
+        db.update(
+            "INSERT INTO academic_session_projections " +
+            "(class_id,source_revision,payload,synchronized_at) " +
+            "VALUES(?,?,CAST(? AS jsonb),NOW()) " +
+            "ON CONFLICT(class_id) DO UPDATE SET " +
+            "source_revision=EXCLUDED.source_revision,payload=EXCLUDED.payload," +
+            "synchronized_at=NOW() WHERE " +
+            "academic_session_projections.source_revision<EXCLUDED.source_revision",
+            classId,revision,payload);
+        SessionSnapshot saved=loadSessions(classId);
+        if(saved==null || saved.sourceRevision()<revision)
+            throw new IllegalStateException("Academic lesson projection not advanced");
+        return saved;
+    }
+
     @Transactional
     public Instant save(String key,String username,String role,String kind,String json) {
         Timestamp saved=db.queryForObject(

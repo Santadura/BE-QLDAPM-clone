@@ -100,6 +100,66 @@ public class AcademicCoreClient {
         }
     }
 
+
+    public record SessionRevision(long revision) {}
+    public record SessionExport(long revision,
+        com.fasterxml.jackson.databind.JsonNode rows) {}
+
+    /**
+     * Every version request crosses Core's exact class visibility policy.
+     * This includes cache hits: an expired or revoked CS/Teacher must never
+     * be served independently cached timetable data.
+     */
+    public SessionRevision sessionRevision(String classId,String bearer) {
+        try {
+            SessionRevision result=client.get()
+                .uri("/internal/academic/classes/{id}/sessions/revision",classId)
+                .header("X-Internal-Key",internalKey)
+                .header("Authorization",bearer)
+                .retrieve().body(SessionRevision.class);
+            if(result==null || result.revision()<1)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Missing Core class-session revision");
+            return result;
+        } catch(HttpClientErrorException ex) {
+            throw sessionAccessError(ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic lesson revision source unavailable",ex);
+        }
+    }
+
+    public SessionExport sessionExport(String classId,String bearer) {
+        try {
+            SessionExport result=client.get()
+                .uri("/internal/academic/classes/{id}/sessions/snapshot",classId)
+                .header("X-Internal-Key",internalKey)
+                .header("Authorization",bearer)
+                .retrieve().body(SessionExport.class);
+            if(result==null || result.revision()<1 || result.rows()==null ||
+                    !result.rows().isArray())
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "Invalid Core class-session snapshot");
+            return result;
+        } catch(HttpClientErrorException ex) {
+            throw sessionAccessError(ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic lesson snapshot source unavailable",ex);
+        }
+    }
+
+    private ResponseStatusException sessionAccessError(HttpClientErrorException ex) {
+        return switch(ex.getStatusCode().value()) {
+            case 401 -> new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                "Current Core session is invalid",ex);
+            case 403 -> new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Current Core class visibility is denied",ex);
+            default -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core Academic class-session source unavailable",ex);
+        };
+    }
+
     public String planning(String bearer) {
         return liveGet("/api/class-planning",bearer,null);
     }

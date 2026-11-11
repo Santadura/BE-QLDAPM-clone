@@ -64,11 +64,30 @@ public class AcademicReadModelService {
         if(classId==null || classId.isBlank() || classId.length()>50)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Invalid class ID");
-        var actor=core.currentPrincipal(bearer);
-        // Core enforces the nuanced managing-CS/teacher/current-assignment
-        // ACL on the source endpoint, not merely the role listed in JWT.
-        return refresh(actor,"PLANNED_SESSIONS",classId,
-            core.plannedSessions(classId,bearer));
+        core.currentPrincipal(bearer);
+        // A cached class timetable is NEVER an authorization grant. Core
+        // checks the same live CS/Teacher/class scopes on EVERY version
+        // lookup, including both lookups on a cache hit.
+        for(int attempt=0;attempt<3;attempt++) {
+            long revision=core.sessionRevision(classId,bearer).revision();
+            var cached=repo.loadSessions(classId);
+            if(cached!=null && cached.sourceRevision()==revision) {
+                if(core.sessionRevision(classId,bearer).revision()==revision)
+                    return new Result(parseArray(cached.payload()),cached.synchronizedAt());
+                continue;
+            }
+            var source=core.sessionExport(classId,bearer);
+            if(source==null || source.rows()==null || !source.rows().isArray())
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "Core class-session snapshot must be an array");
+            if(source.revision()<revision)
+                continue;
+            var saved=repo.saveSessions(classId,source.revision(),source.rows().toString());
+            if(saved.sourceRevision()==core.sessionRevision(classId,bearer).revision())
+                return new Result(parseArray(saved.payload()),saved.synchronizedAt());
+        }
+        throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+            "Academic lessons changed during read-model reconciliation");
     }
 
     private JsonNode parseArray(String source) {

@@ -59,17 +59,67 @@ class AcademicReadModelServiceTest {
         verifyNoInteractions(repo);
     }
 
-    @Test void plannedSessionsRetainCoreLessonAccessControl() {
+    @Test void plannedSessionsMaterializeVersionedAcademicProjection() {
         when(core.currentPrincipal("bearer")).thenReturn(
             new AcademicCoreClient.Principal("cs001","ROLE_CS"));
-        when(core.plannedSessions("class-1","bearer")).thenReturn(
-            "[{\"id\":\"lesson-1\",\"status\":\"PLANNED\",\"startTime\":\"09:00\"}]");
-        when(repo.save(anyString(),eq("cs001"),eq("ROLE_CS"),
-            eq("PLANNED_SESSIONS"),anyString()))
-            .thenReturn(Instant.parse("2026-11-10T08:00:00Z"));
+        when(core.sessionRevision("class-1","bearer")).thenReturn(
+            new AcademicCoreClient.SessionRevision(4L));
+        when(core.sessionExport("class-1","bearer")).thenReturn(
+            new AcademicCoreClient.SessionExport(4L,new ObjectMapper().createArrayNode()
+                .add(new ObjectMapper().createObjectNode().put("id","lesson-1")
+                    .put("status","PLANNED").put("startTime","09:00"))));
+        when(repo.saveSessions(eq("class-1"),eq(4L),contains("lesson-1")))
+            .thenReturn(new AcademicSnapshotRepository.SessionSnapshot(
+                4L,"[{\"id\":\"lesson-1\",\"status\":\"PLANNED\",\"startTime\":\"09:00\"}]",
+                Instant.parse("2026-11-10T08:00:00Z")));
         assertEquals("lesson-1",model.sessions("class-1","bearer")
             .payload().get(0).path("id").asText());
-        verify(core).plannedSessions("class-1","bearer");
+        verify(core).sessionExport("class-1","bearer");
+        verify(core,atLeast(2)).sessionRevision("class-1","bearer");
+    }
+
+    @Test void unchangedSessionRevisionUsesAcademicDatabaseOnlyAfterLiveAcl() {
+        when(core.currentPrincipal("bearer")).thenReturn(
+            new AcademicCoreClient.Principal("teacher001","ROLE_TEACHER"));
+        when(core.sessionRevision("class-1","bearer")).thenReturn(
+            new AcademicCoreClient.SessionRevision(5L));
+        when(repo.loadSessions("class-1")).thenReturn(
+            new AcademicSnapshotRepository.SessionSnapshot(
+                5L,"[{\"id\":\"lesson-1\"}]",Instant.parse("2026-11-10T08:00:00Z")));
+        assertEquals("lesson-1",model.sessions("class-1","bearer")
+            .payload().get(0).path("id").asText());
+        verify(core,times(2)).sessionRevision("class-1","bearer");
+        verify(core,never()).sessionExport(anyString(),anyString());
+        verify(repo,never()).saveSessions(anyString(),anyLong(),anyString());
+    }
+
+    @Test void revokedClassScopeNeverServesAnOldIndependentSnapshot() {
+        when(core.currentPrincipal("bearer")).thenReturn(
+            new AcademicCoreClient.Principal("cs001","ROLE_CS"));
+        when(core.sessionRevision("class-1","bearer")).thenThrow(
+            new ResponseStatusException(HttpStatus.FORBIDDEN,"CS scope revoked"));
+        assertEquals(HttpStatus.FORBIDDEN,assertThrows(
+            ResponseStatusException.class,()->model.sessions("class-1","bearer"))
+            .getStatusCode());
+        verify(repo,never()).loadSessions(anyString());
+    }
+
+    @Test void changedSessionRevisionRefreshesAcademicReadModel() {
+        when(core.currentPrincipal("bearer")).thenReturn(
+            new AcademicCoreClient.Principal("tc001","ROLE_TC"));
+        when(core.sessionRevision("class-1","bearer")).thenReturn(
+            new AcademicCoreClient.SessionRevision(8L));
+        when(repo.loadSessions("class-1")).thenReturn(
+            new AcademicSnapshotRepository.SessionSnapshot(
+                7L,"[{\"id\":\"stale\"}]",Instant.parse("2026-11-10T08:00:00Z")));
+        when(core.sessionExport("class-1","bearer")).thenReturn(
+            new AcademicCoreClient.SessionExport(8L,new ObjectMapper().createArrayNode()
+                .add(new ObjectMapper().createObjectNode().put("id","new-session"))));
+        when(repo.saveSessions(eq("class-1"),eq(8L),anyString()))
+            .thenReturn(new AcademicSnapshotRepository.SessionSnapshot(
+                8L,"[{\"id\":\"new-session\"}]",Instant.parse("2026-11-10T08:00:00Z")));
+        assertEquals("new-session",model.sessions("class-1","bearer")
+            .payload().get(0).path("id").asText());
     }
 
     @Test void sourceOutageNeverServesCachedStudentOrClassData() {

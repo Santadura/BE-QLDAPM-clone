@@ -108,16 +108,21 @@ core_planned="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
 CORE_LESSONS_JSON="$core_planned" ACADEMIC_LESSONS_JSON="$new_planned" python3 -c \
   'import json,os; a=json.loads(os.environ["ACADEMIC_LESSONS_JSON"]); b=json.loads(os.environ["CORE_LESSONS_JSON"]); assert isinstance(a,list) and a==b'
 academic_rows="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
-  -d iig_academic -tAc "SELECT count(*) FROM academic_read_snapshots;" | tr -d '[:space:]')"
+  -d iig_academic -tAc "SELECT count(*) FROM academic_session_projections WHERE class_id='${one}';" | tr -d '[:space:]')"
+academic_session_revision="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
+  -d iig_academic -tAc "SELECT source_revision FROM academic_session_projections WHERE class_id='${one}';" | tr -d '[:space:]')"
+core_session_revision="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
+  -d qlapm_db -tAc "SELECT revision FROM academic_session_revision WHERE singleton=TRUE;" | tr -d '[:space:]')"
 planning_revision="$("${COMPOSE[@]}" exec -T academic-postgres psql -U iig_academic \
   -d iig_academic -tAc "SELECT source_revision FROM academic_planning_projection WHERE name='planning';" | tr -d '[:space:]')"
 core_planning_revision="$("${COMPOSE[@]}" exec -T postgres psql -U postgres \
   -d qlapm_db -tAc "SELECT revision FROM academic_planning_revision WHERE singleton=TRUE;" | tr -d '[:space:]')"
 if ! [[ "$academic_rows" =~ ^[0-9]+$ ]] || [ "$academic_rows" -lt 1 ] \
-  || [ "$planning_revision" != "$core_planning_revision" ]; then
-  echo "Academic planning revision is not synchronized or session snapshots were not stored"; exit 1
+  || [ "$planning_revision" != "$core_planning_revision" ] \
+  || [ "$academic_session_revision" != "$core_session_revision" ]; then
+  echo "Academic planning/session versions are not synchronized in independent PostgreSQL"; exit 1
 fi
-echo "PASS: Academic owned planning projection matches Core source revision and live ACL"
+echo "PASS: independent Academic planning and session projections match Core source revisions and live ACL"
 
 # Attendance read extraction has its own DB but Core remains the actual
 # attendance writer. The seeded cs001 owns class-0001 scope; compare the

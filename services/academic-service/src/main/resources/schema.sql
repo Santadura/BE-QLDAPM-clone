@@ -22,3 +22,14 @@ CREATE TABLE IF NOT EXISTS academic_planning_projection (
   payload JSONB NOT NULL CHECK(jsonb_typeof(payload)='array'),
   synchronized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Shared per-class Academic read projection: never returned unless a
+-- separate live Core class-level authorization and version check succeeds.
+-- A global Core session mutation revision makes changes in ANY class
+-- invalidate the cached candidate; revisions only move forward.
+CREATE TABLE IF NOT EXISTS academic_session_projections (
+  class_id VARCHAR(50) PRIMARY KEY,
+  source_revision BIGINT NOT NULL CHECK(source_revision>=1),
+  payload JSONB NOT NULL CHECK(jsonb_typeof(payload)='array'),
+  synchronized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

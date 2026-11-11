@@ -199,6 +199,11 @@ service-key-protected projection API after bootstrap.
   is read separation, **not** Attendance mutation ownership.
 - [ ] Move attendance event ownership and finalized evidence for Payroll to
   Attendance, preserving the lesson-start and assigned-CS-only gates.
+- [x] Phase 8g: independently persist per-class planned-session JSON in Academic
+  PostgreSQL under a Core transactional session revision clock. Core checks
+  exact current CS/Teacher class visibility on every revision lookup, including
+  cached reads; retries refuse concurrent version changes, and older projections
+  cannot overwrite newer. Core still owns all session mutations.
 - [x] Academic class-planning and planned-session GET routes now pass
   through an independently deployed Academic service with isolated
   `iig_academic` PostgreSQL read snapshots. Authorization and responses
