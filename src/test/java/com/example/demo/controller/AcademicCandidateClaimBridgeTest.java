@@ -22,6 +22,8 @@ class AcademicCandidateClaimBridgeTest {
             ()->bridge.release(null,null)).getStatusCode());
         assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(ResponseStatusException.class,
             ()->bridge.summary("wrong")).getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(ResponseStatusException.class,
+            ()->bridge.openClaims(null,25)).getStatusCode());
         verifyNoInteractions(db);
     }
     @Test void malformedIdempotencyEvidenceRejectedBeforeSql() {
@@ -41,5 +43,21 @@ class AcademicCandidateClaimBridgeTest {
             ()->bridge.release("private-key",new AcademicCandidateClaimBridge.Release(
                 valid(),"invalid-uuid","a".repeat(64)))).getStatusCode());
         verifyNoInteractions(db);
+    }
+
+    @Test void openClaimTriageIsReadOnlyAndBounded() {
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,()->bridge.openClaims("private-key",0))
+            .getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,()->bridge.openClaims("private-key",51))
+            .getStatusCode());
+        verifyNoInteractions(db);
+        when(db.query(contains("WHERE state='OPEN'"),any(org.springframework.jdbc.core.RowMapper.class),eq(25)))
+            .thenReturn(java.util.List.of());
+        assertTrue(bridge.openClaims("private-key",25).isEmpty());
+        verify(db).query(contains("WHERE state='OPEN'"),
+            any(org.springframework.jdbc.core.RowMapper.class),eq(25));
+        verify(db,never()).update(anyString(),any(Object[].class));
     }
 }
