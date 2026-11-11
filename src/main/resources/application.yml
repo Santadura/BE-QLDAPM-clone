@@ -45,6 +45,7 @@ iig:
     bridge-enabled: ${ACADEMIC_BRIDGE_ENABLED:false}
     internal-key: ${ACADEMIC_INTERNAL_API_KEY:}
     public-write-enabled: ${ACADEMIC_PUBLIC_WRITE_ENABLED:true}
+    candidate-claims-enabled: ${ACADEMIC_CANDIDATE_CLAIMS_ENABLED:false}
   scheduling:
     bridge-enabled: ${SCHEDULING_BRIDGE_ENABLED:false}
     assignment-relay-enabled: ${SCHEDULING_ASSIGNMENT_RELAY_ENABLED:false}

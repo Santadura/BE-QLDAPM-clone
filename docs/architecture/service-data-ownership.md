@@ -205,6 +205,13 @@ service-key-protected projection API after bootstrap.
   private full-history readiness proof expecting success, and restore
   Academic -> Attendance -> Scheduling with a failure-safe EXIT trap.
   No production flag or Academic write ownership is activated.
+- [x] Phase 8o: Core now persists a monotonic three-generation Academic
+  candidate claim, an immutable acquisition/release audit trail, and a
+  PostgreSQL-level QUIESCED -> CORE handback fence when ANY claim remains
+  OPEN. The private claim/release bridge is key-protected, source-hash and
+  revision-checked and can only acquire in QUIESCED mode; retries preserve
+  the original request evidence. This is an isolation protocol for a
+  rehearsal-only candidate, not the production Academic writer handoff.
 - [x] Phase 8n foundation: add a private, opt-in only Academic
   candidate mutation transaction. Under verified live ADMIN JWT and private
   internal key, require all three Core writers QUIESCED, full history
