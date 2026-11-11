@@ -144,6 +144,8 @@ def main() -> None:
         raise AssertionError("Core TC claim recovery must be OFF by default")
     if "iig_guard_teacher_claim_abandon_audit" not in schema:
         raise AssertionError("Immutable Scheduling TC abandonment audit is missing")
+    if "iig_guard_teacher_event_requires_staged_command" not in schema:
+        raise AssertionError("Rejected TEACHING source event SQL fence is missing")
     print(
         f"PASS: Scheduling SQL parser: {len(parsed)} top-level SQL statements; "
         "PL/pgSQL function bodies preserved; control flags wired to Scheduling"

@@ -362,3 +362,32 @@ DROP TRIGGER IF EXISTS trg_iig_teacher_claim_abandon_audit
 CREATE TRIGGER trg_iig_teacher_claim_abandon_audit
   BEFORE UPDATE OR DELETE ON scheduling_teacher_claim_abandon_audit
   FOR EACH ROW EXECUTE FUNCTION iig_guard_teacher_claim_abandon_audit()@@
+
+-- Phase 8g-13b: database-level race fence against a late source event
+-- after an operator irrevocably REJECTED a stranded teacher command.
+-- Java checks alone are insufficient if an alternate SQL path is added.
+-- The SELECT FOR SHARE serializes with the executor and the ADMIN's
+-- SELECT FOR UPDATE of the same durable inbox row.
+CREATE OR REPLACE FUNCTION iig_guard_teacher_event_requires_staged_command()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE state_now VARCHAR(30);
+BEGIN
+  IF NEW.source_type='TEACHING' AND NEW.operation='ASSIGN_TEACHER' THEN
+    SELECT state INTO state_now
+      FROM scheduling_assignment_command_inbox
+      WHERE actor_username=NEW.actor_username
+        AND operation=NEW.operation AND request_key=NEW.request_key
+      FOR SHARE;
+    IF state_now IS DISTINCT FROM 'STAGED' THEN
+      RAISE EXCEPTION 'Cannot publish teacher event after command rejection or completion'
+        USING ERRCODE='55000';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$@@
+DROP TRIGGER IF EXISTS trg_iig_teacher_event_requires_staged
+  ON scheduling_assignment_domain_outbox@@
+CREATE TRIGGER trg_iig_teacher_event_requires_staged
+  BEFORE INSERT ON scheduling_assignment_domain_outbox
+  FOR EACH ROW EXECUTE FUNCTION iig_guard_teacher_event_requires_staged_command()@@

@@ -661,6 +661,10 @@ TEACHING source event. The process is **irreversible and fail-closed**:
    REJECTED state and ZERO source outbox events. It advances STAGED to
    terminal REJECTED and writes an immutable Scheduling audit with the
    current ADMIN username and nontrivial reason, in one local transaction.
+   A dedicated PostgreSQL BEFORE INSERT trigger ALSO requires a teacher
+   command to still be STAGED before publishing any independent TEACHING
+   outbox event; this prevents an alternate/late SQL writer from creating
+   a source fact after the terminal rejection.
 2. Using the same live ADMIN bearer and internal service key, the operator
    asks Core to revoke that exact orphan claim. Core independently
    revalidates the current ADMIN, obtains the writer-control

@@ -1696,6 +1696,33 @@ done
 recovered="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
   --header "X-Internal-Key: ${scheduling_key}" "$verification_url")"
 printf '%s' "$recovered" | python3 -c 'import sys,json; assert json.load(sys.stdin)["ready"]'
+# The Scheduling PostgreSQL guard (not just a Java service) must prevent
+# a forged TEACHING outbox event after an irreversible rejection. This
+# also fences SQL paths created by later migration stages.
+"${COMPOSE[@]}" exec -T scheduling-postgres psql -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  INSERT INTO scheduling_assignment_command_inbox
+    (actor_username,operation,request_key,request_hash,payload,state)
+  VALUES('tc001','ASSIGN_TEACHER','${fixture}-teacher-rejected',
+         repeat('d',64),'{}'::jsonb,'REJECTED');
+  BEGIN
+    INSERT INTO scheduling_assignment_domain_outbox
+      (event_id,actor_username,operation,request_key,source_type,
+       schedule_id,revision,event_kind,payload,payload_hash)
+    VALUES ('${fixture}-late-teach','tc001','ASSIGN_TEACHER',
+            '${fixture}-teacher-rejected','TEACHING',
+            '${fixture}-late-shift',1,'UPSERT','{}'::jsonb,repeat('a',64));
+    RAISE EXCEPTION 'A rejected teacher command published a new source event';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  DELETE FROM scheduling_assignment_command_inbox
+    WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER'
+      AND request_key='${fixture}-teacher-rejected';
+END
+\$\$;
+SQL
+echo "PASS: PostgreSQL forbids late TEACHING event insertion after command rejection"
 echo "PASS: actor-scoped staged rejection is idempotent and restores cutover readiness"
 
 # Phase 8d: outbox tables and the future Core receipt table exist, but
