@@ -2454,6 +2454,22 @@ BEGIN
     RAISE EXCEPTION 'Academic candidate Core claim could be rewritten';
   EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
   END;
+  IF (SELECT COUNT(*) FROM academic_candidate_claim_audit
+      WHERE request_key='ci-open-claim-${GITHUB_RUN_ID}'
+        AND event_kind='ACQUIRED')<>1 THEN
+    RAISE EXCEPTION 'Core PostgreSQL did not automatically audit direct claim INSERT';
+  END IF;
+  UPDATE academic_candidate_claims
+    SET state='RELEASED',
+        candidate_command_id='00000000-0000-4000-8000-000000000161'::uuid,
+        candidate_outbox_hash=repeat('e',64),
+        released_at=clock_timestamp()
+    WHERE request_key='ci-open-claim-${GITHUB_RUN_ID}';
+  IF (SELECT COUNT(*) FROM academic_candidate_claim_audit
+      WHERE request_key='ci-open-claim-${GITHUB_RUN_ID}'
+        AND event_kind='RELEASED')<>1 THEN
+    RAISE EXCEPTION 'Core PostgreSQL did not automatically audit direct claim release';
+  END IF;
 END \$\$;
 ROLLBACK;
 SQL
@@ -2654,6 +2670,30 @@ SQL
     exit 1
   }
   echo "PASS: Academic positive rehearsal restores every Core writer, without enabling a second source of truth"
+
+  "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db \
+    -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+BEGIN
+  BEGIN
+    INSERT INTO academic_candidate_claims
+      (actor_username,request_key,request_hash,class_id,class_session_id,
+       source_event_id,source_revision,academic_generation,
+       attendance_generation,scheduling_generation)
+    SELECT 'ci-active-operator','ci-active-mode-${GITHUB_RUN_ID}',repeat('d',64),
+      e.class_id,e.class_session_id,e.event_id,e.source_revision,
+      (SELECT generation FROM academic_session_writer_control WHERE singleton=TRUE),
+      (SELECT generation FROM teacher_attendance_writer_control WHERE singleton=TRUE),
+      (SELECT writer_generation FROM scheduling_assignment_writer_control WHERE singleton=TRUE)
+    FROM academic_session_source_outbox e
+    WHERE e.class_session_id='${candidate_session}' AND e.event_kind='UPSERT'
+    ORDER BY e.event_id DESC LIMIT 1;
+    RAISE EXCEPTION 'Direct SQL created Core candidate claim while writers active';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END \$\$;
+SQL
+  echo "PASS: PostgreSQL blocks direct Academic claim admission under active Core mode and appends both immutable claim transition audits"
 fi
 
 
