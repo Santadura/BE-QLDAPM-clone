@@ -24,6 +24,21 @@ public class AttendanceCommandInbox {
         this.mapper=mapper;
     }
 
+    /**
+     * Cutover safety barrier: PENDING is an ambiguous Core transaction, NOT
+     * an absent attendance mutation. A missed response must be reconciled
+     * with the original idempotency key before independent ownership begins.
+     */
+    public long pendingCount() {
+        Long count=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_write_command_inbox WHERE state='PENDING'",
+            Long.class);
+        if(count==null || count<0)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Independent Attendance pending command ledger unavailable");
+        return count;
+    }
+
     @Transactional
     public void stage(String actor,String classId,String scheduleId,String key,String hash) {
         db.update("INSERT INTO attendance_write_command_inbox " +
