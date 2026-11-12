@@ -67,7 +67,10 @@ cleanup() {
     exit "$result"
   fi
   if [ "${started:-false}" = true ]; then
-    "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<'SQL' || true
+    "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<'SQL' || {
+      echo "FAIL: audited native Attendance ownership handback SQL did not commit" >&2
+      exit 1
+    }
 BEGIN;
 SELECT set_config('iig.attendance_handback_approved','true',true);
 UPDATE teacher_attendance_writer_control SET writer_mode='QUIESCED'
@@ -82,6 +85,18 @@ UPDATE academic_roster_writer_control SET writer_mode='CORE'
  WHERE singleton=TRUE AND writer_mode='QUIESCED';
 COMMIT;
 SQL
+    # A silent SQL handback failure would poison the next Teacher smoke.
+    # Before beginning another writer transfer ALL four Core writer controls
+    # must be back to their known pre-test authority.
+    restored="$(core_sql "SELECT
+       (SELECT writer_mode FROM academic_roster_writer_control WHERE singleton) || ',' ||
+       (SELECT writer_mode FROM academic_session_writer_control WHERE singleton) || ',' ||
+       (SELECT writer_mode FROM teacher_attendance_writer_control WHERE singleton) || ',' ||
+       (SELECT writer_mode FROM scheduling_assignment_writer_control WHERE singleton)")"
+    if [ "$restored" != "CORE,CORE,CORE,CORE" ]; then
+      echo "FAIL: Native cutover handback left writer controls $restored" >&2
+      exit 1
+    fi
     core_sql "DELETE FROM staff_schedules WHERE staff_schedule_id='$support_id'" >/dev/null || true
     ATTENDANCE_NATIVE_WRITER_ENABLED=false ATTENDANCE_NATIVE_RECOVERY_ENABLED=false ATTENDANCE_NATIVE_ADMISSION_ENABLED=false "${COMPOSE[@]}" up -d --no-deps --force-recreate attendance-service >/dev/null || true
     ATTENDANCE_NATIVE_REFERENCE_ENABLED=false "${COMPOSE[@]}" up -d --no-deps --force-recreate backend >/dev/null || true
@@ -229,8 +244,18 @@ assert original == retried, f"Original={original!r} retry={retried!r}"
 PY
 test "$(core_sql "SELECT COUNT(*) FROM teacher_attendance_native_reference_receipts WHERE teaching_schedule_id='$schedule_id'")" = 2 ||
   FAIL "Native replay created an extra Core reference receipt"
-test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT http://backend:8081/api/classes/$class_id/teacher-attendance/$schedule_id -H "Authorization: Bearer $cs_token" -H 'Content-Type: application/json' -d '{"status":"ABSENT"}')" != 200 ||
-  FAIL "Core still acts as a parallel business writer"
+# A failed DNS lookup is NOT proof of a blocked Core writer.
+# Test the real SQL transaction guard directly and assert the exact row
+# remains unchanged while native Attendance owns its generation.
+test "$(core_sql "SELECT 1")" = 1 || FAIL "Core SQL unavailable before fence assertion"
+core_attendance_before="$(core_sql "SELECT status FROM teacher_session_attendance WHERE teaching_schedule_id='$schedule_id'")"
+if "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+    -c "UPDATE teacher_session_attendance SET status='ABSENT' WHERE teaching_schedule_id='$schedule_id';" \
+    >/dev/null 2>&1; then
+  FAIL "Core direct SQL business attendance write bypassed native owner fence"
+fi
+test "$(core_sql "SELECT status FROM teacher_session_attendance WHERE teaching_schedule_id='$schedule_id'")" = "$core_attendance_before" ||
+  FAIL "Core direct write altered teacher attendance despite native ownership"
 echo "PASS: native Attendance public CS PUT, same-key replay and Core dual-writer exclusion"
 
 # Stop all external mutations, reconcile independent full history, and prove
