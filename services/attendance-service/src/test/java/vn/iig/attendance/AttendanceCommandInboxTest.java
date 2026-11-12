@@ -39,4 +39,19 @@ class AttendanceCommandInboxTest {
         assertEquals(HttpStatus.CONFLICT,assertThrows(ResponseStatusException.class,
             ()->inbox.complete("cs001","class-1","teach-1","key","hash",reply)).getStatusCode());
     }
+    @Test void ambiguousCoreResponsesRemainCutoverBlockers() {
+        when(db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_write_command_inbox WHERE state='PENDING'",
+            Long.class)).thenReturn(2L);
+        assertEquals(2L,inbox.pendingCount());
+    }
+
+    @Test void missingIndependentLedgerMustNotCountAsZero() {
+        when(db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_write_command_inbox WHERE state='PENDING'",
+            Long.class)).thenReturn(null);
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,inbox::pendingCount).getStatusCode());
+    }
+
 }
