@@ -11,8 +11,9 @@ class AcademicSessionCutoverReadinessTest {
     AcademicSessionSourceClient core=mock(AcademicSessionSourceClient.class);
     AcademicSessionSourceRepository local=mock(AcademicSessionSourceRepository.class);
     AcademicCandidateClaimClient claims=mock(AcademicCandidateClaimClient.class);
+    AcademicSessionCandidateRepository candidates=mock(AcademicSessionCandidateRepository.class);
     AcademicSessionCutoverReadiness service=
-        new AcademicSessionCutoverReadiness(core,local,claims);
+        new AcademicSessionCutoverReadiness(core,local,claims,candidates);
     static final AcademicSessionSourceClient.WriterFence FROZEN=
         new AcademicSessionSourceClient.WriterFence("QUIESCED",4,"QUIESCED",8,"QUIESCED",9);
     static final AcademicSessionSourceClient.Integrity CLEAN=
@@ -140,4 +141,30 @@ class AcademicSessionCutoverReadinessTest {
         assertEquals(2,service.verify().sourceEvents());
         verify(claims,times(2)).summary();
     }
+    @Test void strictReadinessRejectsReleasedButUnappliedSessionRehearsal() {
+        setupReady();
+        when(candidates.unpromotedRehearsalCount()).thenReturn(1L);
+        var error=assertThrows(ResponseStatusException.class,service::verify);
+        assertEquals(HttpStatus.CONFLICT,error.getStatusCode());
+        assertTrue(error.getReason().contains("REHEARSAL_ONLY"));
+        verify(core,never()).integrity();
+        verify(core,never()).history(anyLong(),anyInt());
+    }
+
+    @Test void frozenRehearsalAdmissionRemainsPossibleWithoutGrantingCutover() {
+        setupReady();
+        when(candidates.unpromotedRehearsalCount()).thenReturn(2L);
+        assertEquals(2,service.verifyStaging().sourceEvents());
+        verify(candidates,times(2)).unpromotedRehearsalCount();
+    }
+
+    @Test void aNewRehearsalCommittedDuringScanBlocksEvenStagingProof() {
+        setupReady();
+        when(candidates.unpromotedRehearsalCount()).thenReturn(0L,1L);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verifyStaging)
+            .getStatusCode());
+        verify(core).history(0,100);
+    }
+
 }
