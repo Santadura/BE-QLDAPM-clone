@@ -1676,6 +1676,54 @@ teacher attendance write model together with its worker-conflict
 reservations, class lifecycle APIs and compensating commands. Move all
 Academic/Student ownership out of Core before removing the legacy backend.
 
+## Academic Session REHEARSAL_ONLY disposition (not a write cutover)
+
+The independent Academic timetable candidate path is a **proposal journal**.
+It cannot publish class-session mutations or authorize new Scheduling /
+Attendance writers. All three Core writers remain authoritative.
+
+After a candidate's independent Academic command, typed session slot and
+canonical SHA-256 outbox are committed, the Core claim must be released using
+the exact immutable evidence. A disconnected Core-only orphan remains OPEN;
+neither a missing local command nor a reconstructed JSONB hash is evidence for
+an automatic claim release.
+
+A completed candidate may now be closed with
+`POST /internal/academic/cutover/sessions/rehearsals/discard` using
+`{ "requestKey": "...", "commandId": "UUID" }`, but **only** if:
+
+- The private Academic API is explicitly enabled with
+  `iig.academic.session-disposition-enabled=true` (OFF by default; no
+  Gateway route), the correct `X-Internal-Key`, and a current Core Admin JWT.
+- The Academic, Attendance and Scheduling Core writer modes are all `CORE`,
+  with an unchanged writer generation throughout the local transaction.
+- The Core session claim ledger has no OPEN claims, and the exact actor/key,
+  command UUID and canonical outbox hash are independently confirmed as
+  `RELEASED` in Core and acknowledged by Academic.
+- The original command/typed slot/canonical event are verified, including the
+  session values, SHA-256 request digest and SHA-256 event digest.
+- An immutable, idempotent `academic_session_candidate_dispositions` row
+  persists the exact original actor/key/outbox hash and the Admin who closed
+  the rehearsal. No original command, outbox, slot or receipt is deleted.
+
+A repeated request may return the same disposition; a changed Admin, actor,
+key or evidence is rejected. Core claim and writer controls are never changed
+by the disposal endpoint. Local changes roll back if the Core writer mode,
+generation or claim ledger changes before final confirmation.
+
+**Cutover verification stays fail-closed.** The strict Academic Session
+`verify()` checks the four dependencies of its source proof: all three
+frozen Core writer generations, complete immutable event history/parity, no
+unresolved Core claims, and a stable session disposition ledger. Any
+undisposed `REHEARSAL_ONLY` candidate, missing handback, or inconsistent
+disposition blocks readiness. Explicitly discarded proposals do not count as
+unapplied business intent. `verifyStaging()` is only a frozen rehearsal
+admission check and never authorizes production routing.
+
+This is a controlled operational cleanup prerequisite, **not** an automatic
+cross-database rollback or a completed distributed transaction. No public
+Gateway writer route changes and no production writer flags are enabled.
+
 ## Architecture decisions
 
 | Concern | Design | Reason |
