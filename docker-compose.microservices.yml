@@ -362,6 +362,10 @@ services:
       ACADEMIC_ROSTER_HANDOFF_RECOVERY_ENABLED: ${ACADEMIC_ROSTER_HANDOFF_RECOVERY_ENABLED:-true}
       ACADEMIC_CANDIDATE_HANDOFF_RECOVERY_ENABLED: ${ACADEMIC_CANDIDATE_HANDOFF_RECOVERY_ENABLED:-true}
       CORE_INTERNAL_URL: http://backend:8081
+      ATTENDANCE_INTERNAL_URL: http://attendance-service:8100
+      SCHEDULING_INTERNAL_URL: http://scheduling-service:8098
+      ATTENDANCE_INTERNAL_API_KEY: ${ATTENDANCE_INTERNAL_API_KEY:-local-dev-attendance-key-change-before-deployment}
+      SCHEDULING_INTERNAL_API_KEY: ${SCHEDULING_INTERNAL_API_KEY:-local-dev-scheduling-key-change-before-deployment}
     expose:
       - "8099"
     depends_on:
