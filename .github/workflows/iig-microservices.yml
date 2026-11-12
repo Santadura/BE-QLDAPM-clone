@@ -46,6 +46,7 @@ on:
       - 'scripts/smoke-academic-core-only-claim.sh'
       - 'scripts/smoke-academic-roster.sh'
       - 'scripts/smoke-academic-roster-fence.sh'
+      - 'scripts/smoke-academic-roster-candidates.sh'
       - 'src/main/java/com/example/demo/controller/AcademicStudentRosterSourceBridge.java'
       - 'src/test/java/com/example/demo/controller/AcademicStudentRosterSourceBridgeTest.java'
       - '.github/workflows/iig-microservices.yml'
