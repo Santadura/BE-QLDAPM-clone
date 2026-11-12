@@ -52,4 +52,30 @@ class TeacherAttendancePrivateCommandControllerTest {
             "class-1","teach-1",request).get("status"));
         verify(receipts).mark("class-1","teach-1","request-1",null,request);
     }
+    @Test void privateRecoveryLookupRequiresValidServiceKey() {
+        var request=new TeacherAttendanceCommandReceiptService.ReceiptQuery(
+            "cs001","class-1","teach-1","request-1","a".repeat(64));
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.committedReceipt(null,request)).getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.committedReceipt("wrong-key",request)).getStatusCode());
+        verifyNoInteractions(receipts);
+    }
+
+    @Test void privateRecoveryIsReadOnlyAndReturnsExactCommitProof() throws Exception {
+        var request=new TeacherAttendanceCommandReceiptService.ReceiptQuery(
+            "cs001","class-1","teach-1","request-1","a".repeat(64));
+        var response=new com.fasterxml.jackson.databind.ObjectMapper().readTree(
+            "{\"teachingScheduleId\":\"teach-1\",\"status\":\"PRESENT\"}");
+        var proof=new TeacherAttendanceCommandReceiptService.CommittedReceipt(
+            "cs001","class-1","teach-1","request-1","a".repeat(64),response);
+        when(receipts.committedReceipt(request)).thenReturn(proof);
+        assertEquals(proof,bridge.committedReceipt("secret-key",request));
+        verify(receipts).committedReceipt(request);
+        verify(receipts,never()).mark(anyString(),anyString(),anyString(),any(),
+            any(MarkRequest.class));
+    }
+
 }
