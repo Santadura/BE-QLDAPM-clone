@@ -2,6 +2,7 @@ package vn.iig.attendance;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -27,6 +28,7 @@ public class AttendanceCommittedReceiptClient {
 
     private final RestClient core;
     private final String internalKey;
+    @Autowired
     public AttendanceCommittedReceiptClient(
             @Value("${iig.core.url}") String coreUrl,
             @Value("${iig.core.internal-key}") String internalKey) {
