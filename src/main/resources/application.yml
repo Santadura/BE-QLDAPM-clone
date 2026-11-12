@@ -38,6 +38,7 @@ logging:
 iig:
   attendance:
     bridge-enabled: ${ATTENDANCE_BRIDGE_ENABLED:false}
+    native-reference-enabled: ${ATTENDANCE_NATIVE_REFERENCE_ENABLED:false}
     internal-key: ${ATTENDANCE_INTERNAL_API_KEY:}
     # Only microservices Compose disables the legacy direct Core PUT endpoint.
     public-write-enabled: ${ATTENDANCE_PUBLIC_WRITE_ENABLED:true}
