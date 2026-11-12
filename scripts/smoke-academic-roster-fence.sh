@@ -113,6 +113,43 @@ import json,os
 f=json.loads(os.environ["CHECK"])
 assert f["mode"]=="QUIESCED" and f["generation"]==2,f
 '
+# A roster-only freeze must block public session commands BEFORE Academic
+# stages an inbox receipt, even while the session/attendance/scheduling
+# controls are all still CORE. Exercise both FE contracts.
+session_events_before="$(core_sql "SELECT COUNT(*) FROM academic_session_source_outbox")"
+for operation in PLAN RESCHEDULE; do
+  if [ "$operation" = PLAN ]; then
+    method=PUT; suffix=planned-sessions; payload='[]'
+  else
+    method=POST; suffix=reschedule; payload='{}'
+  fi
+  key_for_probe="ci-roster-only-${operation}-${GITHUB_RUN_ID}"
+  status="$(curl -sS -o /tmp/iig-roster-only-response.json -w '%{http_code}' \
+    -X "$method" "http://localhost:8080/api/classes/class-0001/$suffix" \
+    -H "Authorization: Bearer $admin_token" \
+    -H "Idempotency-Key: $key_for_probe" \
+    -H 'Content-Type: application/json' --data "$payload")"
+  test "$status" = 409 || fail "Roster-only freeze did not block $operation (HTTP $status): $(cat /tmp/iig-roster-only-response.json)"
+  test "$(scalar "SELECT COUNT(*) FROM academic_session_command_inbox WHERE request_key='$key_for_probe'")" = 0 ||
+    fail "Rejected roster-only $operation staged an ambiguous Academic command"
+done
+test "$(core_sql "SELECT COUNT(*) FROM academic_session_source_outbox")" = "$session_events_before" ||
+  fail "Roster-only frozen public command created a Core timetable source event"
+
+# Java ingress checks are advisory: PostgreSQL must hold the roster fence
+# row lock inside EACH Core timetable DML transaction to exclude racing
+# freezes. A direct Core SQL write must be rejected independently of HTTP.
+probe_session="$(core_sql "SELECT class_session_id FROM class_sessions ORDER BY class_session_id LIMIT 1")"
+test -n "$probe_session" || fail "No lesson fixture to verify SQL-level roster exclusion"
+if compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+    -c "UPDATE class_sessions SET status=status WHERE class_session_id='$probe_session'" \
+    >/tmp/iig-roster-timetable-block.log 2>&1; then
+  fail "Core SQL timetable writer bypassed frozen student/roster authority"
+fi
+grep -q "Core Academic timetable writer blocked by frozen roster" \
+  /tmp/iig-roster-timetable-block.log ||
+  fail "Unexpected timetable SQL failure under roster freeze: $(cat /tmp/iig-roster-timetable-block.log)"
+echo "PASS: roster-only freeze excludes Academic PLAN/RESCHEDULE and Core SQL timetable DML"
 # All four tables must block ALL THREE DML statement kinds, including
 # UPDATE/DELETE touching zero rows. Neither FK nor outbox triggers may be
 # relied upon as the only ownership fence.
