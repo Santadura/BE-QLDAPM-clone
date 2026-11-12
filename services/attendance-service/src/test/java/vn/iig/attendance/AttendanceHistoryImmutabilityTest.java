@@ -27,4 +27,21 @@ class AttendanceHistoryImmutabilityTest {
             ()->new AttendanceHistoryImmutability(db).run(null));
         verify(db,never()).execute(startsWith("CREATE TRIGGER"));
     }
+    @Test void nativeFunctionBodiesHaveValidPostgreSQLDoubleDollarQuoting() {
+        JdbcTemplate db=mock(JdbcTemplate.class);
+        new AttendanceHistoryImmutability(db).run(null);
+        var sql=org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(db,atLeast(5)).execute(sql.capture());
+        var functions=sql.getAllValues().stream()
+            .filter(x->x.contains("RETURNS TRIGGER LANGUAGE plpgsql")).toList();
+        org.junit.jupiter.api.Assertions.assertEquals(5,functions.size());
+        for(var function:functions) {
+            org.junit.jupiter.api.Assertions.assertTrue(
+                function.contains("RETURNS TRIGGER LANGUAGE plpgsql AS $$"));
+            org.junit.jupiter.api.Assertions.assertTrue(function.contains("$$;"));
+            org.junit.jupiter.api.Assertions.assertFalse(
+                function.contains("LANGUAGE plpgsql AS $\n"));
+        }
+    }
+
 }
