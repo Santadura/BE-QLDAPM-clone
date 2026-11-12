@@ -1724,6 +1724,97 @@ This is a controlled operational cleanup prerequisite, **not** an automatic
 cross-database rollback or a completed distributed transaction. No public
 Gateway writer route changes and no production writer flags are enabled.
 
+## Final two ownership milestones — explicit acceptance requirements (2026-11-12)
+
+These are **NOT** complete just because the microservices stack passes CI.
+The previous 70/72 figure counts integration/rehearsal checkpoints; it is not
+a production deployment certification. Core remains the authoritative writer
+for session PLANNING/RESCHEDULE and attendance. Never mark 72/72 from a
+read-only cutover proof, a candidate journal, or an exact receipt reconciliation.
+
+### Academic writer ownership — outstanding
+
+Currently `AcademicCommandService.execute` still forwards the real
+`PLAN`/`RESCHEDULE` request over private HTTP to Core, even though
+Academic owns a typed PostgreSQL read replica and a separate, immutable
+`REHEARSAL_ONLY` candidate journal. The candidate is deliberately not a
+business write. The Core mode database constraint currently permits only
+`CORE` and `QUIESCED`, not an authorized `ACADEMIC` writer.
+
+To accept this milestone, **all** of the following must be demonstrated:
+
+1. A versioned authoritative Academic session/roster write model for both
+   planned and rescheduled lessons, with atomic domain mutation, idempotent
+   command receipt, immutable outbox and audit; current Admin/CS ACLs.
+2. The business rules currently in Core, including class state/date bounds,
+   student timetable overlaps, teacher/CS assignments, the last support
+   shift, cancellations, previous attendance and historical payroll/audit
+   facts, must either move or be fenced by versioned independent contracts.
+3. A controlled SQL-backed ownership transfer to Academic must reject every
+   legacy Core session/roster write while allowing **only** signed idempotent
+   downstream reference projection; no interval with two authorities.
+4. A safe rollback plan must reconcile the durable Academic outbox and Core,
+   Scheduling, Attendance and Payroll reference receipts **before** handing
+   back Core ownership. Any missing proof keeps the writer QUIESCED.
+5. Gateway `PUT /api/classes/{id}/planned-sessions` and
+   `POST /api/classes/{id}/reschedule` must use the independent service,
+   preserve FE JSON/results and survive crash-before/after-commit, retry,
+   revoked-role, conflicting-key and reschedule-with-assignment tests.
+
+### Scheduling–Attendance transaction finality — outstanding
+
+There are already independent Scheduling assignment outbox events, Core
+reference receipts and a local Attendance command inbox. The Attendance
+`PENDING` recovery worker reads exact committed Core evidence and
+**does not** replay business writes. A private Scheduling receipt-recovery
+worker now reads only `COMPENSATING` immutable assignment events and uses
+`AssignmentReferenceRecoveryService.verifyAndRecover`; both remain
+**OFF by default**. This repairs an ambiguous confirmation, not a complete
+cross-service saga.
+
+Milestone acceptance additionally requires:
+
+1. An independent Attendance mutation authority and a versioned,
+   immutable Teaching assignment reference subscribed from Scheduling.
+2. Durable command/saga states and explicit finality across Scheduling,
+   Academic lesson leases, Attendance and Payroll: a failed step must
+   deterministically advance through evidence-verified retry or a
+   compensated/blocked terminal state. Never infer failure from HTTP timeout.
+3. Automatic reconciliation of crash gaps in *each* participating database,
+   with a bounded retry policy, DLQ/operator intervention for conflicting
+   evidence, idempotent compensation and a tested return to Core.
+4. Disposable multi-database E2E fault injection before and after each
+   boundary; exact one teacher assignment, attendance mark and payroll
+   reference, no missing/duplicated immutable events, source parity and
+   all writer generations stable after rollback.
+5. Only then enable the public Scheduling/Attendance writer routes. Existing
+   independent employee availability reads and private TEACHING rehearsal
+   are not sufficient.
+
+### Current safety improvements and verification
+
+- `AcademicFullCutoverReadiness` performs two complete private,
+  Admin-protected independent scans without changing any writer. The
+  original flat readiness JSON contract remains compatible.
+- Public Core-backed Academic command ingress now refuses to create a new
+  local `PENDING` entry once any of the three Core writer fences has frozen.
+  The original Core PostgreSQL trigger remains the final concurrent barrier.
+- `AttendanceCommandRecovery` requires the original, immutable Core
+  commit receipt; `AssignmentReceiptRecoveryWorker` similarly uses the
+  exact original Scheduling event and Core reference receipt. Neither
+  worker silently compensates, removes source evidence or promotes a
+  `REHEARSAL_ONLY` intent.
+- Docker regression on disposable data checks no public private-route
+  exposure, SQL immutability, revoked ACLs, cross-service crash recovery,
+  Playwright and handback. A later full writer-ownership cutover needs
+  **its own** positive and negative end-to-end test cases.
+
+**Operational invariant:** In a partially migrated stack keep all three
+authoritative Core writers in `CORE` by default, independent mutations and
+receipt workers OFF except in a controlled disposable rehearsal, and never
+merge/enable production flags based only on a green CI of the existing legacy
+Core-write workflow.
+
 ## Architecture decisions
 
 | Concern | Design | Reason |
