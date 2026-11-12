@@ -22,11 +22,13 @@ public class AcademicRosterCutoverReadiness {
 
     private final AcademicRosterSourceClient core;
     private final AcademicRosterReadiness parity;
+    private final AcademicRosterClaimClient claims;
 
     public AcademicRosterCutoverReadiness(AcademicRosterSourceClient core,
-            AcademicRosterReadiness parity) {
+            AcademicRosterReadiness parity,AcademicRosterClaimClient claims) {
         this.core=core;
         this.parity=parity;
+        this.claims=claims;
     }
 
     private static ResponseStatusException blocked(String reason) {
@@ -39,10 +41,20 @@ public class AcademicRosterCutoverReadiness {
         if(before==null || !"QUIESCED".equals(before.mode()) ||
             before.generation()<2)
             throw blocked("Core student, membership, target and result writers must be QUIESCED");
+        // An OPEN Core claim is a handback barrier even if the complete
+        // Academic event history is otherwise identical. Read the ledger
+        // before AND after parity so an acquire/release race cannot pass.
+        var beforeClaims=claims.summary();
+        if(beforeClaims==null || beforeClaims.openClaims()!=0)
+            throw blocked("unreleased Core roster candidate claim exists");
         var history=parity.verify();
         var after=core.writerFence();
-        if(!before.equals(after) || !"QUIESCED".equals(after.mode()))
-            throw blocked("Core roster writer generation changed during immutable history proof");
+        var afterClaims=claims.summary();
+        if(afterClaims==null || afterClaims.openClaims()!=0)
+            throw blocked("Core roster candidate became OPEN during proof");
+        if(!before.equals(after) || !"QUIESCED".equals(after.mode()) ||
+            !beforeClaims.equals(afterClaims))
+            throw blocked("Core roster writer or claim ledger changed during immutable history proof");
         return new Evidence(after.generation(),history.sourceEvents(),
             history.lastEventId(),history.students(),history.memberships(),
             history.distinctEntities());
