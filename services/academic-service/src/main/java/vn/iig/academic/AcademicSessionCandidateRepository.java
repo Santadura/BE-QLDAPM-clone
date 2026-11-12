@@ -102,12 +102,15 @@ public class AcademicSessionCandidateRepository {
      * All staged timetable commands remain REHEARSAL_ONLY. There is no
      * independently authorized promotion or audited disposal protocol yet.
      * Therefore even a RELEASED Core claim is NOT evidence that these
-     * commands were applied as domain mutations. Strict writer cutover
-     * must refuse any such outstanding intent, including acknowledged rows.
+     * commands were applied as domain mutations. Strict writer cutover must
+     * refuse every rehearsal without an explicit immutable, audited
+     * REHEARSAL_DISCARDED disposition.
      */
     public long unpromotedRehearsalCount() {
         Long count=db.queryForObject(
-            "SELECT COUNT(*) FROM academic_session_candidate_commands",
+            "SELECT COUNT(*) FROM academic_session_candidate_commands c "+
+            "LEFT JOIN academic_session_candidate_dispositions d "+
+            "ON d.command_id=c.command_id WHERE d.command_id IS NULL",
             Long.class);
         if(count==null || count<0)
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
