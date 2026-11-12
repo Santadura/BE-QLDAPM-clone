@@ -22,7 +22,7 @@ require_equal() {
   fi
 }
 # Explicitly enable ONLY a passive private source consumer, on disposable DBs.
-ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true ACADEMIC_STUDENT_LIST_READ_ENABLED=true compose up -d --no-deps --force-recreate academic-service
+ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true ACADEMIC_STUDENT_LIST_READ_ENABLED=true ACADEMIC_STUDENT_TARGETS_READ_ENABLED=true ACADEMIC_STUDENT_RESULTS_READ_ENABLED=true compose up -d --no-deps --force-recreate academic-service
 ready=false
 for attempt in $(seq 1 80); do
   if compose exec -T scheduling-postgres wget -qO- \
@@ -180,6 +180,63 @@ test "$metrics_copied" = true || {
   echo "Academic failed to import real StudentTarget/StudentResult events" >&2;exit 1;
 }
 
+# Exact FE StudentDetail contract now includes Academic-owned target/result
+# arrays, while Core continues authorizing the entire student and serving
+# class descriptions + audit. Check all projected fields, not merely counts.
+admin_detail="$(curl -fsS -H "Authorization: Bearer $admin_token" \
+  "http://localhost:8080/api/students/$key")"
+core_detail="$(compose exec -T scheduling-postgres wget -qO- \
+  --header "Authorization: Bearer $admin_token" \
+  "http://backend:8081/api/students/$key")"
+ADMIN_DETAIL="$admin_detail" CORE_DETAIL="$core_detail" \
+  TARGET_KEY="$target_id" RESULT_KEY="$result_id" \
+  ASSIGNMENT_KEY="$assignment_id" python3 -c '
+import json,os
+a=json.loads(os.environ["ADMIN_DETAIL"]); c=json.loads(os.environ["CORE_DETAIL"])
+assert a["studentId"]==c["studentId"]
+assert a["classes"]==c["classes"] and a["auditLogs"]==c["auditLogs"]
+t=[x for x in a["targets"] if x["id"]==os.environ["TARGET_KEY"]]
+r=[x for x in a["results"] if x["id"]==os.environ["RESULT_KEY"]]
+assert len(t)==1 and len(r)==1,(t,r)
+assert t[0]["targetType"]=="READING" and float(t[0]["targetValue"])==6.5
+assert float(r[0]["score"])==8.25 and r[0]["assignmentId"]==os.environ["ASSIGNMENT_KEY"]
+assert r[0]["examId"] is None and r[0]["evaluatedBy"] is not None
+assert r[0]["evaluatedAt"]
+print("PASS: independent Academic Target and Result arrays retain Core StudentDetail FE contract")
+'
+# A Teacher receives Core-scoped class/course data, never unfiltered local
+# targets/results. A forbidden Core read stays forbidden at the Gateway.
+teacher_core_status="$(compose exec -T scheduling-postgres wget -S -O- \
+  --header "Authorization: Bearer $teacher_token" \
+  "http://backend:8081/api/students/$key" 2>&1 || true)"
+teacher_gateway_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer $teacher_token" \
+  "http://localhost:8080/api/students/$key")"
+if printf '%s' "$teacher_core_status" | grep -q '403'; then
+  test "$teacher_gateway_code" = "403" || {
+    echo "Academic bypassed Core Teacher class scope: $teacher_gateway_code" >&2;exit 1;
+  }
+elif printf '%s' "$teacher_core_status" | grep -q '200'; then
+  test "$teacher_gateway_code" = "200" || {
+    echo "Gateway changed authorized Teacher student access" >&2;exit 1;
+  }
+  teacher_core="$(compose exec -T scheduling-postgres wget -qO- \
+    --header "Authorization: Bearer $teacher_token" \
+    "http://backend:8081/api/students/$key")"
+  teacher_gateway="$(curl -fsS -H "Authorization: Bearer $teacher_token" \
+    "http://localhost:8080/api/students/$key")"
+  TEACHER_CORE="$teacher_core" TEACHER_GATEWAY="$teacher_gateway" python3 -c \
+    'import json,os; assert json.loads(os.environ["TEACHER_CORE"])==json.loads(os.environ["TEACHER_GATEWAY"])'
+else
+  echo "Unrecognized Core Teacher student-detail HTTP result" >&2
+  printf '%s\\n' "$teacher_core_status" >&2
+  exit 1
+fi
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "http://localhost:8080/api/students/$key")" = "401" || {
+    echo "Academic student detail exposed without a JWT" >&2;exit 1;
+}
+
 # Mutations must move the source revision and change the typed latest row.
 compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
 BEGIN;
@@ -199,6 +256,15 @@ done
 test "$metrics_updated" = true || {
   echo "Academic missed StudentTarget/StudentResult update events" >&2;exit 1;
 }
+updated_detail="$(curl -fsS -H "Authorization: Bearer $admin_token" \
+  "http://localhost:8080/api/students/$key")"
+UPDATED_DETAIL="$updated_detail" TARGET_KEY="$target_id" RESULT_KEY="$result_id" python3 -c '
+import json,os
+d=json.loads(os.environ["UPDATED_DETAIL"])
+t=next(x for x in d["targets"] if x["id"]==os.environ["TARGET_KEY"])
+r=next(x for x in d["results"] if x["id"]==os.environ["RESULT_KEY"])
+assert float(t["targetValue"])==7.5 and float(r["score"])==9.0,(t,r)
+'
 
 # A count-only proof misses altered target values. The private full proof
 # must reject this tampering even though the number of rows is unchanged.
@@ -211,9 +277,29 @@ target_drift="$(compose exec -T scheduling-postgres wget -S -O- \
 printf '%s' "$target_drift" | grep -q '409' || {
   echo "Academic accepted a corrupted StudentTarget shadow" >&2;exit 1;
 }
+target_detail_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer $admin_token" \
+  "http://localhost:8080/api/students/$key")"
+test "$target_detail_code" = "409" || {
+  echo "StudentDetail leaked divergent Academic target: $target_detail_code" >&2;exit 1;
+}
 compose exec -T academic-postgres psql -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 \
   -c "UPDATE academic_student_targets_shadow SET target_value=7.50
       WHERE student_target_id='$target_id'" >/dev/null
+# Corrupt the separately owned Result projection; Admin detail must also
+# fail closed rather than silently falling back to the Core score.
+compose exec -T academic-postgres psql -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 \
+  -c "UPDATE academic_student_results_shadow SET score=1.00
+      WHERE student_result_id='$result_id'" >/dev/null
+result_detail_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer $admin_token" \
+  "http://localhost:8080/api/students/$key")"
+test "$result_detail_code" = "409" || {
+  echo "StudentDetail leaked divergent Academic result: $result_detail_code" >&2;exit 1;
+}
+compose exec -T academic-postgres psql -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 \
+  -c "UPDATE academic_student_results_shadow SET score=9.00
+      WHERE student_result_id='$result_id'" >/dev/null
 
 # DELETE tombstones for both kinds must be retained before the existing
 # membership/student fixture is removed (referential integrity).
@@ -235,6 +321,14 @@ done
 test "$metrics_deleted" = true || {
   echo "Academic failed to preserve StudentTarget/StudentResult tombstones" >&2;exit 1;
 }
+deleted_detail="$(curl -fsS -H "Authorization: Bearer $admin_token" \
+  "http://localhost:8080/api/students/$key")"
+DELETED_DETAIL="$deleted_detail" TARGET_KEY="$target_id" RESULT_KEY="$result_id" python3 -c '
+import json,os
+d=json.loads(os.environ["DELETED_DETAIL"])
+assert all(x["id"]!=os.environ["TARGET_KEY"] for x in d["targets"])
+assert all(x["id"]!=os.environ["RESULT_KEY"] for x in d["results"])
+'
 echo "PASS: independent StudentTarget/StudentResult create/update/delete and typed parity"
 
 # Exercise status transition, membership tombstone, then student tombstone.
