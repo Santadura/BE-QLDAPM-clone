@@ -46,19 +46,35 @@ public class AcademicFullCutoverReadiness {
     }
     private final AcademicCrossDomainCutoverReadiness academic;
     private final AcademicDependentCutoverClient downstream;
+    private final AcademicNativeSessionRepository nativeSessions;
 
     public AcademicFullCutoverReadiness(
             AcademicCrossDomainCutoverReadiness academic,
-            AcademicDependentCutoverClient downstream) {
+            AcademicDependentCutoverClient downstream,
+            AcademicNativeSessionRepository nativeSessions) {
         this.academic=academic;this.downstream=downstream;
+        this.nativeSessions=nativeSessions;
     }
 
-    public Evidence verify() {
+    /** Strict production gate never promotes REHEARSAL_ONLY mutations. */
+    public Evidence verify() {return check(true);}
+
+    /** Private rehearsal may add inert, atomic Academic events. */
+    public Evidence verifyStaging() {return check(false);}
+
+    private Evidence check(boolean production) {
+        var n0=nativeSessions.rehearsalSummary();
+        if(n0==null || n0.commands()!=n0.events() ||
+            (production && (n0.activations()!=0 || n0.commands()!=0)))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Native Academic rehearsal is not a committed business cutover");
         var a0=academic.verify();
         var d0=downstream.verify();
         var a1=academic.verify();
         var d1=downstream.verify();
-        if(a0==null || d0==null || !a0.equals(a1) || !d0.equals(d1))
+        var n1=nativeSessions.rehearsalSummary();
+        if(n1==null || !n0.equals(n1) ||
+            a0==null || d0==null || !a0.equals(a1) || !d0.equals(d1))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Cross-service cutover evidence changed during independent scans");
         return new Evidence(a1,d1);

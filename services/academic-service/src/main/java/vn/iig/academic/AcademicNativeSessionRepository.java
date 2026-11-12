@@ -331,6 +331,21 @@ public class AcademicNativeSessionRepository {
         return list;
     }
 
+    public record RehearsalSummary(long activations,long commands,long events) {}
+    public RehearsalSummary rehearsalSummary() {
+        Long activations=db.queryForObject(
+            "SELECT COUNT(*) FROM academic_native_session_activations",Long.class);
+        Long commands=db.queryForObject(
+            "SELECT COUNT(*) FROM academic_native_session_commands",Long.class);
+        Long events=db.queryForObject(
+            "SELECT COUNT(*) FROM academic_native_session_outbox",Long.class);
+        if(activations==null || commands==null || events==null ||
+            activations<0 || commands<0 || events<0)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Native Academic rehearsal state unavailable");
+        return new RehearsalSummary(activations,commands,events);
+    }
+
     /** Atomic domain rows, replay receipt and undeliverable rehearsal outbox. */
     @Transactional
     public JsonNode execute(String actor,String classId,String operation,

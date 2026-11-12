@@ -12,8 +12,10 @@ class AcademicFullCutoverReadinessTest {
         mock(AcademicCrossDomainCutoverReadiness.class);
     final AcademicDependentCutoverClient downstream=
         mock(AcademicDependentCutoverClient.class);
+    final AcademicNativeSessionRepository nativeSessions=
+        mock(AcademicNativeSessionRepository.class);
     final AcademicFullCutoverReadiness verifier=
-        new AcademicFullCutoverReadiness(academic,downstream);
+        new AcademicFullCutoverReadiness(academic,downstream,nativeSessions);
     final ObjectMapper mapper=new ObjectMapper();
 
     AcademicCrossDomainCutoverReadiness.Evidence academicProof(long generation) {
@@ -33,6 +35,26 @@ class AcademicFullCutoverReadinessTest {
         scheduling.put("unresolvedCommands",0);
         scheduling.put("liveSchedules",rows);scheduling.put("trackedLiveSchedules",rows);
         return new AcademicDependentCutoverClient.Proof(attendance,scheduling);
+    }
+
+    @Test void nativeRehearsalCannotMasqueradeAsProductionCutover() {
+        when(nativeSessions.rehearsalSummary()).thenReturn(
+            new AcademicNativeSessionRepository.RehearsalSummary(1,1,1));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,verifier::verify).getStatusCode());
+        verifyNoInteractions(academic,downstream);
+    }
+
+    @Test void stagedNativeRehearsalMustRetainExactlyOneOutboxPerCommand() {
+        when(nativeSessions.rehearsalSummary()).thenReturn(
+            new AcademicNativeSessionRepository.RehearsalSummary(1,2,2));
+        when(academic.verify()).thenReturn(academicProof(4));
+        when(downstream.verify()).thenReturn(downstreamProof(3));
+        assertEquals(4,verifier.verifyStaging().sessionGeneration());
+        when(nativeSessions.rehearsalSummary()).thenReturn(
+            new AcademicNativeSessionRepository.RehearsalSummary(1,2,1));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,verifier::verifyStaging).getStatusCode());
     }
 
     @Test void stableDoubleScanRequiresEachIndependentServiceTwice() {

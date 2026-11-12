@@ -65,13 +65,13 @@ public class AcademicNativeSessionService {
     @Transactional
     public long activate(String classId,String bearer) {
         String actor=admin(bearer);
-        var before=readiness.verify();
+        var before=readiness.verifyStaging();
         var classFacts=facts(classId);
         long rows=nativeSessions.activate(new AcademicNativeSessionRepository.Activation(
             classId,classFacts.status(),classFacts.start(),classFacts.end(),
             before.sessionGeneration(),before.rosterGeneration(),
             before.sessionLastEventId(),actor));
-        if(!before.equals(readiness.verify()) || !classFacts.equals(facts(classId)))
+        if(!before.equals(readiness.verifyStaging()) || !classFacts.equals(facts(classId)))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Academic snapshot/fence changed during native activation; rolling back");
         return rows;
@@ -84,11 +84,11 @@ public class AcademicNativeSessionService {
         if(key==null || !key.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Academic native command requires an Idempotency-Key");
-        var before=readiness.verify();
+        var before=readiness.verifyStaging();
         var classFacts=facts(classId);
         var result=nativeSessions.execute(actor,classId,operation,key,body,
             before.sessionGeneration(),before.rosterGeneration());
-        if(!before.equals(readiness.verify()) || !classFacts.equals(facts(classId)))
+        if(!before.equals(readiness.verifyStaging()) || !classFacts.equals(facts(classId)))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Academic snapshot/fence changed during native mutation; rolling back");
         return result;
