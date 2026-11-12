@@ -43,7 +43,7 @@ public class AttendanceHistoryImmutability implements ApplicationRunner {
         // updates. Only one exact reference confirmation is permissible.
         db.execute("""
             CREATE OR REPLACE FUNCTION iig_attendance_native_outbox_finality()
-            RETURNS TRIGGER LANGUAGE plpgsql AS $
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
               IF TG_OP='DELETE' OR
                  NEW.event_id IS DISTINCT FROM OLD.event_id OR
@@ -66,7 +66,7 @@ public class AttendanceHistoryImmutability implements ApplicationRunner {
               END IF;
               RETURN NEW;
             END;
-            $;
+            $$;
             """);
         db.execute("DROP TRIGGER IF EXISTS trg_iig_attendance_native_outbox_finality " +
             "ON attendance_native_outbox");
@@ -76,7 +76,7 @@ public class AttendanceHistoryImmutability implements ApplicationRunner {
 
         db.execute("""
             CREATE OR REPLACE FUNCTION iig_attendance_native_command_finality()
-            RETURNS TRIGGER LANGUAGE plpgsql AS $
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
               IF TG_OP='DELETE' OR
                  NEW.actor_username IS DISTINCT FROM OLD.actor_username OR
@@ -99,7 +99,7 @@ public class AttendanceHistoryImmutability implements ApplicationRunner {
               END IF;
               RETURN NEW;
             END;
-            $;
+            $$;
             """);
         db.execute("DROP TRIGGER IF EXISTS trg_iig_attendance_native_command_finality " +
             "ON attendance_native_commands");
@@ -109,7 +109,7 @@ public class AttendanceHistoryImmutability implements ApplicationRunner {
 
         db.execute("""
             CREATE OR REPLACE FUNCTION iig_attendance_native_row_version()
-            RETURNS TRIGGER LANGUAGE plpgsql AS $
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
               IF TG_OP='DELETE' OR NEW.teaching_schedule_id IS DISTINCT FROM
                  OLD.teaching_schedule_id
@@ -123,7 +123,7 @@ public class AttendanceHistoryImmutability implements ApplicationRunner {
               END IF;
               RETURN NEW;
             END;
-            $;
+            $$;
             """);
         db.execute("DROP TRIGGER IF EXISTS trg_iig_attendance_native_row_version " +
             "ON attendance_native_teacher_rows");
@@ -132,12 +132,12 @@ public class AttendanceHistoryImmutability implements ApplicationRunner {
             "FOR EACH ROW EXECUTE FUNCTION iig_attendance_native_row_version()");
         db.execute("""
             CREATE OR REPLACE FUNCTION iig_attendance_native_no_truncate()
-            RETURNS TRIGGER LANGUAGE plpgsql AS $
+            RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
               RAISE EXCEPTION 'Native Attendance journal cannot be truncated'
                 USING ERRCODE='55000';
             END;
-            $;
+            $$;
             """);
         db.execute("DROP TRIGGER IF EXISTS trg_iig_native_activation_immutable " +
             "ON attendance_native_activations");
