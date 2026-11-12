@@ -78,7 +78,24 @@ public class AcademicSessionCandidateRepository {
         if(rows.size()>1)
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Duplicate Academic candidate identity in local database");
-        return rows.isEmpty()?null:rows.get(0);
+        if(rows.isEmpty())return null;
+        var snapshot=rows.get(0);
+        // A status-only inspection is not evidence: independently prove the
+        // canonical SHA-256 and exact typed slot before calling a Core claim
+        // consistent. Broken historical rows are diagnosable, not releasable.
+        if(!snapshot.slotMatches() || !snapshot.outboxMatches() ||
+            snapshot.evidence()==null || snapshot.evidence().commandId()==null)
+            return snapshot;
+        try {
+            var durable=committedEvidence(
+                actor,requestKey,snapshot.evidence().commandId());
+            return new LocalCandidate(durable,true,true,
+                snapshot.handoffPresent(),snapshot.handoffMatches());
+        } catch(ResponseStatusException ex) {
+            if(ex.getStatusCode().value()!=409)throw ex;
+            return new LocalCandidate(snapshot.evidence(),true,false,
+                snapshot.handoffPresent(),false);
+        }
     }
 
     /**
