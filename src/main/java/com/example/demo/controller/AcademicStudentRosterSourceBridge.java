@@ -122,6 +122,23 @@ public class AcademicStudentRosterSourceBridge {
                 rs.getLong(4),rs.getLong(5)));
     }
 
+    /**
+     * Database-enforced Core student/roster writer mode. A frozen snapshot
+     * alone does NOT transfer write ownership or authorize public writes.
+     */
+    public record WriterFence(String mode,long generation) {}
+
+    @GetMapping("/fence")
+    @Transactional(readOnly=true)
+    public WriterFence writerFence(
+            @RequestHeader(value="X-Internal-Key",required=false) String supplied) {
+        requireKey(supplied);
+        return db.queryForObject(
+            "SELECT writer_mode,generation FROM academic_roster_writer_control "+
+            "WHERE singleton=TRUE",
+            (rs,i)->new WriterFence(rs.getString(1),rs.getLong(2)));
+    }
+
     @GetMapping("/summary")
     @Transactional(readOnly=true)
     public Summary summary(
