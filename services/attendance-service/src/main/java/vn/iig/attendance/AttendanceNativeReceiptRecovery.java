@@ -44,6 +44,22 @@ public class AttendanceNativeReceiptRecovery {
             log.warn("Native Attendance recovery scan deferred: {}",
                 ex.getClass().getSimpleName());
         }
+        // This second scan covers a different crash boundary:
+        // Core committed its OPEN claim but the independent Attendance JVM
+        // died BEFORE writing an inbox/outbox row. No local-only query can
+        // discover those orphaned commands.
+        try {
+            for(var claim:core.recoverable(25)) {
+                try {recoverClaim(claim);}
+                catch(Exception ex) {
+                    log.warn("Native Core claim still unresolved for {}: {}",
+                        claim.teachingScheduleId(),ex.getClass().getSimpleName());
+                }
+            }
+        } catch(Exception ex) {
+            log.warn("Native Core orphan claim scan deferred: {}",
+                ex.getClass().getSimpleName());
+        }
     }
 
     public boolean repair(AttendanceNativeLedgerRepository.Pending event) {
@@ -58,4 +74,32 @@ public class AttendanceNativeReceiptRecovery {
         ledger.confirm(event,proof);
         return true;
     }
+    /**
+     * The Core admission is durable, generation-bound and already checked
+     * against CURRENT active CS, support shift and Academic lesson facts by
+     * the private Core scanner. Restage the ORIGINAL command atomically in
+     * Attendance, not a newly invented CS request, and relay its exact
+     * event. Re-running this method cannot create a second domain mutation.
+     */
+    public boolean recoverClaim(AttendanceNativeReferenceClient.Claim claim) {
+        if(claim==null || !"OPEN".equals(claim.state()) ||
+            !"ATTENDANCE".equals(claim.ownerMode()) ||
+            claim.coreClaimId()==null || claim.writerGeneration()<2)
+            throw new IllegalArgumentException("Exact active Core claim required");
+        var admitted=new AttendanceNativeLedgerRepository.Admission(
+            claim.actorUsername(),claim.actorEmployeeId(),claim.classId(),
+            claim.teachingScheduleId(),claim.requestKey(),claim.requestHash(),
+            claim.status(),claim.factsToken(),claim.writerGeneration(),
+            claim.coreClaimId(),claim.previousAttendanceId(),
+            claim.previousStatus(),claim.ownerMode());
+        var local=ledger.stage(admitted);
+        var event=ledger.event(local.eventId());
+        if(event==null || !event.actorUsername().equals(claim.actorUsername()) ||
+            !event.classId().equals(claim.classId()) ||
+            !event.teachingScheduleId().equals(claim.teachingScheduleId()) ||
+            !event.requestKey().equals(claim.requestKey()))
+            throw new IllegalStateException("Recovered claim has no matching immutable event");
+        return repair(event);
+    }
+
 }
