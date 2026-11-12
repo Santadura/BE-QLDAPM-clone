@@ -681,6 +681,58 @@ local_recovered="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_atten
   "SELECT state FROM attendance_write_command_inbox WHERE actor_username='cs001' AND request_key='${receipt_key}'" | tr -d '[:space:]')"
 test "$local_recovered" = "COMMITTED" || { echo "PENDING Attendance command was not reconciled"; exit 1; }
 echo "PASS: Attendance/Core idempotent receipts, payload conflict, ambiguous completion recovery, no extra audit/outbox"
+
+# Recreate a lost local acknowledgement, now WITHOUT reissuing a browser PUT.
+# The opt-in reconciler may accept only the original already-COMMITTED Core
+# receipt and must not produce another business event or audit row.
+"${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance \
+  -d iig_attendance -v ON_ERROR_STOP=1 >/dev/null \
+  -c "UPDATE attendance_write_command_inbox SET state='PENDING',
+      response_payload=NULL,completed_at=NULL
+      WHERE actor_username='cs001' AND request_key='${receipt_key}'"
+ATTENDANCE_COMMAND_RECOVERY_ENABLED=true "${COMPOSE[@]}" up -d \
+  --no-deps --force-recreate attendance-service >/dev/null
+automatic_recovery=""
+for attempt in $(seq 1 65); do
+  automatic_recovery="$("${COMPOSE[@]}" exec -T attendance-postgres psql \
+    -U iig_attendance -d iig_attendance -tAc \
+    "SELECT state FROM attendance_write_command_inbox
+      WHERE actor_username='cs001' AND request_key='${receipt_key}'" | tr -d '[:space:]')"
+  test "$automatic_recovery" = "COMMITTED" && break
+  sleep 2
+done
+test "$automatic_recovery" = "COMMITTED" || {
+  echo "Opt-in Attendance reconciler did not verify and complete original Core receipt"; exit 1;
+}
+replay_source="$("${COMPOSE[@]}" exec -T postgres psql \
+  -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM teacher_attendance_source_outbox
+   WHERE teaching_schedule_id='teaching-001'" | tr -d '[:space:]')"
+replay_audit="$("${COMPOSE[@]}" exec -T postgres psql \
+  -U postgres -d qlapm_db -tAc \
+  "SELECT count(*) FROM audit_logs
+   WHERE action='RECORD_TEACHER_ATTENDANCE_PRESENT' AND entity_id='teaching-001'" | tr -d '[:space:]')"
+test "$replay_source" = "$source_after" && test "$replay_audit" = "$audit_after" || {
+  echo "Background Attendance reconciliation reissued Core business mutation"; exit 1;
+}
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/internal/attendance/commands/receipt")" = "404" || {
+  echo "Private Core attendance receipt lookup exposed through public Gateway"; exit 1;
+}
+ATTENDANCE_COMMAND_RECOVERY_ENABLED=false "${COMPOSE[@]}" up -d \
+  --no-deps --force-recreate attendance-service >/dev/null
+for attempt in $(seq 1 65); do
+  if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    "http://attendance-service:8100/actuator/health" 2>/dev/null | grep -q '"UP"'; then
+    break
+  fi
+  if [ "$attempt" -eq 65 ]; then
+    echo "Attendance service did not restart after recovery test"; exit 1;
+  fi
+  sleep 2
+done
+echo "PASS: Attendance restart recovered Core COMMITTED outcome without replaying PUT or weakening public ACL"
+
 for i in $(seq 1 60); do
   observed="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attendance \
     -d iig_attendance -tAc "SELECT payload->>'status' FROM attendance_teacher_source_records WHERE teaching_schedule_id='teaching-001' AND event_kind='UPSERT'" | tr -d '[:space:]')"
