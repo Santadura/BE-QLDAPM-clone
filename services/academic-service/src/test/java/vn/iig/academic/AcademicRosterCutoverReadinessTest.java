@@ -128,4 +128,32 @@ class AcademicRosterCutoverReadinessTest {
             ResponseStatusException.class,service::verify).getStatusCode());
     }
 
+    @Test void stagingAllowsPriorUnappliedRehearsalButProductionCutoverStillBlocks() {
+        when(core.writerFence()).thenReturn(frozen);
+        when(parity.verify()).thenReturn(fullHistory);
+        when(disposition.summary()).thenReturn(
+            new AcademicRosterCandidateDispositionRepository.Summary(1,0,1,0));
+        var proof=service.verifyStaging();
+        assertEquals(2,proof.writerGeneration());
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verify).getStatusCode());
+    }
+    @Test void stagingRefusesUnacknowledgedCoreHandoffOrOpenClaim() {
+        when(core.writerFence()).thenReturn(frozen);
+        when(disposition.summary()).thenReturn(
+            new AcademicRosterCandidateDispositionRepository.Summary(1,0,1,1));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verifyStaging).getStatusCode());
+        verifyNoInteractions(parity);
+    }
+    @Test void stagingDetectsConcurrentCandidateLedgerMutation() {
+        when(core.writerFence()).thenReturn(frozen);
+        when(parity.verify()).thenReturn(fullHistory);
+        when(disposition.summary()).thenReturn(
+            new AcademicRosterCandidateDispositionRepository.Summary(1,0,1,0),
+            new AcademicRosterCandidateDispositionRepository.Summary(2,0,2,0));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verifyStaging).getStatusCode());
+    }
+
 }
