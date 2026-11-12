@@ -172,7 +172,7 @@ replay="$(curl -fsS -X PUT "$private/classes/$class_id/planned-sessions" \
   -H "Idempotency-Key: $plan_key" \
   -H 'Content-Type: application/json' --data "$plan")" ||
   fail "Original Native PLAN idempotency replay failed"
-test "$replay" = "$plan_result" ||
+test "$(printf '%s' "$replay" | jq -Sc .)" = "$(printf '%s' "$plan_result" | jq -Sc .)" ||
   fail "Native PLAN idempotency replay changed the committed outcome"
 
 reschedule_key="ci-native-reschedule-${GITHUB_RUN_ID}"
