@@ -97,4 +97,107 @@ class AcademicSessionCandidateServiceTest {
             ()->service.stage("Bearer admin",missing)).getStatusCode());
         verifyNoInteractions(identity,readiness,core,repo,claims);
     }
+    private static final String COMMITTED_ID=
+        "b381ee38-d42f-48e7-bbf8-24198e329503";
+
+    AcademicSessionCandidateRepository.Receipt stagedReceipt() {
+        return new AcademicSessionCandidateRepository.Receipt(
+            COMMITTED_ID,"dryrun-key","class-1","lesson-1",5,3,"STAGED");
+    }
+
+    AcademicSessionCandidateRepository.Evidence committedProof() {
+        var req=request();
+        String canonical="academic-candidate-v1\\n"+req.classId()+"\\n"+
+            req.sessionId()+"\\n"+req.expectedEventId()+"\\n"+
+            req.expectedRevision()+"\\n"+req.action()+"\\n"+
+            req.date()+"\\n"+req.startTime()+"\\n"+req.endTime()+"\\n"+
+            req.status();
+        return new AcademicSessionCandidateRepository.Evidence(
+            "admin","dryrun-key",AcademicSessionSourceRepository.sha256(canonical),
+            "class-1","lesson-1",5,3,4,5,6,COMMITTED_ID,"b".repeat(64));
+    }
+
+    @Test void matchingDurableSessionReceiptCanReleaseOnlyExactClaim() {
+        allow();
+        var proof=committedProof();
+        when(repo.committedEvidence("admin","dryrun-key",COMMITTED_ID))
+            .thenReturn(proof);
+        service.acknowledge("Bearer admin",request(),stagedReceipt());
+        var order=inOrder(repo,claims);
+        order.verify(repo).committedEvidence("admin","dryrun-key",COMMITTED_ID);
+        order.verify(claims).release(argThat(x->
+            COMMITTED_ID.equals(x.candidateCommandId()) &&
+            proof.digest().equals(x.claim().requestHash()) &&
+            "lesson-1".equals(x.claim().sessionId())));
+        order.verify(repo).recordHandoff(proof);
+    }
+
+    @Test void changedSessionReceiptIdentityCannotReleaseCoreClaim() {
+        var altered=new AcademicSessionCandidateRepository.Receipt(
+            COMMITTED_ID,"dryrun-key","class-1","another-lesson",5,3,"STAGED");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.acknowledge("Bearer admin",request(),altered))
+            .getStatusCode());
+        var forgedStatus=new AcademicSessionCandidateRepository.Receipt(
+            COMMITTED_ID,"dryrun-key","class-1","lesson-1",5,3,"COMMITTED");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.acknowledge("Bearer admin",request(),forgedStatus))
+            .getStatusCode());
+        verifyNoInteractions(identity,repo,claims,core);
+    }
+
+    @Test void malformedSessionRetryDateNeverBecomesServerErrorOrRelease() {
+        var req=request();
+        var malformed=new AcademicSessionCandidateService.Request(
+            req.requestKey(),req.classId(),req.sessionId(),
+            req.expectedEventId(),req.expectedRevision(),req.action(),
+            "invalid-date",req.startTime(),req.endTime(),req.status());
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.acknowledge("Bearer admin",malformed,stagedReceipt()))
+            .getStatusCode());
+        var inverted=new AcademicSessionCandidateService.Request(
+            req.requestKey(),req.classId(),req.sessionId(),
+            req.expectedEventId(),req.expectedRevision(),req.action(),
+            req.date(),"16:00","12:00",req.status());
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.acknowledge("Bearer admin",inverted,stagedReceipt()))
+            .getStatusCode());
+        verifyNoInteractions(identity,repo,claims,core);
+    }
+
+    @Test void sessionReceiptCannotSubstituteAnotherRequestKeyOrVersion() {
+        var original=request();
+        var changed=new AcademicSessionCandidateRepository.Receipt(
+            COMMITTED_ID,"different-key","class-1","lesson-1",5,3,"STAGED");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.acknowledge("Bearer admin",original,changed))
+            .getStatusCode());
+        var revision=new AcademicSessionCandidateRepository.Receipt(
+            COMMITTED_ID,"dryrun-key","class-1","lesson-1",5,4,"STAGED");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.acknowledge("Bearer admin",original,revision))
+            .getStatusCode());
+        verifyNoInteractions(identity,repo,claims,core);
+    }
+
+    @Test void failedCoreReleaseNeverPersistsLocalSessionHandoff() {
+        allow();
+        var proof=committedProof();
+        when(repo.committedEvidence("admin","dryrun-key",COMMITTED_ID))
+            .thenReturn(proof);
+        doThrow(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+            "Core unavailable")).when(claims).release(any());
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,
+            ()->service.acknowledge("Bearer admin",request(),stagedReceipt()))
+            .getStatusCode());
+        verify(repo,never()).recordHandoff(any());
+    }
+
 }
