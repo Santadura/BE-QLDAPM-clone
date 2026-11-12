@@ -105,9 +105,32 @@ public class AcademicRosterCandidateService {
      */
     public void acknowledge(String bearer,Request request,
             AcademicRosterCandidateRepository.Receipt receipt) {
-        if(request==null || receipt==null || receipt.commandId()==null)
+        // A caller-supplied receipt is not an authority to release a Core
+        // writer claim. Reject an altered key/state/payload BEFORE consulting
+        // the local outbox, even when the command UUID is otherwise correct.
+        if(request==null || receipt==null || receipt.commandId()==null ||
+            request.requestKey()==null || request.entityType()==null ||
+            !Set.of("TARGET","RESULT").contains(request.entityType()) ||
+            request.entityId()==null || request.action()==null ||
+            request.expectedEventId()<1 || request.expectedRevision()<1 ||
+            !request.requestKey().equals(receipt.requestKey()) ||
+            !request.entityType().equals(receipt.entityType()) ||
+            !request.entityId().equals(receipt.entityId()) ||
+            request.expectedEventId()!=receipt.sourceEventId() ||
+            !"STAGED".equals(receipt.state()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Missing committed Academic target/result candidate receipt");
+                "Academic roster receipt does not identify the original staged command");
+        java.math.BigDecimal amount=request.proposedValue();
+        if("UPSERT".equals(request.action())) {
+            if(amount==null || amount.signum()<0 || amount.scale()>2 ||
+                amount.compareTo(new BigDecimal(
+                    "TARGET".equals(request.entityType())?"999999.99":"999.99"))>0)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Roster candidate retry numeric value is invalid");
+        } else if(!"DELETE".equals(request.action()) || amount!=null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Roster candidate retry action or DELETE value is invalid");
+        }
         var actor=identity.currentPrincipal(bearer);
         if(actor==null || !"ROLE_ADMIN".equals(actor.role()) ||
             actor.username()==null)
@@ -128,8 +151,9 @@ public class AcademicRosterCandidateService {
                 "Roster candidate release request differs from committed Academic data");
         // A forged retry cannot substitute another numeric value even when
         // it identifies the same committed command. Hash matches stage v1.
-        java.math.BigDecimal amount=request.proposedValue();
-        if(amount!=null)amount=amount.setScale(2,java.math.RoundingMode.UNNECESSARY);
+        // Exact stage validation above guarantees conversion cannot throw a
+        // raw ArithmeticException or accidentally emit an HTTP 500.
+        if(amount!=null)amount=amount.setScale(2);
         String canonical="academic-roster-candidate-v1\n"+
             request.entityType()+"\n"+request.entityId()+"\n"+
             request.expectedEventId()+"\n"+request.expectedRevision()+"\n"+
