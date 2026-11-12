@@ -8,8 +8,8 @@ import static org.mockito.Mockito.*;
 
 class AcademicCrossDomainCutoverReadinessControllerTest {
     final AcademicCoreClient identity=mock(AcademicCoreClient.class);
-    final AcademicCrossDomainCutoverReadiness readiness=
-        mock(AcademicCrossDomainCutoverReadiness.class);
+    final AcademicFullCutoverReadiness readiness=
+        mock(AcademicFullCutoverReadiness.class);
     final AcademicCrossDomainCutoverReadinessController controller=
         new AcademicCrossDomainCutoverReadinessController(identity,readiness,"private");
 
@@ -33,8 +33,12 @@ class AcademicCrossDomainCutoverReadinessControllerTest {
     @Test void liveAdminGetsOnlyNonCacheableReadOnlyProof() {
         when(identity.currentPrincipal("Bearer admin")).thenReturn(
             new AcademicCoreClient.Principal("admin","ROLE_ADMIN"));
-        var evidence=new AcademicCrossDomainCutoverReadiness.Evidence(
+        var academic=new AcademicCrossDomainCutoverReadiness.Evidence(
             2,2,2,2,11,20,15,30,4,2);
+        var evidence=new AcademicFullCutoverReadiness.Evidence(academic,
+            new AcademicDependentCutoverClient.Proof(
+                new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode(),
+                new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()));
         when(readiness.verify()).thenReturn(evidence);
         var response=controller.inspect("private","Bearer admin");
         assertEquals(evidence,response.getBody());
