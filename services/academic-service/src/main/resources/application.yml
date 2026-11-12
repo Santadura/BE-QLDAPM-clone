@@ -21,6 +21,9 @@ iig:
     roster-relay-enabled: ${ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED:false}
     # Admin-only version-checked Academic reads; Teacher retains Core class ACL.
     student-list-read-enabled: ${ACADEMIC_STUDENT_LIST_READ_ENABLED:false}
+    # Independent Admin-only StudentDetail fields; both remain OFF by default.
+    student-targets-read-enabled: ${ACADEMIC_STUDENT_TARGETS_READ_ENABLED:false}
+    student-results-read-enabled: ${ACADEMIC_STUDENT_RESULTS_READ_ENABLED:false}
     event-session-read-enabled: ${ACADEMIC_EVENT_SESSION_READ_ENABLED:false}
     # Private, non-authoritative candidate-only transaction; OFF for all users.
     candidate-handoff-recovery-enabled: ${ACADEMIC_CANDIDATE_HANDOFF_RECOVERY_ENABLED:false}
