@@ -2,6 +2,8 @@ package vn.iig.attendance;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,9 +19,16 @@ import org.springframework.web.server.ResponseStatusException;
 public class AttendanceWriteController {
     private final AttendanceCoreClient core;
     private final AttendanceCommandService writer;
-    public AttendanceWriteController(AttendanceCoreClient core,AttendanceCommandService writer) {
+    private final AttendanceNativeCommandService nativeWriter;
+    private final boolean nativeEnabled;
+    @Autowired
+    public AttendanceWriteController(AttendanceCoreClient core,AttendanceCommandService writer,
+            AttendanceNativeCommandService nativeWriter,
+            @Value("${iig.attendance.native-writer-enabled:false}") boolean nativeEnabled) {
         this.core=core;
         this.writer=writer;
+        this.nativeWriter=nativeWriter;
+        this.nativeEnabled=nativeEnabled;
     }
 
     @PutMapping("/{teachingScheduleId}")
@@ -43,8 +52,11 @@ public class AttendanceWriteController {
                 "Attendance status is required");
         // Core revalidates the same JWT and enforces active support/lesson
         // under its single original local database transaction.
-        JsonNode saved=writer.mark(actor.username(),classId,teachingScheduleId,bearer,
-            request.status(),requestKey);
+        JsonNode saved=nativeEnabled
+            ? nativeWriter.mark(classId,teachingScheduleId,bearer,
+                request.status(),requestKey)
+            : writer.mark(actor.username(),classId,teachingScheduleId,bearer,
+                request.status(),requestKey);
         return ResponseEntity.ok().body(saved);
     }
 }
