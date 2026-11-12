@@ -42,8 +42,6 @@ class AcademicRosterCandidateDispositionServiceTest {
         order.verify(ledger).discard("admin","key-1",request.commandId(),"admin");
         order.verify(source).writerFence();
         order.verify(claims).summary();
-        assertNotNull(AcademicRosterCandidateDispositionService.class
-            .getDeclaredMethods()[0]); // class is loadable in Spring test suite
     }
     @Test void frozenCoreCannotPretendToDiscardUnappliedWrite() {
         adminAndCoreOwned();
