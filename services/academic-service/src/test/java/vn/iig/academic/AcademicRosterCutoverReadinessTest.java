@@ -9,13 +9,19 @@ import static org.mockito.Mockito.*;
 class AcademicRosterCutoverReadinessTest {
     final AcademicRosterSourceClient core=mock(AcademicRosterSourceClient.class);
     final AcademicRosterReadiness parity=mock(AcademicRosterReadiness.class);
+    final AcademicRosterClaimClient claims=mock(AcademicRosterClaimClient.class);
     final AcademicRosterCutoverReadiness service=
-        new AcademicRosterCutoverReadiness(core,parity);
+        new AcademicRosterCutoverReadiness(core,parity,claims);
 
     final AcademicRosterSourceClient.WriterFence frozen=
         new AcademicRosterSourceClient.WriterFence("QUIESCED",2);
     final AcademicRosterReadiness.Evidence fullHistory=
         new AcademicRosterReadiness.Evidence(11,15,4,3,7);
+
+    AcademicRosterCutoverReadinessTest() {
+        when(claims.summary()).thenReturn(
+            new AcademicRosterClaimClient.Summary(0,2,4));
+    }
 
     @Test void coreOwnedWritesRefuseCutoverWithoutScanningAnyPII() {
         when(core.writerFence()).thenReturn(
@@ -63,4 +69,33 @@ class AcademicRosterCutoverReadinessTest {
             ResponseStatusException.class,service::verify).getStatusCode());
         verifyNoInteractions(parity);
     }
+    @Test void openCoreRosterClaimRefusesCutoverEvenIfShadowRowsMatch() {
+        when(core.writerFence()).thenReturn(frozen);
+        when(claims.summary()).thenReturn(
+            new AcademicRosterClaimClient.Summary(1,1,3));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verify).getStatusCode());
+        verifyNoInteractions(parity);
+        verify(core,times(1)).writerFence();
+    }
+    @Test void claimAcquiredAndReleasedDuringSnapshotIsNotInvisible() {
+        when(core.writerFence()).thenReturn(frozen);
+        when(claims.summary()).thenReturn(
+            new AcademicRosterClaimClient.Summary(0,2,4),
+            new AcademicRosterClaimClient.Summary(0,3,6));
+        when(parity.verify()).thenReturn(fullHistory);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verify).getStatusCode());
+        verify(parity).verify();
+    }
+    @Test void newOpenClaimAfterParityForcesFailClosed() {
+        when(core.writerFence()).thenReturn(frozen);
+        when(claims.summary()).thenReturn(
+            new AcademicRosterClaimClient.Summary(0,2,4),
+            new AcademicRosterClaimClient.Summary(1,2,5));
+        when(parity.verify()).thenReturn(fullHistory);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verify).getStatusCode());
+    }
+
 }
