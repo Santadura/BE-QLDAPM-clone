@@ -31,14 +31,18 @@ class AcademicSessionCandidateRepositoryTest {
     }
     @Test void unpromotedRehearsalsIncludeReleasedClaimsUntilExplicitDisposition() {
         when(db.queryForObject(
-            "SELECT COUNT(*) FROM academic_session_candidate_commands",
+            "SELECT COUNT(*) FROM academic_session_candidate_commands c "+
+            "LEFT JOIN academic_session_candidate_dispositions d "+
+            "ON d.command_id=c.command_id WHERE d.command_id IS NULL",
             Long.class)).thenReturn(3L);
         assertEquals(3,repo.unpromotedRehearsalCount());
     }
 
     @Test void missingRehearsalLedgerNeverCountsAsEmpty() {
         when(db.queryForObject(
-            "SELECT COUNT(*) FROM academic_session_candidate_commands",
+            "SELECT COUNT(*) FROM academic_session_candidate_commands c "+
+            "LEFT JOIN academic_session_candidate_dispositions d "+
+            "ON d.command_id=c.command_id WHERE d.command_id IS NULL",
             Long.class)).thenReturn(null);
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
             ResponseStatusException.class,repo::unpromotedRehearsalCount)
