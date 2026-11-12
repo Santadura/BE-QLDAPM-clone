@@ -132,6 +132,70 @@ test "$gateway_code" = "404" || {
   exit 1
 }
 
+# Terminal Core-only roster orphan: claim acquired in Core but NO
+# independent Academic Target/Result command/outbox was ever committed.
+# This MUST remain OPEN even after the Academic reconciler restarts. The
+# disposable stack is destroyed with Docker volumes after this test.
+roster_key="$key-roster"
+test "$(core_scalar "SELECT writer_mode FROM academic_roster_writer_control
+  WHERE singleton=TRUE")" = "CORE" || {
+  echo "Roster orphan requires Core-owned student writer at start" >&2;exit 1;
+}
+test "$(core_scalar "SELECT COUNT(*) FROM academic_roster_candidate_claims
+  WHERE state='OPEN'")" = "0" || {
+  echo "Other roster claim unexpectedly OPEN before orphan test" >&2;exit 1;
+}
+compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+BEGIN;
+UPDATE academic_roster_writer_control
+  SET writer_mode='QUIESCED' WHERE singleton=TRUE AND writer_mode='CORE';
+INSERT INTO academic_roster_candidate_claims
+  (actor_username,request_key,request_hash,entity_type,entity_id,
+   source_event_id,source_revision,writer_generation)
+SELECT 'ci-crash','$roster_key',repeat('c',64),
+       e.entity_type,e.entity_id,e.event_id,e.source_revision,c.generation
+FROM academic_roster_source_outbox e
+JOIN student_targets t ON e.entity_id=t.student_target_id
+CROSS JOIN academic_roster_writer_control c
+WHERE e.entity_type='TARGET' AND e.event_kind='UPSERT' AND
+  e.payload IS NOT DISTINCT FROM to_jsonb(t)
+  AND c.singleton=TRUE AND c.writer_mode='QUIESCED'
+ORDER BY e.event_id DESC LIMIT 1;
+COMMIT;
+SQL
+assert_roster_orphan() {
+  counts="$(core_scalar "SELECT
+    (SELECT COUNT(*) FROM academic_roster_candidate_claims WHERE actor_username='ci-crash'
+      AND request_key='$roster_key' AND state='OPEN') || ':' ||
+    (SELECT COUNT(*) FROM academic_roster_candidate_claim_audit WHERE actor_username='ci-crash'
+      AND request_key='$roster_key' AND event_kind='ACQUIRED') || ':' ||
+    (SELECT COUNT(*) FROM academic_roster_candidate_claim_audit WHERE actor_username='ci-crash'
+      AND request_key='$roster_key' AND event_kind='RELEASED')")"
+  test "$counts" = "1:1:0" || {
+    echo "Core-only roster claim was falsely released: $counts" >&2;exit 1;
+  }
+  local_counts="$(academic_scalar "SELECT
+    (SELECT COUNT(*) FROM academic_roster_candidate_commands
+     WHERE operator_username='ci-crash' AND request_key='$roster_key') || ':' ||
+    (SELECT COUNT(*) FROM academic_roster_candidate_handoff_receipts
+     WHERE actor_username='ci-crash' AND request_key='$roster_key')")"
+  test "$local_counts" = "0:0" || {
+    echo "Academic fabricated roster orphan handback evidence: $local_counts" >&2;exit 1;
+  }
+  if compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+      -c "UPDATE academic_roster_writer_control SET writer_mode='CORE'
+         WHERE singleton=TRUE AND writer_mode='QUIESCED'" \
+      >/tmp/iig-roster-orphan-handback.log 2>&1; then
+    echo "Core roster handback succeeded without durable Academic outbox" >&2
+    exit 1
+  fi
+  grep -q 'Unreleased Academic roster candidate claim prevents Core handback' \
+    /tmp/iig-roster-orphan-handback.log || {
+      cat /tmp/iig-roster-orphan-handback.log >&2;exit 1;
+    }
+}
+assert_roster_orphan
+
 # Restart Academic to force a fresh reconciler. Its scheduled retries must
 # neither synthesize an absent outbox nor claim an unacknowledged Core release.
 compose restart academic-service
@@ -145,5 +209,6 @@ for attempt in $(seq 1 80); do
 done
 test "$healthy" = "true" || { echo "Academic failed to boot after crash simulation" >&2; exit 1; }
 sleep 24
+assert_roster_orphan
 assert_orphan
-echo "PASS: committed Core-only claim survives Academic restart/retries, has ACQUIRED-only audit, no synthetic local command/outbox, and blocks Core handback"
+echo "PASS: Core-only session AND roster claims survive Academic restart/retries with ACQUIRED-only audit; missing local outbox never releases the independent writer fences"
