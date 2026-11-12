@@ -166,6 +166,52 @@ public class AcademicRosterSourceRepository {
         return result;
     }
 
+    /**
+     * Exact StudentDetailResponse.targets contract backed solely by
+     * Academic-owned typed PostgreSQL. DELETE tombstones are never returned.
+     * Full immutable source history parity is checked by the caller.
+     */
+    @Transactional(readOnly=true)
+    public String adminStudentTargetsJson(String studentId) {
+        String result=db.queryForObject(
+            "SELECT COALESCE(jsonb_agg(jsonb_build_object("+
+            "'id',student_target_id,'courseId',course_id,"+
+            "'targetType',target_type,'targetValue',target_value) "+
+            "ORDER BY course_id,target_type,student_target_id),"+
+            "'[]'::jsonb)::text FROM academic_student_targets_shadow "+
+            "WHERE student_id=? AND event_kind='UPSERT'",
+            String.class,studentId);
+        if(result==null || result.isBlank())
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic Student Targets projection unavailable");
+        return result;
+    }
+
+    /**
+     * Exact StudentDetailResponse.results contract. Assignment, exam and
+     * feedback are copied from the immutable source event JSON; score,
+     * evaluator and timestamp are from Academic's verified typed shadow.
+     */
+    @Transactional(readOnly=true)
+    public String adminStudentResultsJson(String studentId) {
+        String result=db.queryForObject(
+            "SELECT COALESCE(jsonb_agg(jsonb_build_object("+
+            "'id',student_result_id,'classId',class_id,"+
+            "'assignmentId',source_payload->>'assignment_id',"+
+            "'examId',source_payload->>'exam_id',"+
+            "'score',score,'feedback',source_payload->>'feedback',"+
+            "'evaluatedBy',evaluated_by,"+
+            "'evaluatedAt',evaluated_at) "+
+            "ORDER BY evaluated_at DESC,student_result_id),"+
+            "'[]'::jsonb)::text FROM academic_student_results_shadow "+
+            "WHERE student_id=? AND event_kind='UPSERT'",
+            String.class,studentId);
+        if(result==null || result.isBlank())
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic Student Results projection unavailable");
+        return result;
+    }
+
     private record Receipt(String type,String id,String kind,long revision,
         String hash,String payload) {}
 
