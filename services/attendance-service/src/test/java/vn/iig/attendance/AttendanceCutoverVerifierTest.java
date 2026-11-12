@@ -12,8 +12,9 @@ class AttendanceCutoverVerifierTest {
     private final AttendanceEventProjectionRepository projection=
         mock(AttendanceEventProjectionRepository.class);
     private final AttendanceEventRelay relay=mock(AttendanceEventRelay.class);
+    private final AttendanceCommandInbox commands=mock(AttendanceCommandInbox.class);
     private final AttendanceCutoverVerifier verifier=
-        new AttendanceCutoverVerifier(source,projection,relay);
+        new AttendanceCutoverVerifier(source,projection,relay,commands);
     private final AttendanceSourceClient.ManifestRow row=
         new AttendanceSourceClient.ManifestRow(7,"teach-1","UPSERT",
             "{\"teaching_schedule_id\":\"teach-1\",\"status\":\"PRESENT\"}",true);
@@ -173,4 +174,35 @@ class AttendanceCutoverVerifierTest {
             ResponseStatusException.class,verifier::verify).getStatusCode());
         verifyNoInteractions(source,projection);
     }
+    @Test void pendingLocalReceiptBlocksFrozenCutoverBeforeCoreScan() {
+        matching();
+        when(source.writerFence()).thenReturn(frozen(7));
+        when(commands.pendingCount()).thenReturn(1L);
+        var result=verifier.verifyFrozen();
+        assertFalse(result.ready());
+        assertEquals("UNRESOLVED_ATTENDANCE_COMMANDS",result.state());
+        assertTrue(result.mismatchKeys().contains("ATTENDANCE_PENDING_CORE_RESULT"));
+        verify(source,never()).manifestSummary();
+    }
+
+    @Test void commandCreatedDuringScanBlocksFrozenOwnershipEvenIfSourceHistoryMatches() {
+        matching();
+        when(source.writerFence()).thenReturn(frozen(7));
+        when(commands.pendingCount()).thenReturn(0L,1L);
+        var result=verifier.verifyFrozen();
+        assertFalse(result.ready());
+        assertTrue(result.mismatchKeys().contains("ATTENDANCE_COMMAND_STARTED_DURING_SCAN"));
+        verify(source,times(2)).writerFence();
+    }
+
+    @Test void independentInboxOutageCannotBeReportedAsReady() {
+        matching();
+        when(source.writerFence()).thenReturn(frozen(7));
+        when(commands.pendingCount()).thenThrow(
+            new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Postgres offline"));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,verifier::verifyFrozen).getStatusCode());
+        verify(source,never()).manifestSummary();
+    }
+
 }
