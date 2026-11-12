@@ -112,9 +112,10 @@ public class AttendanceHistoryImmutability implements ApplicationRunner {
             RETURNS TRIGGER LANGUAGE plpgsql AS $
             BEGIN
               IF TG_OP='DELETE' OR NEW.teaching_schedule_id IS DISTINCT FROM
-                 OLD.teaching_schedule_id OR NEW.class_id IS DISTINCT FROM OLD.class_id
+                 OLD.teaching_schedule_id
                  OR NEW.attendance_id IS DISTINCT FROM OLD.attendance_id
-                 OR NEW.recorded_at IS DISTINCT FROM OLD.recorded_at
+                 OR (OLD.recorded_at IS NOT NULL AND
+                     NEW.recorded_at IS DISTINCT FROM OLD.recorded_at)
                  OR NEW.version<>OLD.version+1
                  OR NEW.updated_at<OLD.updated_at THEN
                 RAISE EXCEPTION 'Native Attendance domain version cannot regress'
@@ -138,8 +139,14 @@ public class AttendanceHistoryImmutability implements ApplicationRunner {
             END;
             $;
             """);
+        db.execute("DROP TRIGGER IF EXISTS trg_iig_native_activation_immutable " +
+            "ON attendance_native_activations");
+        db.execute("CREATE TRIGGER trg_iig_native_activation_immutable " +
+            "BEFORE UPDATE OR DELETE ON attendance_native_activations " +
+            "FOR EACH ROW EXECUTE FUNCTION iig_attendance_native_no_truncate()");
         for(String table:java.util.List.of("attendance_native_teacher_rows",
-                "attendance_native_commands","attendance_native_outbox")) {
+                "attendance_native_commands","attendance_native_outbox",
+                "attendance_native_activations")) {
             String trigger="trg_iig_no_truncate_"+table;
             db.execute("DROP TRIGGER IF EXISTS "+trigger+" ON "+table);
             db.execute("CREATE TRIGGER "+trigger+" BEFORE TRUNCATE ON "+table+
