@@ -105,11 +105,15 @@ assert f["mode"]=="QUIESCED" and f["generation"]==2,f
 # UPDATE/DELETE touching zero rows. Neither FK nor outbox triggers may be
 # relied upon as the only ownership fence.
 for table in students class_students student_targets student_results; do
-  for command in UPDATE DELETE; do
-    if [ "$command" = UPDATE ]; then
-      sql="UPDATE $table SET updated_at=updated_at WHERE FALSE"
-      # All source tables have no shared updated_at guarantee. Exercise
-      # syntactically valid UPDATE of their immutable primary key instead.
+  for command in INSERT UPDATE DELETE; do
+    if [ "$command" = INSERT ]; then
+      # BEFORE STATEMENT executes before NOT NULL/FK constraints.
+      # If the fence fails to intercept this, the exact error differs,
+      # so the strict message assertion below catches it.
+      sql="INSERT INTO $table DEFAULT VALUES"
+    elif [ "$command" = UPDATE ]; then
+      # Syntactically valid UPDATE of the existing primary key; even
+      # an update matching no rows MUST be rejected under QUIESCED.
       case "$table" in
         students) sql="UPDATE students SET student_id=student_id WHERE FALSE";;
         class_students) sql="UPDATE class_students SET class_student_id=class_student_id WHERE FALSE";;
