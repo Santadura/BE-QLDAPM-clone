@@ -107,10 +107,10 @@ class AcademicSessionCandidateServiceTest {
 
     AcademicSessionCandidateRepository.Evidence committedProof() {
         var req=request();
-        String canonical="academic-candidate-v1\\n"+req.classId()+"\\n"+
-            req.sessionId()+"\\n"+req.expectedEventId()+"\\n"+
-            req.expectedRevision()+"\\n"+req.action()+"\\n"+
-            req.date()+"\\n"+req.startTime()+"\\n"+req.endTime()+"\\n"+
+        String canonical="academic-candidate-v1\n"+req.classId()+"\n"+
+            req.sessionId()+"\n"+req.expectedEventId()+"\n"+
+            req.expectedRevision()+"\n"+req.action()+"\n"+
+            req.date()+"\n"+req.startTime()+"\n"+req.endTime()+"\n"+
             req.status();
         return new AcademicSessionCandidateRepository.Evidence(
             "admin","dryrun-key",AcademicSessionSourceRepository.sha256(canonical),
