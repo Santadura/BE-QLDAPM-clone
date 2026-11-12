@@ -37,6 +37,11 @@ iig:
     roster-disposition-enabled: ${ACADEMIC_ROSTER_DISPOSITION_ENABLED:false}
     # Replays exact committed local evidence before Core claim release.
     roster-handoff-recovery-enabled: ${ACADEMIC_ROSTER_HANDOFF_RECOVERY_ENABLED:false}
+  crossdomain:
+    attendance-url: ${ATTENDANCE_INTERNAL_URL:http://localhost:8100}
+    attendance-key: ${ATTENDANCE_INTERNAL_API_KEY}
+    scheduling-url: ${SCHEDULING_INTERNAL_URL:http://localhost:8098}
+    scheduling-key: ${SCHEDULING_INTERNAL_API_KEY}
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${ACADEMIC_INTERNAL_API_KEY}
