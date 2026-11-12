@@ -38,6 +38,9 @@ public class AttendanceNativeLedgerRepository {
         String payloadCanonical,String payloadHash) {}
     public record Committed(String eventId,String status,long version,
         boolean referenceConfirmed) {}
+    public record Activation(String adminUsername,long writerGeneration,
+        long sourceRows,long historicalEvents,long sourceLastEventId,
+        String academicProofHash) {}
     private record Previous(String id,long version,String status) {}
     private record Command(String eventId,String digest,String factsToken,
         long generation,String state) {}
@@ -84,6 +87,74 @@ public class AttendanceNativeLedgerRepository {
     }
 
     /**
+     * Install exactly one immutable ownership snapshot while the old Core
+     * writer and all assignment/Academic writers are frozen and the complete
+     * cross-service immutable history has been independently verified.
+     * This method NEVER switches the Core writer itself.
+     */
+    @Transactional
+    public long activate(Activation proof) {
+        if(proof==null || !safe(proof.adminUsername(),100) ||
+            proof.writerGeneration()<2 || proof.sourceRows()<0 ||
+            proof.historicalEvents()<0 || proof.sourceLastEventId()<0 ||
+            proof.academicProofHash()==null ||
+            !proof.academicProofHash().matches("[0-9a-f]{64}"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Exact frozen Attendance/Academic activation evidence required");
+        Long existing=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_native_activations",Long.class);
+        Long commands=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_native_commands",Long.class);
+        Long nativeRows=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_native_teacher_rows",Long.class);
+        Long sourceRows=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_teacher_ledger",Long.class);
+        Long events=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_teacher_event_history",Long.class);
+        Long cursor=db.queryForObject(
+            "SELECT last_event_id FROM attendance_history_backfill_cursor "+
+            "WHERE singleton=TRUE",Long.class);
+        if(!Long.valueOf(0).equals(existing) ||
+            !Long.valueOf(0).equals(commands) ||
+            !Long.valueOf(0).equals(nativeRows) ||
+            !Long.valueOf(proof.sourceRows()).equals(sourceRows) ||
+            !Long.valueOf(proof.historicalEvents()).equals(events) ||
+            !Long.valueOf(proof.sourceLastEventId()).equals(cursor))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Native Attendance baseline is incomplete or ownership already activated");
+        Long marked=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_teacher_ledger "+
+            "WHERE event_kind='UPSERT'",Long.class);
+        if(marked==null || marked<0 || marked>sourceRows)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Invalid frozen native Attendance source count");
+        // Source receipts include full ORIGINAL timestamps. No reconstructed
+        // amount/teacher/attendance status may be silently invented.
+        int inserted=db.update(
+            "INSERT INTO attendance_native_teacher_rows "+
+            "(teaching_schedule_id,attendance_id,status,recorded_by,version,"+
+            "recorded_at,updated_at) "+
+            "SELECT teaching_schedule_id,attendance_id,status,recorded_by,0,"+
+            "(source_payload->>'recorded_at')::timestamptz,"+
+            "(source_payload->>'updated_at')::timestamptz "+
+            "FROM attendance_teacher_ledger WHERE event_kind='UPSERT' "+
+            "ORDER BY teaching_schedule_id");
+        if(inserted!=marked)
+            throw new IllegalStateException("Native Attendance baseline import torn");
+        int activated=db.update(
+            "INSERT INTO attendance_native_activations "+
+            "(writer_generation,source_rows,historical_events,source_last_event_id,"+
+            "academic_proof_hash,activated_by,imported_live_rows) "+
+            "VALUES(?,?,?,?,?,?,?)",
+            proof.writerGeneration(),proof.sourceRows(),proof.historicalEvents(),
+            proof.sourceLastEventId(),proof.academicProofHash(),
+            proof.adminUsername(),marked);
+        if(activated!=1)
+            throw new IllegalStateException("Cannot commit native ownership activation");
+        return marked;
+    }
+
+    /**
      * CALL ONLY after a Core admission was durably recorded under an
      * ATTENDANCE-only writer lock. No cross-DB transaction is pretended.
      * This local command+domain+outbox commit is atomic and idempotent.
@@ -91,6 +162,12 @@ public class AttendanceNativeLedgerRepository {
     @Transactional
     public Committed stage(Admission a) {
         validate(a);
+        Long active=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_native_activations "+
+            "WHERE writer_generation=?",Long.class,a.writerGeneration());
+        if(!Long.valueOf(1).equals(active))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Native Attendance owner has no immutable frozen activation");
         // A never-marked teacher schedule has no Core attendance row to
         // import. Only an exact Core claim proving an ABSENT baseline may
         // create an empty native record with a stable generated ID.
