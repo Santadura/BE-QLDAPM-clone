@@ -10,8 +10,10 @@ class AcademicRosterCutoverReadinessTest {
     final AcademicRosterSourceClient core=mock(AcademicRosterSourceClient.class);
     final AcademicRosterReadiness parity=mock(AcademicRosterReadiness.class);
     final AcademicRosterClaimClient claims=mock(AcademicRosterClaimClient.class);
+    final AcademicRosterCandidateDispositionRepository disposition=
+        mock(AcademicRosterCandidateDispositionRepository.class);
     final AcademicRosterCutoverReadiness service=
-        new AcademicRosterCutoverReadiness(core,parity,claims);
+        new AcademicRosterCutoverReadiness(core,parity,claims,disposition);
 
     final AcademicRosterSourceClient.WriterFence frozen=
         new AcademicRosterSourceClient.WriterFence("QUIESCED",2);
@@ -21,6 +23,8 @@ class AcademicRosterCutoverReadinessTest {
     AcademicRosterCutoverReadinessTest() {
         when(claims.summary()).thenReturn(
             new AcademicRosterClaimClient.Summary(0,2,4));
+        when(disposition.summary()).thenReturn(
+            new AcademicRosterCandidateDispositionRepository.Summary(2,2,0,0));
     }
 
     @Test void coreOwnedWritesRefuseCutoverWithoutScanningAnyPII() {
@@ -94,6 +98,32 @@ class AcademicRosterCutoverReadinessTest {
             new AcademicRosterClaimClient.Summary(0,2,4),
             new AcademicRosterClaimClient.Summary(1,2,5));
         when(parity.verify()).thenReturn(fullHistory);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verify).getStatusCode());
+    }
+
+    @Test void releasedClaimWithUnappliedRehearsalNeverMeansCutoverReady() {
+        when(core.writerFence()).thenReturn(frozen);
+        when(disposition.summary()).thenReturn(
+            new AcademicRosterCandidateDispositionRepository.Summary(2,1,1,0));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verify).getStatusCode());
+        verifyNoInteractions(parity);
+    }
+    @Test void interruptedCoreReleaseReceiptBlocksAcademicReadiness() {
+        when(core.writerFence()).thenReturn(frozen);
+        when(disposition.summary()).thenReturn(
+            new AcademicRosterCandidateDispositionRepository.Summary(2,2,0,1));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verify).getStatusCode());
+        verifyNoInteractions(parity);
+    }
+    @Test void stagingAndDisposingCandidateDuringParityScanIsDetected() {
+        when(core.writerFence()).thenReturn(frozen);
+        when(parity.verify()).thenReturn(fullHistory);
+        when(disposition.summary()).thenReturn(
+            new AcademicRosterCandidateDispositionRepository.Summary(0,0,0,0),
+            new AcademicRosterCandidateDispositionRepository.Summary(1,1,0,0));
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,service::verify).getStatusCode());
     }
