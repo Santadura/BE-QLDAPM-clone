@@ -10,7 +10,10 @@ import static org.mockito.Mockito.*;
 class AttendanceWriteControllerTest {
     private final AttendanceCoreClient core=mock(AttendanceCoreClient.class);
     private final AttendanceCommandService writer=mock(AttendanceCommandService.class);
-    private final AttendanceWriteController controller=new AttendanceWriteController(core,writer);
+    private final AttendanceNativeCommandService nativeWriter=
+        mock(AttendanceNativeCommandService.class);
+    private final AttendanceWriteController controller=
+        new AttendanceWriteController(core,writer,nativeWriter,false);
     private final AttendanceWriteClient.MarkRequest request=
         new AttendanceWriteClient.MarkRequest("PRESENT");
 
@@ -57,4 +60,30 @@ class AttendanceWriteControllerTest {
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(ResponseStatusException.class,
             ()->controller.mark("class-1","teach-1","Bearer cs",request,"k1")).getStatusCode());
     }
+    @Test void nativeOwnerUsesSamePublicRouteButNeverInvokesCoreBusinessWriter()
+            throws Exception {
+        var endpoint=new AttendanceWriteController(core,writer,nativeWriter,true);
+        when(core.currentPrincipal("Bearer cs")).thenReturn(
+            new AttendanceCoreClient.Principal("cs001","ROLE_CS"));
+        var response=new ObjectMapper().readTree(
+            "{\"id\":\"attendance-1\",\"teachingScheduleId\":\"teach-1\","+
+            "\"status\":\"PRESENT\"}");
+        when(nativeWriter.mark("class-1","teach-1","Bearer cs","PRESENT","native-1"))
+            .thenReturn(response);
+        assertEquals(response,endpoint.mark(
+            "class-1","teach-1","Bearer cs",request,"native-1").getBody());
+        verifyNoInteractions(writer);
+    }
+
+    @Test void nativeRoleRevocationStopsBeforeIndependentDatabaseMutation() {
+        var endpoint=new AttendanceWriteController(core,writer,nativeWriter,true);
+        when(core.currentPrincipal("Bearer admin")).thenReturn(
+            new AttendanceCoreClient.Principal("admin","ROLE_ADMIN"));
+        assertEquals(HttpStatus.FORBIDDEN,assertThrows(
+            ResponseStatusException.class,
+            ()->endpoint.mark("class-1","teach-1","Bearer admin",request,"native-2"))
+            .getStatusCode());
+        verifyNoInteractions(writer,nativeWriter);
+    }
+
 }
