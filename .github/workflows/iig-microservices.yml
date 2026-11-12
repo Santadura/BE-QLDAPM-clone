@@ -45,6 +45,7 @@ on:
       - 'scripts/smoke-microservices.sh'
       - 'scripts/smoke-academic-core-only-claim.sh'
       - 'scripts/smoke-academic-roster.sh'
+      - 'scripts/smoke-academic-roster-fence.sh'
       - 'src/main/java/com/example/demo/controller/AcademicStudentRosterSourceBridge.java'
       - 'src/test/java/com/example/demo/controller/AcademicStudentRosterSourceBridgeTest.java'
       - '.github/workflows/iig-microservices.yml'
@@ -168,6 +169,12 @@ jobs:
         env:
           IIG_ROSTER_SMOKE: 'true'
         run: bash scripts/smoke-academic-roster.sh
+      # Rehearses ONLY the Core student/membership/target/result freeze
+      # and full-history cutover prerequisite. Restores CORE before Teacher.
+      - name: Prove four-table Core roster writer fence and ABA-safe Academic cutover readiness
+        env:
+          IIG_ROSTER_FENCE_SMOKE: 'true'
+        run: bash scripts/smoke-academic-roster-fence.sh
       - name: Exercise explicitly enabled private teacher writer on disposable databases
         env:
           CI: 'true'
