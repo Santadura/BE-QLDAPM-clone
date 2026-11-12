@@ -207,14 +207,14 @@ jobs:
         env:
           IIG_ROSTER_FENCE_SMOKE: 'true'
         run: bash scripts/smoke-academic-roster-disposition.sh
-      - name: Prove independent Academic PLAN/RESCHEDULE native rehearsal via private service
-        env:
-          IIG_NATIVE_COMMAND_SMOKE: 'true'
-        run: bash scripts/smoke-academic-native-commands.sh
       - name: Prove exclusive native Attendance ownership and crash-before-local Core claim recovery
         env:
           IIG_NATIVE_ATTENDANCE_SMOKE: 'true'
         run: bash scripts/smoke-native-attendance-cutover.sh
+      - name: Prove independent Academic PLAN/RESCHEDULE native rehearsal via private service
+        env:
+          IIG_NATIVE_COMMAND_SMOKE: 'true'
+        run: bash scripts/smoke-academic-native-commands.sh
       - name: Exercise explicitly enabled private teacher writer on disposable databases
         env:
           CI: 'true'
