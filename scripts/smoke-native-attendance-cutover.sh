@@ -201,7 +201,19 @@ test "$(attendance_sql "SELECT COUNT(*) FROM attendance_native_commands WHERE re
   FAIL "Public native Attendance command did not commit independently"
 test "$(attendance_sql "SELECT version FROM attendance_native_teacher_rows WHERE teaching_schedule_id='$schedule_id'")" = 2 ||
   FAIL "Native domain row did not advance to revision 2"
-replayed="$(curl -fsS -X PUT "$public_url" -H "Authorization: Bearer $cs_token" -H "Idempotency-Key: $second_key" -H 'Content-Type: application/json' -d '{"status":"LATE"}')"
+replay_code="$(curl -sS -o /tmp/iig-native-replayed-response.json -w '%{http_code}' \
+  -X PUT "$public_url" -H "Authorization: Bearer $cs_token" \
+  -H "Idempotency-Key: $second_key" \
+  -H 'Content-Type: application/json' -d '{"status":"LATE"}')"
+if [ "$replay_code" != 200 ]; then
+  echo "Native same-key replay HTTP $replay_code: $(cat /tmp/iig-native-replayed-response.json)" >&2
+  echo "Core claims: $(core_sql "SELECT COALESCE(string_agg(request_key || ':' || state || ':' || COALESCE(confirmed_version::text,'-'),','),'<none>') FROM teacher_attendance_native_claims WHERE teaching_schedule_id='$schedule_id'")" >&2
+  echo "Native commands: $(attendance_sql "SELECT COALESCE(string_agg(request_key || ':' || state,','),'<none>') FROM attendance_native_commands WHERE teaching_schedule_id='$schedule_id'")" >&2
+  echo "Native row: $(attendance_sql "SELECT status || ':' || version || ':' || attendance_id FROM attendance_native_teacher_rows WHERE teaching_schedule_id='$schedule_id'")" >&2
+  echo "Core status: $(core_sql "SELECT status || ':' || attendance_id FROM teacher_session_attendance WHERE teaching_schedule_id='$schedule_id'")" >&2
+  FAIL "Core-ACKed native Attendance same-key retry rejected with HTTP $replay_code"
+fi
+replayed="$(cat /tmp/iig-native-replayed-response.json)"
 test "$replayed" = "$reply" ||
   FAIL "Native retry response differs from immutable original"
 test "$(core_sql "SELECT COUNT(*) FROM teacher_attendance_native_reference_receipts WHERE teaching_schedule_id='$schedule_id'")" = 2 ||
