@@ -2619,7 +2619,7 @@ SQL
   # fixture is deliberately no longer accepted by production recovery.
   recovery_command="00000000-0000-4000-8000-000000000151"
   recovery_bundle="$(IIG_SOURCE_REQUEST="$candidate_payload" \
-    IIG_RECOVERY_ACTOR=ci-recovery IIG_RECOVERY_KEY="$recovery_key" \
+    IIG_RECOVERY_ACTOR=admin IIG_RECOVERY_KEY="$recovery_key" \
     IIG_RECOVERY_COMMAND="$recovery_command" \
     IIG_AG="$ag" IIG_TG="$tg" IIG_SG="$sg" \
     python3 scripts/academic-session-recovery-proof.py)"
@@ -2646,7 +2646,7 @@ INSERT INTO academic_candidate_claims
  (actor_username,request_key,request_hash,class_id,class_session_id,
   source_event_id,source_revision,academic_generation,
   attendance_generation,scheduling_generation)
-SELECT 'ci-recovery','${recovery_key}','${recovery_request_hash}',
+SELECT 'admin','${recovery_key}','${recovery_request_hash}',
   e.class_id,e.class_session_id,e.event_id,e.source_revision,
   ${ag},${tg},${sg}
 FROM academic_session_source_outbox e
@@ -2661,7 +2661,7 @@ INSERT INTO academic_session_candidate_commands
  (operator_username,request_key,command_id,request_hash,class_id,
   class_session_id,source_event_id,source_revision,academic_generation,
   attendance_generation,scheduling_generation,action)
-SELECT 'ci-recovery','${recovery_key}',
+SELECT 'admin','${recovery_key}',
  '00000000-0000-4000-8000-000000000151'::uuid,'${recovery_request_hash}',
  s.class_id,s.class_session_id,s.source_event_id,s.source_revision,
  ${ag},${tg},${sg},'RESCHEDULE'
@@ -2762,6 +2762,15 @@ SQL
     echo "Academic rehearsal did not safely return all writers to Core"
     exit 1
   }
+  # Close every real, durable REHEARSAL_ONLY candidate through the private
+  # Admin API, then prove that a frozen full-history readiness preflight can
+  # succeed and that all three Core writers roll back without source changes.
+  IIG_SESSION_DISPOSITION_SMOKE=true \
+    IIG_SESSION_CANDIDATE_KEY="$candidate_key" \
+    IIG_SESSION_RACE_KEY="$race_key" \
+    IIG_SESSION_RECOVERY_KEY="$recovery_key" \
+    IIG_ADMIN_TOKEN="$TOKEN" IIG_CS_TOKEN="$cs_token" \
+    bash scripts/smoke-academic-session-disposition.sh
   echo "PASS: Academic positive rehearsal restores every Core writer, without enabling a second source of truth"
 
   "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db \
