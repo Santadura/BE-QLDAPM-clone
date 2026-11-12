@@ -38,7 +38,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class TeacherAttendanceNativeReferenceController {
     public record Request(String payloadCanonical,String payloadHash) {}
     public record Receipt(String eventId,String teachingScheduleId,
-        long version,String payloadHash,String outcome) {}
+        long version,String payloadHash,String outcome,JsonNode response) {}
     private record Claim(String claimId,String actor,String employeeId,
         String classId,String scheduleId,String requestKey,String requestHash,
         String status,String oldId,String oldStatus,String factsToken,
@@ -180,7 +180,23 @@ public class TeacherAttendanceNativeReferenceController {
                 !Long.valueOf(version).equals(c.confirmedVersion()))
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Core Attendance confirmed receipt has different event identity");
-            return new Receipt(event,schedule,version,request.payloadHash(),"COMMITTED");
+            String response=db.queryForObject(
+                "SELECT response_payload::text FROM "+
+                "teacher_attendance_native_reference_receipts "+
+                "WHERE event_id=CAST(? AS UUID) AND claim_id=CAST(? AS UUID) "+
+                "AND payload_hash=? AND version=?",
+                String.class,event,claimId,request.payloadHash(),version);
+            try {
+                JsonNode payload=mapper.readTree(response);
+                if(payload==null || !payload.isObject() ||
+                    !schedule.equals(payload.path("teachingScheduleId").asText()))
+                    throw new IllegalStateException("Committed native receipt corrupted");
+                return new Receipt(event,schedule,version,request.payloadHash(),
+                    "COMMITTED",payload);
+            } catch(com.fasterxml.jackson.core.JsonProcessingException ex) {
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Committed native Attendance payload invalid",ex);
+            }
         }
         if(!"OPEN".equals(c.state()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -252,13 +268,27 @@ public class TeacherAttendanceNativeReferenceController {
         }
         if(changed!=1)
             throw new IllegalStateException("Core Attendance reference not projected");
+        var row=db.queryForMap(
+            "SELECT a.attendance_id AS id,"+
+            "a.teaching_schedule_id AS \"teachingScheduleId\","+
+            "a.status,a.recorded_at AS \"recordedAt\","+
+            "a.updated_at AS \"updatedAt\","+
+            "e.full_name AS \"recordedByName\" "+
+            "FROM teacher_session_attendance a JOIN employees e "+
+            "ON e.employee_id=a.recorded_by "+
+            "WHERE a.teaching_schedule_id=?",
+            schedule);
+        JsonNode response=mapper.valueToTree(row);
+        if(!schedule.equals(response.path("teachingScheduleId").asText()) ||
+            !status.equals(response.path("status").asText()))
+            throw new IllegalStateException("Core Attendance projected response mismatch");
         int stored=db.update(
             "INSERT INTO teacher_attendance_native_reference_receipts "+
             "(event_id,claim_id,actor_username,request_key,teaching_schedule_id,"+
-            "version,payload_hash,attendance_id,status,recorded_by) "+
-            "VALUES(CAST(? AS UUID),CAST(? AS UUID),?,?,?,?,?,?,?,?)",
+            "version,payload_hash,attendance_id,status,recorded_by,response_payload) "+
+            "VALUES(CAST(? AS UUID),CAST(? AS UUID),?,?,?,?,?,?,?,?,CAST(? AS JSONB))",
             event,claimId,actor,requestKey,schedule,version,
-            request.payloadHash(),attendanceId,status,employeeId);
+            request.payloadHash(),attendanceId,status,employeeId,response.toString());
         if(stored!=1)
             throw new IllegalStateException("Core Attendance immutable receipt missing");
         access.audit(new SchedulingAccess.StaffIdentity(
@@ -272,6 +302,7 @@ public class TeacherAttendanceNativeReferenceController {
             event,request.payloadHash(),version,claimId);
         if(finished!=1)
             throw new IllegalStateException("Core Attendance claim finality failed");
-        return new Receipt(event,schedule,version,request.payloadHash(),"COMMITTED");
+        return new Receipt(event,schedule,version,request.payloadHash(),
+            "COMMITTED",response);
     }
 }
