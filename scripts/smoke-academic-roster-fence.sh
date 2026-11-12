@@ -188,6 +188,23 @@ UPDATE academic_session_writer_control
 COMMIT;
 SQL
 session_frozen=true
+
+# Public Academic commands MUST NOT enter an ambiguous local PENDING inbox
+# after the cross-service freeze begins. Core SQL already blocks writes,
+# but ingress must fail before creating any asynchronous command receipt.
+freeze_key="ci-roster-freeze-${GITHUB_RUN_ID}"
+freeze_http="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -X PUT "http://localhost:8080/api/classes/class-0001/planned-sessions" \
+  -H "Authorization: Bearer $admin_token" \
+  -H "Idempotency-Key: $freeze_key" \
+  -H 'Content-Type: application/json' --data '[]')"
+test "$freeze_http" = 409 ||
+  fail "Frozen Academic writer allowed public PLAN or returned HTTP $freeze_http"
+test "$(scalar "SELECT COUNT(*) FROM academic_session_command_inbox
+  WHERE request_key='${freeze_key}'")" = 0 ||
+  fail "Rejected frozen Academic write left an ambiguous local PENDING receipt"
+echo "PASS: public Academic PLAN rejects frozen writers before local inbox staging"
+
 full_proof="$(compose exec -T scheduling-postgres wget -qO- \
   --header "X-Internal-Key: $key" \
   --header "Authorization: Bearer $admin_token" "$full_url")" ||
