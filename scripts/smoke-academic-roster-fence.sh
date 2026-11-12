@@ -322,4 +322,45 @@ test "$(core_sql "SELECT COUNT(*) FROM academic_roster_writer_audit")" = "4" ||
   fail "Expected four immutable Core roster writer transitions"
 test "$(core_sql "SELECT COUNT(*) FROM academic_roster_source_outbox")" = "$baseline_core" ||
   fail "Core roster source history unexpectedly changed during read-only rehearsal"
+# Symmetric SQL barrier: a SESSION-only freeze must block every
+# student/roster mutation even though the roster control itself is CORE.
+# All four tables have BEFORE STATEMENT triggers, so zero-row DML is
+# deliberately tested; no existing fixture is modified.
+test "$(core_sql "SELECT writer_mode FROM academic_roster_writer_control WHERE singleton")" = CORE ||
+  fail "Expected roster CORE ownership before isolated session freeze"
+compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+BEGIN;
+UPDATE scheduling_assignment_writer_control SET writer_mode='QUIESCED'
+  WHERE singleton=TRUE AND writer_mode='CORE';
+UPDATE teacher_attendance_writer_control SET writer_mode='QUIESCED'
+  WHERE singleton=TRUE AND writer_mode='CORE';
+UPDATE academic_session_writer_control SET writer_mode='QUIESCED'
+  WHERE singleton=TRUE AND writer_mode='CORE';
+COMMIT;
+SQL
+session_frozen=true
+for table in students class_students student_targets student_results; do
+  if compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+      -c "DELETE FROM $table WHERE FALSE" >/tmp/iig-session-roster-cross-fence.log 2>&1; then
+    fail "Session freeze did not protect Core $table"
+  fi
+  grep -q "Core Academic roster write blocked by frozen sessions" \
+      /tmp/iig-session-roster-cross-fence.log ||
+    fail "Unexpected Core roster SQL failure: $(cat /tmp/iig-session-roster-cross-fence.log)"
+done
+test "$(core_sql "SELECT writer_mode FROM academic_roster_writer_control WHERE singleton")" = CORE ||
+  fail "Session freeze modified unrelated roster ownership"
+compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+BEGIN;
+UPDATE academic_session_writer_control SET writer_mode='CORE'
+  WHERE singleton=TRUE AND writer_mode='QUIESCED';
+UPDATE teacher_attendance_writer_control SET writer_mode='CORE'
+  WHERE singleton=TRUE AND writer_mode='QUIESCED';
+UPDATE scheduling_assignment_writer_control SET writer_mode='CORE'
+  WHERE singleton=TRUE AND writer_mode='QUIESCED';
+COMMIT;
+SQL
+session_frozen=false
+echo "PASS: symmetric Core session/roster SQL fence rejects zero-row DML and restores all writers"
+
 echo "PASS: frozen four-writer full history preflight and Core handback; non-authoritative Target/Result rehearsals block all later cutover until explicit audited disposition"
