@@ -114,10 +114,10 @@ public class AcademicRosterCandidateRepository {
                  proposed.path(numericField).decimalValue().compareTo(row.value())!=0)) ||
             ("DELETE".equals(proof.action()) && row.value()!=null))
             throw conflict("Proposed Academic target/result value differs from receipt");
-        String canonicalRequest="academic-roster-candidate-v1\\n"+
-            proof.entityType()+"\\n"+proof.entityId()+"\\n"+
-            proof.eventId()+"\\n"+proof.revision()+"\\n"+
-            proof.action()+"\\n"+
+        String canonicalRequest="academic-roster-candidate-v1\n"+
+            proof.entityType()+"\n"+proof.entityId()+"\n"+
+            proof.eventId()+"\n"+proof.revision()+"\n"+
+            proof.action()+"\n"+
             (row.value()==null?"DELETE":row.value().toPlainString());
         if(!AcademicSessionSourceRepository.sha256(canonicalRequest)
                 .equals(proof.digest()))
