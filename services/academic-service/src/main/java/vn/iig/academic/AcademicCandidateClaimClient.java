@@ -48,6 +48,36 @@ public class AcademicCandidateClaimClient {
                 "Core candidate claim unavailable",ex);
         }
     }
+    /** Fetch the exact durable Core claim, without changing its state. */
+    public record ClaimInspection(Claim claim,String state,
+        String candidateCommandId,String outboxHash) {}
+
+    public ClaimInspection inspect(String actor,String requestKey) {
+        try {
+            ClaimInspection result=core.get()
+                .uri(builder->builder
+                    .path("/internal/academic/candidate-claims/inspect")
+                    .queryParam("actor",actor)
+                    .queryParam("requestKey",requestKey).build())
+                .header("X-Internal-Key",key)
+                .retrieve().body(ClaimInspection.class);
+            if(result==null || result.claim()==null ||
+                !actor.equals(result.claim().actor()) ||
+                !requestKey.equals(result.claim().requestKey()) ||
+                !("OPEN".equals(result.state()) ||
+                    "RELEASED".equals(result.state())))
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Core returned incomplete or divergent Academic claim");
+            return result;
+        } catch(RestClientResponseException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core Academic claim inspection unavailable",ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core Academic claim inspection unavailable",ex);
+        }
+    }
+
     public Result acquire(Claim claim) {
         Result r=call("",claim);
         if(!claim.actor().equals(r.actor()) || !claim.requestKey().equals(r.requestKey()) ||
