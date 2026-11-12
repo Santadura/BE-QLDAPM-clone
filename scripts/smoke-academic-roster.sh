@@ -22,7 +22,7 @@ require_equal() {
   fi
 }
 # Explicitly enable ONLY a passive private source consumer, on disposable DBs.
-ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true compose up -d --no-deps --force-recreate academic-service
+ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true ACADEMIC_STUDENT_LIST_READ_ENABLED=true compose up -d --no-deps --force-recreate academic-service
 ready=false
 for attempt in $(seq 1 80); do
   if compose exec -T scheduling-postgres wget -qO- \
@@ -56,6 +56,40 @@ test "$complete" = true || {
   exit 1
 }
 
+# Full proof requires an authenticated live Admin and a private service key.
+# Neither the source history nor independent historical receipts are public.
+admin_login="$(curl -fsS -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"123456"}')"
+admin_token="$(printf '%s' "$admin_login" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["token"])')"
+teacher_login="$(curl -fsS -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"teacher001","password":"123456"}')"
+teacher_token="$(printf '%s' "$teacher_login" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["token"])')"
+private_key="${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}"
+readiness_url="http://academic-service:8099/internal/academic/student-roster/readiness"
+readiness="$(compose exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: $private_key" \
+  --header "Authorization: Bearer $admin_token" "$readiness_url")"
+READINESS="$readiness" python3 -c \
+  'import json,os; d=json.loads(os.environ["READINESS"]); assert d["sourceEvents"]>=0 and d["students"]>=0,d'
+invalid_key="$(compose exec -T scheduling-postgres wget -S -O- \
+  --header "X-Internal-Key: incorrect" \
+  --header "Authorization: Bearer $admin_token" "$readiness_url" 2>&1 || true)"
+printf '%s' "$invalid_key" | grep -q '401' || {
+  echo "Academic full roster proof accepted an invalid private key" >&2;exit 1;
+}
+denied_teacher="$(compose exec -T scheduling-postgres wget -S -O- \
+  --header "X-Internal-Key: $private_key" \
+  --header "Authorization: Bearer $teacher_token" "$readiness_url" 2>&1 || true)"
+printf '%s' "$denied_teacher" | grep -q '403' || {
+  echo "Teacher received private cross-database student history proof" >&2;exit 1;
+}
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  http://localhost:8080/internal/academic/student-roster/readiness)" = "404"
+
 key="ci-roster-${GITHUB_RUN_ID}"
 member="ci-roster-member-${GITHUB_RUN_ID}"
 class_id="$(core_sql "SELECT class_id FROM classes ORDER BY class_id LIMIT 1")"
@@ -79,6 +113,37 @@ for attempt in $(seq 1 80); do
 done
 test "$copied" = true || { echo "Academic missed committed Core student/membership events" >&2; exit 1; }
 
+# Admin FE list must be served from the independent typed Academic projection.
+# Teacher must retain the Core's original assigned-class visibility.
+admin_students="$(curl -fsS \
+  -H "Authorization: Bearer $admin_token" http://localhost:8080/api/students)"
+ADMIN_STUDENTS="$admin_students" STUDENT_KEY="$key" python3 -c \
+  'import json,os; rows=json.loads(os.environ["ADMIN_STUDENTS"]); assert isinstance(rows,list) and any(x.get("studentId")==os.environ["STUDENT_KEY"] for x in rows),rows'
+teacher_students="$(curl -fsS \
+  -H "Authorization: Bearer $teacher_token" http://localhost:8080/api/students)"
+TEACHER_STUDENTS="$teacher_students" STUDENT_KEY="$key" python3 -c \
+  'import json,os; rows=json.loads(os.environ["TEACHER_STUDENTS"]); assert isinstance(rows,list) and all(x.get("studentId")!=os.environ["STUDENT_KEY"] for x in rows),rows'
+bad_auth="$(curl -sS -o /dev/null -w '%{http_code}' \
+  http://localhost:8080/api/students)"
+test "$bad_auth" = "401" || { echo "Student list exposed without live JWT: $bad_auth" >&2;exit 1; }
+
+# Count parity can remain green while the typed student payload has drifted.
+# The Admin API must refuse the corrupted row, never serve stale PII.
+compose exec -T academic-postgres psql -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 \
+  -c "UPDATE academic_students_shadow SET full_name='TAMPERED' WHERE student_id='$key'" >/dev/null
+drift_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer $admin_token" http://localhost:8080/api/students)"
+test "$drift_code" = "409" || {
+  echo "Academic served divergent student fields: $drift_code" >&2;exit 1;
+}
+compose exec -T academic-postgres psql -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 \
+  -c "UPDATE academic_students_shadow SET full_name='Academic CI student' WHERE student_id='$key'" >/dev/null
+admin_recovered="$(curl -fsS \
+  -H "Authorization: Bearer $admin_token" http://localhost:8080/api/students)"
+ADMIN_STUDENTS="$admin_recovered" STUDENT_KEY="$key" python3 -c \
+  'import json,os; rows=json.loads(os.environ["ADMIN_STUDENTS"]); assert any(x.get("studentId")==os.environ["STUDENT_KEY"] for x in rows),rows'
+echo "PASS: private full-history parity, Admin Academic reads, Teacher Core ACL, and fail-closed drift"
+
 # Exercise status transition, membership tombstone, then student tombstone.
 # A deleted row must NOT be resurrected by replay or container restart.
 compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
@@ -99,6 +164,10 @@ for attempt in $(seq 1 80); do
   sleep 2
 done
 test "$deleted" = true || { echo "Academic roster tombstones were not imported" >&2; exit 1; }
+deleted_students="$(curl -fsS \
+  -H "Authorization: Bearer $admin_token" http://localhost:8080/api/students)"
+ADMIN_STUDENTS="$deleted_students" STUDENT_KEY="$key" python3 -c \
+  'import json,os; rows=json.loads(os.environ["ADMIN_STUDENTS"]); assert all(x.get("studentId")!=os.environ["STUDENT_KEY"] for x in rows),rows'
 
 # Retry all recent historical events after JVM restart: no duplicates and
 # no resurrection from the older UPSERT versions.
