@@ -15,8 +15,35 @@ import org.springframework.web.server.ResponseStatusException;
  */
 @Service
 public class AcademicFullCutoverReadiness {
-    public record Evidence(AcademicCrossDomainCutoverReadiness.Evidence academic,
-        AcademicDependentCutoverClient.Proof downstream) {}
+    // Preserve the original full-readiness JSON field names for existing
+    // operator tools. New independent service proof is strictly additive.
+    public record Evidence(long rosterGeneration,long sessionGeneration,
+        long attendanceGeneration,long schedulingGeneration,
+        long rosterEvents,long sessionEvents,long rosterLastEventId,
+        long sessionLastEventId,long rosterClaimAuditEvents,
+        long sessionClaimAuditEvents,
+        AcademicDependentCutoverClient.Proof downstream) {
+
+        public Evidence(AcademicCrossDomainCutoverReadiness.Evidence a,
+                AcademicDependentCutoverClient.Proof d) {
+            this(a.rosterGeneration(),a.sessionGeneration(),
+                a.attendanceGeneration(),a.schedulingGeneration(),
+                a.rosterEvents(),a.sessionEvents(),a.rosterLastEventId(),
+                a.sessionLastEventId(),a.rosterClaimAuditEvents(),
+                a.sessionClaimAuditEvents(),d);
+        }
+
+        // Java-only convenience for existing callers; never change the
+        // established flat HTTP response by serializing a second nested copy.
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        public AcademicCrossDomainCutoverReadiness.Evidence academic() {
+            return new AcademicCrossDomainCutoverReadiness.Evidence(
+                rosterGeneration,sessionGeneration,attendanceGeneration,
+                schedulingGeneration,rosterEvents,sessionEvents,
+                rosterLastEventId,sessionLastEventId,
+                rosterClaimAuditEvents,sessionClaimAuditEvents);
+        }
+    }
     private final AcademicCrossDomainCutoverReadiness academic;
     private final AcademicDependentCutoverClient downstream;
 
