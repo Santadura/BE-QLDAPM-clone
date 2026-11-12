@@ -12,8 +12,6 @@ spring:
       mode: always
       continue-on-error: false
 iig:
-  attendance:
-    command-recovery-enabled: ${ATTENDANCE_COMMAND_RECOVERY_ENABLED:false}
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${ATTENDANCE_INTERNAL_API_KEY:}
@@ -21,6 +19,7 @@ iig:
     # A distinct Payroll service key; never reuse Attendance's Core key.
     evidence-key: ${PAYROLL_INTERNAL_API_KEY:}
   attendance:
+    command-recovery-enabled: ${ATTENDANCE_COMMAND_RECOVERY_ENABLED:false}
     source-relay-enabled: ${ATTENDANCE_SOURCE_RELAY_ENABLED:false}
     # Public PUT ingress is opt-in; Core remains the transactional writer.
     write-gateway-enabled: ${ATTENDANCE_WRITE_GATEWAY_ENABLED:false}
