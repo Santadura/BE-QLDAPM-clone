@@ -25,7 +25,7 @@ class AttendanceNativeLedgerRepositoryTest {
         return new AttendanceNativeLedgerRepository.Admission(
             "cs001","employee-1","class-1","teach-1",KEY,
             AttendanceCommandService.fingerprint("class-1","teach-1",status),
-            status,TOKEN,2,"claim-1","ATTENDANCE");
+            status,TOKEN,2,"claim-1","attendance-1","ABSENT","ATTENDANCE");
     }
 
     @SuppressWarnings({"unchecked","rawtypes"})
@@ -35,9 +35,8 @@ class AttendanceNativeLedgerRepositoryTest {
             RowMapper mapper=call.getArgument(1);
             ResultSet row=mock(ResultSet.class);
             when(row.getString(1)).thenReturn("attendance-1");
-            when(row.getString(2)).thenReturn("class-1");
-            when(row.getLong(3)).thenReturn(3L);
-            when(row.getString(4)).thenReturn("ABSENT");
+            when(row.getLong(2)).thenReturn(3L);
+            when(row.getString(3)).thenReturn("ABSENT");
             return List.of(mapper.mapRow(row,0));
         });
     }
@@ -64,7 +63,7 @@ class AttendanceNativeLedgerRepositoryTest {
             a.actorUsername(),a.actorEmployeeId(),a.classId(),
             a.teachingScheduleId(),a.requestKey(),a.requestHash(),
             a.status(),a.factsToken(),a.writerGeneration(),
-            a.coreClaimId(),"CORE");
+            a.coreClaimId(),a.previousAttendanceId(),a.previousStatus(),"CORE");
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,()->ledger.stage(wrong))
             .getStatusCode());
@@ -94,7 +93,8 @@ class AttendanceNativeLedgerRepositoryTest {
         assertFalse(outcome.referenceConfirmed());
         verify(db).update(startsWith("UPDATE attendance_native_teacher_rows"),
             eq(4L),eq("PRESENT"),eq("employee-1"),
-            any(java.sql.Timestamp.class),eq("teach-1"),eq("class-1"),eq(3L));
+            any(java.sql.Timestamp.class),any(java.sql.Timestamp.class),
+            eq("teach-1"),eq(3L));
         verify(db).update(startsWith("INSERT INTO attendance_native_outbox"),
             eq(ID),eq("cs001"),eq("class-1"),eq("teach-1"),
             eq(KEY),eq(4L),anyString(),anyString(),matches("[a-f0-9]{64}"));
