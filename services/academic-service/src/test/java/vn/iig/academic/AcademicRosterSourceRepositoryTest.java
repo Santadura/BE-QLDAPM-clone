@@ -45,4 +45,43 @@ class AcademicRosterSourceRepositoryTest {
             ResponseStatusException.class,()->repo.apply(event)).getStatusCode());
         verifyNoInteractions(db);
     }
+    @Test void targetInsertWritesTypedAcademicShadowAndCursor() {
+        var target=event("TARGET","target-1","UPSERT",
+            "{\"student_target_id\":\"target-1\",\"student_id\":\"student-1\","+
+            "\"course_id\":\"course-1\",\"target_type\":\"READING\",\"target_value\":6.50}");
+        when(db.update(anyString(),any(Object[].class))).thenReturn(1);
+        assertDoesNotThrow(()->repo.apply(target));
+        verify(db).update(startsWith("INSERT INTO academic_student_targets_shadow"),
+            any(Object[].class));
+        verify(db).update(startsWith("UPDATE academic_roster_history_cursor"),
+            any(Object[].class));
+    }
+    @Test void resultDeleteRetainsTypedAcademicTombstone() {
+        var result=event("RESULT","result-1","DELETE",
+            "{\"student_result_id\":\"result-1\",\"student_id\":\"student-1\","+
+            "\"class_id\":\"class-1\",\"score\":8.25,\"evaluated_by\":\"teacher-1\","+
+            "\"evaluated_at\":\"2026-11-12T00:00:00+00:00\"}");
+        when(db.update(anyString(),any(Object[].class))).thenReturn(1);
+        assertDoesNotThrow(()->repo.apply(result));
+        verify(db).update(startsWith("INSERT INTO academic_student_results_shadow"),
+            any(Object[].class));
+    }
+    @Test void negativeStudentResultCannotPersistReceipt() {
+        var result=event("RESULT","result-1","UPSERT",
+            "{\"student_result_id\":\"result-1\",\"student_id\":\"student-1\","+
+            "\"class_id\":\"class-1\",\"score\":-1,\"evaluated_by\":\"teacher-1\","+
+            "\"evaluated_at\":\"2026-11-12T00:00:00+00:00\"}");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,()->repo.apply(result)).getStatusCode());
+        verifyNoInteractions(db);
+    }
+    @Test void mismatchedTargetIdentityCannotCreateSourceReceipt() {
+        var target=event("TARGET","target-1","UPSERT",
+            "{\"student_target_id\":\"target-2\",\"student_id\":\"student-1\","+
+            "\"course_id\":\"course-1\",\"target_type\":\"READING\",\"target_value\":6.50}");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,()->repo.apply(target)).getStatusCode());
+        verifyNoInteractions(db);
+    }
+
 }
