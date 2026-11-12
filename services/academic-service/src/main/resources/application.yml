@@ -28,6 +28,8 @@ iig:
     # Private, non-authoritative candidate-only transaction; OFF for all users.
     candidate-handoff-recovery-enabled: ${ACADEMIC_CANDIDATE_HANDOFF_RECOVERY_ENABLED:false}
     candidate-writer-enabled: ${ACADEMIC_CANDIDATE_WRITER_ENABLED:false}
+    # Private audited session rehearsal closure; never on by default.
+    session-disposition-enabled: ${ACADEMIC_SESSION_DISPOSITION_ENABLED:false}
     # Academic Target/Result candidate journal: private NON-AUTHORITATIVE
     # rehearsal, no downstream dispatcher, and OFF outside disposable CI.
     roster-candidate-enabled: ${ACADEMIC_ROSTER_CANDIDATE_ENABLED:false}
