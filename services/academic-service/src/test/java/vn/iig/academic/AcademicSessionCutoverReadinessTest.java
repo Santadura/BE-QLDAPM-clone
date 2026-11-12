@@ -11,9 +11,12 @@ class AcademicSessionCutoverReadinessTest {
     AcademicSessionSourceClient core=mock(AcademicSessionSourceClient.class);
     AcademicSessionSourceRepository local=mock(AcademicSessionSourceRepository.class);
     AcademicCandidateClaimClient claims=mock(AcademicCandidateClaimClient.class);
-    AcademicSessionCandidateRepository candidates=mock(AcademicSessionCandidateRepository.class);
+    AcademicSessionCandidateDispositionRepository dispositions=
+        mock(AcademicSessionCandidateDispositionRepository.class);
     AcademicSessionCutoverReadiness service=
-        new AcademicSessionCutoverReadiness(core,local,claims,candidates);
+        new AcademicSessionCutoverReadiness(core,local,claims,dispositions);
+    static final AcademicSessionCandidateDispositionRepository.Summary EMPTY=
+        new AcademicSessionCandidateDispositionRepository.Summary(0,0,0,0,0);
     static final AcademicSessionSourceClient.WriterFence FROZEN=
         new AcademicSessionSourceClient.WriterFence("QUIESCED",4,"QUIESCED",8,"QUIESCED",9);
     static final AcademicSessionSourceClient.Integrity CLEAN=
@@ -28,6 +31,7 @@ class AcademicSessionCutoverReadinessTest {
         when(core.writerFence()).thenReturn(FROZEN);
         when(claims.summary()).thenReturn(
             new AcademicCandidateClaimClient.Summary(0,0,0));
+        when(dispositions.summary()).thenReturn(EMPTY);
         when(core.integrity()).thenReturn(CLEAN);
         when(local.historyCursor()).thenReturn(5L);
         when(local.receiptCount()).thenReturn(2L);
@@ -143,7 +147,8 @@ class AcademicSessionCutoverReadinessTest {
     }
     @Test void strictReadinessRejectsReleasedButUnappliedSessionRehearsal() {
         setupReady();
-        when(candidates.unpromotedRehearsalCount()).thenReturn(1L);
+        when(dispositions.summary()).thenReturn(
+            new AcademicSessionCandidateDispositionRepository.Summary(1,0,1,0,0));
         var error=assertThrows(ResponseStatusException.class,service::verify);
         assertEquals(HttpStatus.CONFLICT,error.getStatusCode());
         assertTrue(error.getReason().contains("REHEARSAL_ONLY"));
@@ -153,18 +158,47 @@ class AcademicSessionCutoverReadinessTest {
 
     @Test void frozenRehearsalAdmissionRemainsPossibleWithoutGrantingCutover() {
         setupReady();
-        when(candidates.unpromotedRehearsalCount()).thenReturn(2L);
+        when(dispositions.summary()).thenReturn(
+            new AcademicSessionCandidateDispositionRepository.Summary(2,0,2,0,0));
         assertEquals(2,service.verifyStaging().sourceEvents());
-        verify(candidates,times(2)).unpromotedRehearsalCount();
+        verify(dispositions,times(2)).summary();
     }
 
     @Test void aNewRehearsalCommittedDuringScanBlocksEvenStagingProof() {
         setupReady();
-        when(candidates.unpromotedRehearsalCount()).thenReturn(0L,1L);
+        when(dispositions.summary()).thenReturn(EMPTY,
+            new AcademicSessionCandidateDispositionRepository.Summary(1,0,1,0,0));
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,service::verifyStaging)
             .getStatusCode());
         verify(core).history(0,100);
+    }
+
+    @Test void safelyDiscardedAndAcknowledgedSessionRehearsalDoesNotBlockCutover() {
+        setupReady();
+        when(dispositions.summary()).thenReturn(
+            new AcademicSessionCandidateDispositionRepository.Summary(1,1,0,0,0));
+        assertEquals(2L,service.verify().sourceEvents());
+        verify(dispositions,times(2)).summary();
+    }
+
+    @Test void sessionCandidateWithIncompleteCoreHandoffCannotPassStaging() {
+        setupReady();
+        when(dispositions.summary()).thenReturn(
+            new AcademicSessionCandidateDispositionRepository.Summary(1,0,1,1,0));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verifyStaging).getStatusCode());
+        verify(core,never()).integrity();
+    }
+
+    @Test void forgedDispositionAuditBlocksCutoverEvenIfNoUnresolvedClaims() {
+        setupReady();
+        when(dispositions.summary()).thenThrow(
+            new ResponseStatusException(HttpStatus.CONFLICT,
+                "Disposition and Core release diverge"));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,service::verify).getStatusCode());
+        verify(core,never()).integrity();
     }
 
 }
