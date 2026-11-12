@@ -22,7 +22,7 @@ require_equal() {
   fi
 }
 # Explicitly enable ONLY a passive private source consumer, on disposable DBs.
-ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true ACADEMIC_STUDENT_LIST_READ_ENABLED=true ACADEMIC_STUDENT_TARGETS_READ_ENABLED=true ACADEMIC_STUDENT_RESULTS_READ_ENABLED=true compose up -d --no-deps --force-recreate academic-service
+ACADEMIC_ROSTER_CANDIDATE_ENABLED=true ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true ACADEMIC_STUDENT_LIST_READ_ENABLED=true ACADEMIC_STUDENT_TARGETS_READ_ENABLED=true ACADEMIC_STUDENT_RESULTS_READ_ENABLED=true compose up -d --no-deps --force-recreate academic-service
 ready=false
 for attempt in $(seq 1 80); do
   if compose exec -T scheduling-postgres wget -qO- \
