@@ -180,7 +180,21 @@ echo "PASS: native Attendance Core OPEN claim survived crash BEFORE local inbox 
 
 # A new CS request must now enter the independent Attendance PostgreSQL.
 public_url="$BASE/api/classes/$class_id/teacher-attendance/$schedule_id"
-reply="$(curl -fsS -X PUT "$public_url" -H "Authorization: Bearer $cs_token" -H "Idempotency-Key: $second_key" -H 'Content-Type: application/json' -d '{"status":"LATE"}')"
+# Preserve the real Spring/Gateway response body when the second native
+# command fails. A generic curl -f 409 obscures whether the rejected step
+# was facts, Core claim, independent ledger or Core reference projection.
+http_code="$(curl -sS -o /tmp/iig-native-second-response.json -w '%{http_code}' \\
+  -X PUT "$public_url" -H "Authorization: Bearer $cs_token" \\
+  -H "Idempotency-Key: $second_key" \\
+  -H 'Content-Type: application/json' -d '{"status":"LATE"}')"
+if [ "$http_code" != 200 ]; then
+  echo "Native Attendance public PUT HTTP $http_code: $(cat /tmp/iig-native-second-response.json)" >&2
+  echo "Core claim: $(core_sql "SELECT COALESCE(string_agg(request_key || ':' || state,','),'<none>') FROM teacher_attendance_native_claims WHERE teaching_schedule_id='$schedule_id'")" >&2
+  echo "Local commands: $(attendance_sql "SELECT COALESCE(string_agg(request_key || ':' || state,','),'<none>') FROM attendance_native_commands WHERE teaching_schedule_id='$schedule_id'")" >&2
+  echo "Local baseline: $(attendance_sql "SELECT status || ':' || version FROM attendance_native_teacher_rows WHERE teaching_schedule_id='$schedule_id'")" >&2
+  FAIL "Native Attendance second CS command rejected at HTTP $http_code"
+fi
+reply="$(cat /tmp/iig-native-second-response.json)"
 test "$(printf '%s' "$reply" | python3 -c 'import json,sys;print(json.load(sys.stdin)["status"])')" = LATE ||
   FAIL "Public CS native Attendance command returned wrong business result"
 test "$(attendance_sql "SELECT COUNT(*) FROM attendance_native_commands WHERE request_key='$second_key' AND state='COMMITTED'")" = 1 ||
