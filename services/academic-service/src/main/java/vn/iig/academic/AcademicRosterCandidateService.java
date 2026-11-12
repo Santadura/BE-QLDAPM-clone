@@ -68,7 +68,7 @@ public class AcademicRosterCandidateService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                 "Private Academic target/result candidate requires current Core Admin");
 
-        var before=readiness.verify();
+        var before=readiness.verifyStaging();
         String canonical="academic-roster-candidate-v1\n"+request.entityType()+"\n"+
             request.entityId()+"\n"+request.expectedEventId()+"\n"+
             request.expectedRevision()+"\n"+request.action()+"\n"+
