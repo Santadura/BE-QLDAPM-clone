@@ -78,6 +78,26 @@ public class AcademicCandidateClaimClient {
         }
     }
 
+    /** Core-side counts are read-only, checked before AND after cutover proof. */
+    public record Summary(long openClaims,long releasedClaims,long auditEvents) {}
+
+    public Summary summary() {
+        try {
+            Summary value=core.get()
+                .uri("/internal/academic/candidate-claims/summary")
+                .header("X-Internal-Key",key)
+                .retrieve().body(Summary.class);
+            if(value==null || value.openClaims()<0 ||
+                value.releasedClaims()<0 || value.auditEvents()<0)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Core candidate claim ledger summary invalid");
+            return value;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core candidate claim ledger unavailable",ex);
+        }
+    }
+
     public Result acquire(Claim claim) {
         Result r=call("",claim);
         if(!claim.actor().equals(r.actor()) || !claim.requestKey().equals(r.requestKey()) ||
