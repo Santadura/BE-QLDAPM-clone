@@ -73,7 +73,7 @@ public class AcademicSessionCandidateService {
         // Even an Admin must pass Core's class-specific live ACL check.
         identity.sessionRevision(req.classId(),bearer);
 
-        var evidence=readiness.verify(); // full source history, 3 QUIESCED fences
+        var evidence=readiness.verifyStaging(); // frozen history; NOT production cutover
         String canonical="academic-candidate-v1\n"+req.classId()+"\n"+
             req.sessionId()+"\n"+req.expectedEventId()+"\n"+
             req.expectedRevision()+"\n"+req.action()+"\n"+day+"\n"+
