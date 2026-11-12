@@ -3,6 +3,7 @@ package vn.iig.attendance;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
+import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -22,6 +23,23 @@ public class AttendanceCommandInbox {
     public AttendanceCommandInbox(JdbcTemplate db,ObjectMapper mapper) {
         this.db=db;
         this.mapper=mapper;
+    }
+
+    public record Pending(String actor,String classId,String scheduleId,
+        String requestKey,String requestHash) {}
+
+    /** Bounded, durable cursor for a restart-safe, never-blind reconciliation. */
+    public List<Pending> pending(int limit) {
+        if(limit<1 || limit>50)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Attendance recovery scan limit must be 1..50");
+        return db.query(
+            "SELECT actor_username,class_id,teaching_schedule_id,request_key,request_hash "+
+            "FROM attendance_write_command_inbox WHERE state='PENDING' "+
+            "ORDER BY created_at,actor_username,request_key LIMIT ?",
+            (rs,i)->new Pending(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getString(4),rs.getString(5)),
+            limit);
     }
 
     /**
