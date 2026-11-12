@@ -89,6 +89,40 @@ public class AcademicRosterClaimBridge {
         return row;
     }
 
+    /** Read-only exact Core roster claim evidence for cross-DB triage. */
+    public record ClaimInspection(Claim claim,String state,
+        String candidateCommandId,String outboxHash) {}
+
+    @GetMapping("/inspect")
+    @Transactional(readOnly=true)
+    public ClaimInspection inspect(
+            @RequestHeader(value="X-Internal-Key",required=false) String supplied,
+            @RequestParam String actor,@RequestParam String requestKey) {
+        requireKey(supplied);
+        if(actor==null ||
+            !actor.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,99}") ||
+            requestKey==null ||
+            !requestKey.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Exact Academic roster claim actor/key required");
+        List<ClaimInspection> matches=db.query(
+            "SELECT actor_username,request_key,request_hash,entity_type,"+
+            "entity_id,source_event_id,source_revision,writer_generation,"+
+            "state,candidate_command_id::text,candidate_outbox_hash "+
+            "FROM academic_roster_candidate_claims "+
+            "WHERE actor_username=? AND request_key=?",
+            (rs,i)->new ClaimInspection(
+                new Claim(rs.getString(1),rs.getString(2),rs.getString(3),
+                    rs.getString(4),rs.getString(5),rs.getLong(6),
+                    rs.getLong(7),rs.getLong(8)),
+                rs.getString(9),rs.getString(10),rs.getString(11)),
+            actor,requestKey);
+        if(matches.size()!=1)
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "Exact Core roster candidate claim not found");
+        return matches.get(0);
+    }
+
     @GetMapping("/summary")
     @Transactional(readOnly=true)
     public Summary summary(
