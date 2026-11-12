@@ -172,6 +172,11 @@ public class AssignmentCommandLifecycleService {
             "AND delivered_at IS NULL",event.eventId(),event.payloadHash());
         if(acknowledged!=1)
             throw new IllegalStateException("Cannot persist verified reference receipt");
+        // Same Scheduling PostgreSQL transaction: a quarantine can only be
+        // resolved after the exact Core committed event was verified.
+        db.update("UPDATE scheduling_assignment_recovery_attempts "+
+            "SET state='RESOLVED',updated_at=NOW() "+
+            "WHERE event_id=? AND state<>'RESOLVED'",event.eventId());
         Long pending=db.queryForObject(
             "SELECT count(*) FROM scheduling_assignment_domain_outbox " +
             "WHERE actor_username=? AND operation=? AND request_key=? " +

@@ -443,3 +443,18 @@ ON CONFLICT(source_type,schedule_id) DO UPDATE SET
   work_date=EXCLUDED.work_date,start_time=EXCLUDED.start_time,
   end_time=EXCLUDED.end_time,active=EXCLUDED.active,updated_at=NOW()
 WHERE scheduling_assignment_owned_slots.source_revision<EXCLUDED.source_revision@@
+
+-- Durable receipt-only Scheduling recovery supervisor. This never changes
+-- business assignment or immutable outbox data and cannot imply rollback.
+CREATE TABLE IF NOT EXISTS scheduling_assignment_recovery_attempts (
+  event_id VARCHAR(50) PRIMARY KEY
+    REFERENCES scheduling_assignment_domain_outbox(event_id) ON DELETE RESTRICT,
+  failure_count INTEGER NOT NULL CHECK (failure_count BETWEEN 1 AND 1000000),
+  state VARCHAR(20) NOT NULL CHECK (state IN ('RETRY','OPERATOR_REVIEW','RESOLVED')),
+  next_attempt_at TIMESTAMPTZ NOT NULL,
+  last_failure_class VARCHAR(120) NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+CREATE INDEX IF NOT EXISTS idx_assignment_recovery_operator_queue
+  ON scheduling_assignment_recovery_attempts(state,next_attempt_at)
+  WHERE state IN ('RETRY','OPERATOR_REVIEW')@@

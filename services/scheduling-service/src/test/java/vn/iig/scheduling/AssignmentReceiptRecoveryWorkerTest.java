@@ -63,6 +63,8 @@ class AssignmentReceiptRecoveryWorkerTest {
         when(recovery.verifyAndRecover("evt-2")).thenReturn(
             new AssignmentReferenceRecoveryService.Recovery("evt-2","COMMITTED",true));
         worker.tick();
+        verify(outbox).recordVerifiedRecoveryFailure(eq(event),
+            any(ResponseStatusException.class));
         verify(recovery).verifyAndRecover("evt-2");
     }
 

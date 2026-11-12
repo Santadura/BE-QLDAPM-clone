@@ -217,6 +217,28 @@ test "$(core_sql "SELECT count(*) FROM scheduling_assignment_reference_event_rec
  { echo "Receipt recovery duplicated Core reference"; exit 1; }
 echo "PASS: Scheduling receipt-only worker recovered Core COMMITTED reference after restart, no replay"
 
+# A lost ACK may only be manually reviewed using a CURRENT Admin
+# and the private key, never an unauthenticated Gateway URL.
+admin_recovery_token="$(curl -fsS -X POST "${BASE}/api/auth/login" \
+  -H 'Content-Type: application/json' -d '{"username":"admin","password":"123456"}' |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+recovery_url="http://scheduling-service:8098/internal/scheduling/assignments/reconciliation/recovery-status"
+status_json="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${service_key}" \
+  --header "Authorization: Bearer ${admin_recovery_token}" "$recovery_url")"
+RECOVERY_STATUS="$status_json" python3 -c 'import json,os; d=json.loads(os.environ["RECOVERY_STATUS"]); assert d["unresolved"]==0 and d["quarantined"]==0, d' ||
+  { echo "Scheduling reference is not durably recovered"; exit 1; }
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: ${service_key}" \
+  --header "Authorization: Bearer ${tc_token}" "$recovery_url" >/dev/null 2>&1; then
+  echo "TC could inspect private Scheduling recovery"; exit 1
+fi
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/internal/scheduling/assignments/reconciliation/recovery-status")" = 404 ||
+  { echo "Private Scheduling recovery status leaked through Gateway"; exit 1; }
+echo "PASS: Scheduling receipt-only finality status is private and zero after Core proof"
+
+
 # Retry must return exactly the same schedule with no duplicate Core row,
 # outbox fact or TC claim; only one confirmed reference is legitimate.
 replayed="$(private_post "$execute_url" '')"

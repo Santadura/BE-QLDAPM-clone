@@ -35,6 +35,11 @@ public class AssignmentReceiptRecoveryWorker {
             for(var event:outbox.awaitingVerifiedRecovery(25)) {
                 try { recover(event); }
                 catch(Exception ex) {
+                    try { outbox.recordVerifiedRecoveryFailure(event,ex); }
+                    catch(Exception storeFailure) {
+                        log.error("Scheduling retry state not durable for {}",
+                            event.eventId(),storeFailure);
+                    }
                     log.warn("Core assignment receipt uncertain for {}: {}",
                         event.eventId(),ex.getClass().getSimpleName());
                 }

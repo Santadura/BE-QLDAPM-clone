@@ -189,6 +189,35 @@ class AssignmentDomainOutboxRepositoryTest {
             any(RowMapper.class),eq(25));
     }
 
+    @Test void unresolvedCoreReferenceRecordsBoundedRetryWithoutBusinessWrite() {
+        var event=new AssignmentDomainOutboxRepository.Event(
+            "evt-1","tc001","ASSIGN_TEACHER","key-1","TEACHING",
+            "teaching-1",1,"UPSERT","{}","a".repeat(64),10);
+        when(db.queryForObject(contains("FOR UPDATE OF o"),eq(Boolean.class),
+            eq("evt-1"))).thenReturn(true);
+        outbox.recordVerifiedRecoveryFailure(event,
+            new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE));
+        verify(db).update(
+            argThat(sql -> sql.contains("failure_count+1>=8") &&
+                sql.contains("OPERATOR_REVIEW") &&
+                sql.contains("ON CONFLICT(event_id)")),
+            eq("evt-1"),eq("ResponseStatusException"));
+        verify(db,never()).update(startsWith("UPDATE scheduling_assignment_domain_outbox SET delivered_at"),
+            any(Object[].class));
+    }
+
+    @Test void confirmedCoreEventNeverEntersOperatorQuarantine() {
+        var event=new AssignmentDomainOutboxRepository.Event(
+            "evt-1","tc001","ASSIGN_TEACHER","key-1","TEACHING",
+            "teaching-1",1,"UPSERT","{}","a".repeat(64),10);
+        when(db.queryForObject(contains("FOR UPDATE OF o"),eq(Boolean.class),
+            eq("evt-1"))).thenReturn(false);
+        outbox.recordVerifiedRecoveryFailure(event,
+            new ResponseStatusException(HttpStatus.CONFLICT));
+        verify(db,never()).update(startsWith("INSERT INTO scheduling_assignment_recovery_attempts"),
+            any(Object[].class));
+    }
+
     @Test void recoveryQueueCannotScanUnboundedSourceOrWriteRows() {
         assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
             ResponseStatusException.class,

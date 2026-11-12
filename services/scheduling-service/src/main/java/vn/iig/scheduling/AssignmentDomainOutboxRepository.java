@@ -172,12 +172,71 @@ public class AssignmentDomainOutboxRepository {
             "JOIN scheduling_assignment_command_inbox inbox "+
             "ON inbox.actor_username=o.actor_username "+
             "AND inbox.operation=o.operation AND inbox.request_key=o.request_key "+
+            "LEFT JOIN scheduling_assignment_recovery_attempts r ON r.event_id=o.event_id "+
             "WHERE o.delivered_at IS NULL AND inbox.state='COMPENSATING' "+
+            "AND (r.event_id IS NULL OR (r.state='RETRY' AND r.next_attempt_at<=NOW())) "+
             "ORDER BY o.created_at,o.event_id LIMIT ?",
             (rs,i)->new Event(rs.getString(1),rs.getString(2),rs.getString(3),
                 rs.getString(4),rs.getString(5),rs.getString(6),
                 rs.getLong(7),rs.getString(8),rs.getString(9),rs.getString(10),
                 rs.getInt(11)),limit);
+    }
+
+    /**
+     * Any uncertain Core receipt is still a committed Scheduling domain
+     * command. Never undo it based on a timeout. Bound only the read-only,
+     * receipt-proven recovery attempts; preserve the original event and
+     * COMPENSATING command for explicit operator review after exhaustion.
+     */
+    @Transactional
+    public void recordVerifiedRecoveryFailure(Event event,Exception failure) {
+        if(event==null || event.eventId()==null || failure==null)
+            throw new IllegalArgumentException("Original Scheduling event and failure required");
+        Boolean pending=db.queryForObject(
+            "SELECT o.delivered_at IS NULL FROM scheduling_assignment_domain_outbox o "+
+            "JOIN scheduling_assignment_command_inbox i "+
+            "ON i.actor_username=o.actor_username AND i.operation=o.operation "+
+            "AND i.request_key=o.request_key "+
+            "WHERE o.event_id=? AND i.state='COMPENSATING' FOR UPDATE OF o",
+            Boolean.class,event.eventId());
+        if(!Boolean.TRUE.equals(pending))return;
+        String kind=failure.getClass().getSimpleName();
+        if(kind.isBlank())kind="UnknownFailure";
+        db.update(
+            "INSERT INTO scheduling_assignment_recovery_attempts "+
+            "(event_id,failure_count,state,next_attempt_at,last_failure_class) "+
+            "VALUES(?,1,'RETRY',NOW()+INTERVAL '10 seconds',?) "+
+            "ON CONFLICT(event_id) DO UPDATE SET "+
+            "failure_count=scheduling_assignment_recovery_attempts.failure_count+1,"+
+            "state=CASE WHEN scheduling_assignment_recovery_attempts.failure_count+1>=8 "+
+            "THEN 'OPERATOR_REVIEW' ELSE 'RETRY' END,"+
+            "next_attempt_at=NOW()+make_interval(secs => "+
+            "LEAST(600,10*(1 << LEAST(scheduling_assignment_recovery_attempts.failure_count,6)))),"+
+            "last_failure_class=EXCLUDED.last_failure_class,updated_at=NOW() "+
+            "WHERE scheduling_assignment_recovery_attempts.state<>'RESOLVED'",
+            event.eventId(),kind);
+    }
+
+    public record RecoverySummary(long unresolved,long quarantined) {}
+    public RecoverySummary recoverySummary() {
+        Long unresolved=db.queryForObject(
+            "SELECT COUNT(*) FROM scheduling_assignment_domain_outbox o "+
+            "JOIN scheduling_assignment_command_inbox i "+
+            "ON i.actor_username=o.actor_username AND i.operation=o.operation "+
+            "AND i.request_key=o.request_key "+
+            "WHERE o.delivered_at IS NULL AND i.state='COMPENSATING'",
+            Long.class);
+        Long quarantined=db.queryForObject(
+            "SELECT COUNT(*) FROM scheduling_assignment_domain_outbox o "+
+            "JOIN scheduling_assignment_command_inbox i "+
+            "ON i.actor_username=o.actor_username AND i.operation=o.operation "+
+            "AND i.request_key=o.request_key "+
+            "JOIN scheduling_assignment_recovery_attempts r ON r.event_id=o.event_id "+
+            "WHERE o.delivered_at IS NULL AND i.state='COMPENSATING' "+
+            "AND r.state='OPERATOR_REVIEW'",Long.class);
+        if(unresolved==null || quarantined==null || unresolved<0 || quarantined<0)
+            throw new IllegalStateException("Scheduling recovery state unavailable");
+        return new RecoverySummary(unresolved,quarantined);
     }
 
     /** Exact event+digest acknowledgement cannot skip a later revision. */
