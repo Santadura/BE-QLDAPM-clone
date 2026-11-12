@@ -214,8 +214,19 @@ if [ "$replay_code" != 200 ]; then
   FAIL "Core-ACKed native Attendance same-key retry rejected with HTTP $replay_code"
 fi
 replayed="$(cat /tmp/iig-native-replayed-response.json)"
-test "$replayed" = "$reply" ||
-  FAIL "Native retry response differs from immutable original"
+# Core persists the original FE response in immutable PostgreSQL JSONB.
+# JSON object field order/whitespace are not part of the HTTP contract;
+# compare the COMPLETE parsed value, including recordedAt/updatedAt and ID.
+# This still fails if ANY meaningful field was recomputed or rewritten.
+python3 - <<'PY' || FAIL "Native retry response differs from immutable original"
+import json
+with open("/tmp/iig-native-second-response.json", encoding="utf-8") as file:
+    original=json.load(file)
+with open("/tmp/iig-native-replayed-response.json", encoding="utf-8") as file:
+    retried=json.load(file)
+assert isinstance(original,dict) and isinstance(retried,dict)
+assert original == retried, f"Original={original!r} retry={retried!r}"
+PY
 test "$(core_sql "SELECT COUNT(*) FROM teacher_attendance_native_reference_receipts WHERE teaching_schedule_id='$schedule_id'")" = 2 ||
   FAIL "Native replay created an extra Core reference receipt"
 test "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT http://backend:8081/api/classes/$class_id/teacher-attendance/$schedule_id -H "Authorization: Bearer $cs_token" -H 'Content-Type: application/json' -d '{"status":"ABSENT"}')" != 200 ||
