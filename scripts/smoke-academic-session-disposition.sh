@@ -68,6 +68,20 @@ before_core="$(sql_core "SELECT md5(COALESCE(string_agg(to_jsonb(t)::text,'|' OR
 before_academic="$(sql_academic "SELECT md5(COALESCE(string_agg(to_jsonb(t)::text,'|' ORDER BY t.class_session_id),''))
   FROM academic_class_sessions_shadow t")"
 
+# Candidate flag restore recreates this JVM before this script starts.
+# Do not conflate an unready container with an intentionally disabled route.
+service_ready=false
+for _ in $(seq 1 80); do
+  if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    http://academic-service:8099/actuator/health 2>/dev/null | grep -q '"UP"'; then
+    service_ready=true
+    break
+  fi
+  sleep 2
+done
+test "$service_ready" = true ||
+  fail "Academic service not healthy before disposition opt-in check"
+
 # No public route, and private disposition must be OFF without opt-in.
 test "$(curl -sS -o /dev/null -w '%{http_code}' \
   http://localhost:8080/internal/academic/cutover/sessions/rehearsals/discard)" = 404 ||
