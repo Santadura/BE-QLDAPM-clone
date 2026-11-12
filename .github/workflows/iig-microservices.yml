@@ -48,6 +48,7 @@ on:
       - 'scripts/smoke-academic-roster-fence.sh'
       - 'scripts/smoke-academic-roster-candidates.sh'
       - 'scripts/smoke-academic-roster-duplicate-source.sh'
+      - 'scripts/smoke-academic-roster-disposition.sh'
       - 'src/main/java/com/example/demo/controller/AcademicStudentRosterSourceBridge.java'
       - 'src/test/java/com/example/demo/controller/AcademicStudentRosterSourceBridgeTest.java'
       - '.github/workflows/iig-microservices.yml'
@@ -181,6 +182,10 @@ jobs:
         env:
           IIG_ROSTER_FENCE_SMOKE: 'true'
         run: bash scripts/smoke-academic-roster-duplicate-source.sh
+      - name: Verify private Core-Academic roster diagnosis and immutable rehearsal closure
+        env:
+          IIG_ROSTER_FENCE_SMOKE: 'true'
+        run: bash scripts/smoke-academic-roster-disposition.sh
       - name: Exercise explicitly enabled private teacher writer on disposable databases
         env:
           CI: 'true'
