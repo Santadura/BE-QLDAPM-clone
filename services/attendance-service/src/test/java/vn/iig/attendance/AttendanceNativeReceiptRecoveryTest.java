@@ -3,6 +3,7 @@ package vn.iig.attendance;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
@@ -20,6 +21,10 @@ class AttendanceNativeReceiptRecoveryTest {
         new AttendanceNativeLedgerRepository.Pending(
             "00000000-0000-0000-0000-000000000001","cs001","class-1",
             "teach-1","request-1",1,"{}","a".repeat(64));
+
+    @BeforeEach void allowNormalRetryUnlessQuarantined() {
+        when(ledger.recoveryEligible(anyString())).thenReturn(true);
+    }
 
     @Test void originalCommittedCoreReferenceFinalizesLocalLedgerOnce() {
         var reply=new AttendanceNativeReferenceClient.Receipt(

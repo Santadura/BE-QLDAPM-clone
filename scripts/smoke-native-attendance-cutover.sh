@@ -259,6 +259,25 @@ test "$(core_sql "SELECT status FROM teacher_session_attendance WHERE teaching_s
   FAIL "Core direct write altered teacher attendance despite native ownership"
 echo "PASS: native Attendance public CS PUT, same-key replay and Core dual-writer exclusion"
 
+# The private recovery surface is CURRENT-Admin-only. A Core service
+# key on its own must not expose unresolved cross-database business facts.
+recovery_url="http://attendance-service:8100/internal/attendance/native/recovery/status"
+recovery_status="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: $key" \
+  --header "Authorization: Bearer $admin_token" "$recovery_url")"
+RECOVERY="$recovery_status" python3 -c 'import json,os; r=json.loads(os.environ["RECOVERY"]); assert r["pending"]==0 and r["quarantined"]==0, r' ||
+  FAIL "Native Attendance finality report has unresolved original events"
+if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: $key" \
+  --header "Authorization: Bearer $cs_token" "$recovery_url" >/dev/null 2>&1; then
+  FAIL "Non-Admin CS inspected private native Attendance finality"
+fi
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  http://localhost:8080/internal/attendance/native/recovery/status)" = 404 ||
+  FAIL "Native Attendance finality operator API leaked through Gateway"
+echo "PASS: native Attendance finality diagnostics require live Admin and remain private"
+
+
 # Stop all external mutations, reconcile independent full history, and prove
 # no OPEN claim before restoring Core ownership. This must NOT be bypassed.
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
