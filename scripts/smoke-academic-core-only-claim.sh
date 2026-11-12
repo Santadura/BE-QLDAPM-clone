@@ -97,6 +97,19 @@ assert_orphan() {
 }
 assert_orphan
 
+# With an intentionally stranded Core-only claim, even a fully imported
+# Academic lesson history cannot be called cutover-ready. Require the
+# readiness endpoint to fail closed rather than returning a positive proof.
+readiness_result="$(compose exec -T scheduling-postgres wget -S -O- \
+  --header "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
+  "http://academic-service:8099/internal/academic/cutover/sessions/readiness" 2>&1 || true)"
+printf '%s' "$readiness_result" | grep -q '409' || {
+  echo "Academic cutover readiness accepted a stranded Core claim" >&2
+  printf '%s\\n' "$readiness_result" >&2
+  exit 1
+}
+echo "PASS: read-only Academic cutover readiness refuses a Core-only OPEN claim"
+
 # Private read-only triage must surface an orphan, without releasing it.
 # Gateway must not expose even this diagnostic read to browsers.
 private_key="${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}"
