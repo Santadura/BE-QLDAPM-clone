@@ -30,6 +30,8 @@ class AcademicRosterCandidateControllerTest {
             "command","req","RESULT","result-1",4,"STAGED");
         when(service.stage("Bearer admin",req)).thenReturn(receipt);
         assertEquals(receipt,controller.stage("private","Bearer admin",req));
-        verify(service).stage("Bearer admin",req);
+        var ordered=inOrder(service);
+        ordered.verify(service).stage("Bearer admin",req);
+        ordered.verify(service).acknowledge("Bearer admin",req,receipt);
     }
 }
