@@ -33,7 +33,8 @@ public class TeacherAttendanceLiveFactsService {
         LocalTime start,LocalTime end,long teacherVersion) {}
     private record Support(String id,long version) {}
     private record Modes(String attendanceMode,long attendanceGeneration,
-        String schedulingMode,long schedulingGeneration) {}
+        String schedulingMode,long schedulingGeneration,
+        String academicMode,long academicGeneration) {}
 
     public record Facts(String classId,String teachingScheduleId,String sessionId,
         long classVersion,long sessionVersion,long teacherVersion,
@@ -43,6 +44,16 @@ public class TeacherAttendanceLiveFactsService {
 
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Facts current(String classId,String scheduleId) {
+        return compute(classId,scheduleId,false);
+    }
+
+    /** Only a private native admission may use the fenced ATTENDANCE mode. */
+    @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
+    public Facts nativeCurrent(String classId,String scheduleId) {
+        return compute(classId,scheduleId,true);
+    }
+
+    private Facts compute(String classId,String scheduleId,boolean nativeWriter) {
         var actor=access.requireRole("CS");
         if(classId==null || classId.isBlank() || classId.length()>50 ||
                 scheduleId==null || scheduleId.isBlank() || scheduleId.length()>50)
@@ -86,19 +97,32 @@ public class TeacherAttendanceLiveFactsService {
                 "Only CS supporting this exact lesson may mark attendance");
         Support support=shifts.get(0);
         Modes modes=db.queryForObject(
-            "SELECT a.writer_mode,a.generation,s.writer_mode,s.writer_generation " +
-            "FROM teacher_attendance_writer_control a " +
-            "JOIN scheduling_assignment_writer_control s ON s.singleton=TRUE " +
+            "SELECT a.writer_mode,a.generation,s.writer_mode,s.writer_generation,"+
+            "academic.writer_mode,academic.generation "+
+            "FROM teacher_attendance_writer_control a "+
+            "JOIN scheduling_assignment_writer_control s ON s.singleton=TRUE "+
+            "JOIN academic_session_writer_control academic ON academic.singleton=TRUE "+
             "WHERE a.singleton=TRUE",
             (rs,i)->new Modes(rs.getString(1),rs.getLong(2),
-                rs.getString(3),rs.getLong(4)));
-        if(modes==null || !"CORE".equals(modes.attendanceMode()) ||
-                !"CORE".equals(modes.schedulingMode()))
+                rs.getString(3),rs.getLong(4),rs.getString(5),rs.getLong(6)));
+        if(modes==null ||
+            (nativeWriter
+                ? !("ATTENDANCE".equals(modes.attendanceMode()) &&
+                    "QUIESCED".equals(modes.schedulingMode()) &&
+                    "QUIESCED".equals(modes.academicMode()))
+                : !("CORE".equals(modes.attendanceMode()) &&
+                    "CORE".equals(modes.schedulingMode()))))
             throw new ApiException(HttpStatus.CONFLICT,
-                "Core Attendance or Scheduling writer is quiesced");
+                "Core Attendance owner or dependency writer generation is incompatible");
+        if(nativeWriter && java.time.LocalDateTime.of(
+                lesson.date(),lesson.start()).isAfter(
+                java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh"))))
+            throw new ApiException(HttpStatus.CONFLICT,
+                "Native Attendance requires a lesson that has already started");
         if(lesson.classVersion()<1 || lesson.sessionVersion()<1 ||
                 lesson.teacherVersion()<1 || support.version()<1 ||
-                modes.attendanceGeneration()<1 || modes.schedulingGeneration()<1)
+                modes.attendanceGeneration()<1 || modes.schedulingGeneration()<1 ||
+                modes.academicGeneration()<1)
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Versioned Academic/Scheduling facts incomplete");
         String canonical=String.join("\n","attendance-facts-v1",
@@ -109,7 +133,8 @@ public class TeacherAttendanceLiveFactsService {
             String.valueOf(support.version()),lesson.date().toString(),
             lesson.start().toString(),lesson.end().toString(),
             String.valueOf(modes.attendanceGeneration()),
-            String.valueOf(modes.schedulingGeneration()));
+            String.valueOf(modes.schedulingGeneration()),
+            modes.academicMode(),String.valueOf(modes.academicGeneration()));
         return new Facts(classId,scheduleId,lesson.sessionId(),
             lesson.classVersion(),lesson.sessionVersion(),lesson.teacherVersion(),
             support.id(),support.version(),actor.id(),lesson.date(),
