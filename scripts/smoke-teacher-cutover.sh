@@ -87,7 +87,8 @@ SCHEDULING_TEACHER_EXECUTOR_ENABLED=true \
 SCHEDULING_RECOVERY_ENABLED=true \
 SCHEDULING_TEACHER_PREFLIGHT_ENABLED=true \
 SCHEDULING_ACADEMIC_LEASE_COORDINATOR_ENABLED=true \
-SCHEDULING_REFERENCE_RELAY_ENABLED=true \
+SCHEDULING_REFERENCE_RELAY_ENABLED=false \
+  SCHEDULING_RECEIPT_RECOVERY_ENABLED=false \
   "${COMPOSE[@]}" up -d --no-deps --force-recreate scheduling-service
 for attempt in $(seq 1 60); do
   if private_get "http://scheduling-service:8098/actuator/health" \
@@ -140,6 +141,59 @@ schedule_id="$(printf '%s' "$executed" | python3 -c \
 test -n "$schedule_id"
 echo "PASS: TC created a Scheduling-owned TEACHING source and immutable pending Core event"
 
+# Deterministic lost-ACK simulation: commit the exact original immutable
+# reference in Core, without enabling the Scheduling reference relay.
+core_event="$(scheduling_sql "SELECT json_build_object(
+ 'eventId',event_id,'actorUsername',actor_username,'operation',operation,
+ 'requestKey',request_key,'sourceType',source_type,'scheduleId',schedule_id,
+ 'revision',revision,'eventKind',event_kind,'payloadJson',payload::text,
+ 'payloadHash',payload_hash)::text FROM scheduling_assignment_domain_outbox
+ WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER'
+ AND request_key='${key}' AND delivered_at IS NULL;")"
+test -n "$core_event" || { echo "No immutable TEACHING event"; exit 1; }
+core_receipt="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+ --header "X-Internal-Key: ${service_key}" \
+ --header "Content-Type: application/json" \
+ --post-data "$core_event" \
+ "http://backend:8081/internal/scheduling/assignments/reference/teaching")"
+printf '%s' "$core_receipt" | python3 -c \
+ 'import json,sys; x=json.load(sys.stdin); assert x["outcome"] in ("APPLIED","ALREADY_APPLIED")'
+test "$(scheduling_sql "SELECT count(*) FROM scheduling_assignment_command_inbox
+ WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER'
+ AND request_key='${key}' AND state='PENDING_REFERENCE';")" = 1 ||
+ { echo "Scheduling unexpectedly acknowledged Core reference"; exit 1; }
+test "$(core_sql "SELECT count(*) FROM scheduling_assignment_reference_event_receipts
+ WHERE source_type='TEACHING' AND schedule_id='${schedule_id}';")" = 1 ||
+ { echo "Core did not durably commit the reference"; exit 1; }
+
+# Exhaust the local retry budget in the disposable database, leaving
+# immutable event, Core reference and command identity unchanged.
+"${COMPOSE[@]}" exec -T scheduling-postgres psql \
+ -U iig_scheduling -d iig_scheduling -v ON_ERROR_STOP=1 \
+ -c "BEGIN;
+ UPDATE scheduling_assignment_domain_outbox SET attempt_count=10
+ WHERE actor_username='tc001' AND request_key='${key}' AND delivered_at IS NULL;
+ UPDATE scheduling_assignment_command_inbox SET state='COMPENSATING'
+ WHERE actor_username='tc001' AND operation='ASSIGN_TEACHER'
+ AND request_key='${key}' AND state='PENDING_REFERENCE';
+ COMMIT;" >/dev/null
+
+# Start ONLY the receipt-verified worker; no blind reference delivery.
+SCHEDULING_TEACHER_EXECUTOR_ENABLED=true \
+ SCHEDULING_RECOVERY_ENABLED=true \
+ SCHEDULING_TEACHER_PREFLIGHT_ENABLED=true \
+ SCHEDULING_ACADEMIC_LEASE_COORDINATOR_ENABLED=true \
+ SCHEDULING_REFERENCE_RELAY_ENABLED=false \
+ SCHEDULING_RECEIPT_RECOVERY_ENABLED=true \
+ "${COMPOSE[@]}" up -d --no-deps --force-recreate scheduling-service
+for attempt in $(seq 1 65); do
+ if private_get "http://scheduling-service:8098/actuator/health" >/dev/null 2>&1; then break; fi
+ if [ "$attempt" = 65 ]; then
+   echo "Receipt-only Scheduling reconciler did not restart"; exit 1;
+ fi
+ sleep 2
+done
+
 # The relay may timeout after Core COMMIT. Poll BOTH stores for durable
 # exact success, never accept the Scheduled HTTP 202 as business success.
 complete=false
@@ -154,6 +208,14 @@ test "$complete" = true || {
   echo "Core=$core_ok Scheduling=$source_ok"
   exit 1
 }
+
+test "$(scheduling_sql "SELECT attempt_count FROM scheduling_assignment_domain_outbox
+ WHERE actor_username='tc001' AND request_key='${key}';")" = 10 ||
+ { echo "Receipt-only worker retried a business event"; exit 1; }
+test "$(core_sql "SELECT count(*) FROM scheduling_assignment_reference_event_receipts
+ WHERE source_type='TEACHING' AND schedule_id='${schedule_id}';")" = 1 ||
+ { echo "Receipt recovery duplicated Core reference"; exit 1; }
+echo "PASS: Scheduling receipt-only worker recovered Core COMMITTED reference after restart, no replay"
 
 # Retry must return exactly the same schedule with no duplicate Core row,
 # outbox fact or TC claim; only one confirmed reference is legitimate.
