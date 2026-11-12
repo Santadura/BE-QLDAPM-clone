@@ -41,9 +41,19 @@ public class AttendanceNativeCommandService {
         if(!"ROLE_CS".equals(actor.role()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                 "Only a live CS may mark native teacher attendance");
-        var facts=core.facts(classId,scheduleId,bearer);
         String fingerprint=AttendanceCommandService.fingerprint(
             classId,scheduleId,status);
+        var previous=nativeLedger.completedForKey(
+            actor.username(),classId,scheduleId,key,fingerprint);
+        if(previous!=null) {
+            // Do NOT recompute current teacher/CS support or claim a
+            // new Core transaction. The original committed result is
+            // immutable and may already precede another attendance version.
+            // Core must still prove the exact ORIGINAL reference and return
+            // the stored original FE response.
+            return core.reference(previous).response();
+        }
+        var facts=core.facts(classId,scheduleId,bearer);
         var claim=core.claim(classId,scheduleId,bearer,key,fingerprint,status,
             facts.token(),actor.username());
         if(!facts.actorEmployeeId().equals(claim.actorEmployeeId()) ||
