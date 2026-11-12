@@ -121,8 +121,10 @@ ADMIN_STUDENTS="$admin_students" STUDENT_KEY="$key" python3 -c \
   'import json,os; rows=json.loads(os.environ["ADMIN_STUDENTS"]); assert isinstance(rows,list) and any(x.get("studentId")==os.environ["STUDENT_KEY"] for x in rows),rows'
 teacher_students="$(curl -fsS \
   -H "Authorization: Bearer $teacher_token" http://localhost:8080/api/students)"
-TEACHER_STUDENTS="$teacher_students" STUDENT_KEY="$key" python3 -c \
-  'import json,os; rows=json.loads(os.environ["TEACHER_STUDENTS"]); assert isinstance(rows,list) and all(x.get("studentId")!=os.environ["STUDENT_KEY"] for x in rows),rows'
+teacher_core="$(compose exec -T scheduling-postgres wget -qO- \
+  --header "Authorization: Bearer $teacher_token" "http://backend:8081/api/students")"
+TEACHER_STUDENTS="$teacher_students" TEACHER_CORE="$teacher_core" python3 -c \
+  'import json,os; a=json.loads(os.environ["TEACHER_STUDENTS"]); b=json.loads(os.environ["TEACHER_CORE"]); assert isinstance(a,list) and a==b,(a,b)'
 bad_auth="$(curl -sS -o /dev/null -w '%{http_code}' \
   http://localhost:8080/api/students)"
 test "$bad_auth" = "401" || { echo "Student list exposed without live JWT: $bad_auth" >&2;exit 1; }
