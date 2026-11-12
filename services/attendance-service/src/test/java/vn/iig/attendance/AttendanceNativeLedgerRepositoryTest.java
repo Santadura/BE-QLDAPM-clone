@@ -172,6 +172,35 @@ class AttendanceNativeLedgerRepositoryTest {
             ResponseStatusException.class,()->ledger.pending(51)).getStatusCode());
         verifyNoInteractions(db);
     }
+    @Test void nativeRecoveryFailureRequiresAnUnconfirmedImmutableEvent() {
+        var event=new AttendanceNativeLedgerRepository.Pending(
+            ID,"cs001","class-1","teach-1",KEY,1,"{}","a".repeat(64));
+        when(db.queryForObject(
+            contains("SELECT confirmed_at IS NULL FROM attendance_native_outbox"),
+            eq(Boolean.class),eq(ID))).thenReturn(false);
+        ledger.recordRecoveryFailure(event,
+            new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE));
+        verify(db,never()).update(startsWith("INSERT INTO attendance_native_recovery_attempts"),
+            any(Object[].class));
+    }
+
+    @Test void nativeRecoveryFailurePersistsBoundedRetryWithoutTouchingDomain() {
+        var event=new AttendanceNativeLedgerRepository.Pending(
+            ID,"cs001","class-1","teach-1",KEY,1,"{}","a".repeat(64));
+        when(db.queryForObject(
+            contains("SELECT confirmed_at IS NULL FROM attendance_native_outbox"),
+            eq(Boolean.class),eq(ID))).thenReturn(true);
+        ledger.recordRecoveryFailure(event,
+            new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE));
+        verify(db).update(
+            argThat(sql->sql.contains("failure_count+1>=8") &&
+                sql.contains("OPERATOR_REVIEW") &&
+                sql.contains("ON CONFLICT(event_id)")),
+            eq(ID),eq("ResponseStatusException"));
+        verify(db,never()).update(startsWith("UPDATE attendance_native_teacher_rows"),
+            any(Object[].class));
+    }
+
     @Test void nativeWriterActivationRefusesMissingHistoricalEvents() {
         when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_native_activations"),
             eq(Long.class))).thenReturn(0L);

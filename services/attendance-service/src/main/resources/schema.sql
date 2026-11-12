@@ -197,3 +197,19 @@ CREATE TABLE IF NOT EXISTS attendance_native_activations (
   imported_live_rows BIGINT NOT NULL CHECK(imported_live_rows>=0),
   activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Durable finality supervision for native Attendance. Quarantine does NOT
+-- cancel or roll back an event; only the exact Core reference can complete it.
+-- This table is intentionally separate from the immutable domain outbox.
+CREATE TABLE IF NOT EXISTS attendance_native_recovery_attempts (
+  event_id UUID PRIMARY KEY REFERENCES attendance_native_outbox(event_id)
+    ON DELETE RESTRICT,
+  failure_count INTEGER NOT NULL CHECK(failure_count BETWEEN 1 AND 1000000),
+  state VARCHAR(20) NOT NULL CHECK(state IN ('RETRY','OPERATOR_REVIEW','RESOLVED')),
+  next_attempt_at TIMESTAMPTZ NOT NULL,
+  last_failure_class VARCHAR(120) NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+CREATE INDEX IF NOT EXISTS attendance_native_recovery_operator_queue
+  ON attendance_native_recovery_attempts(state,next_attempt_at)
+  WHERE state IN ('RETRY','OPERATOR_REVIEW')@@

@@ -372,13 +372,89 @@ public class AttendanceNativeLedgerRepository {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Native Attendance relay batch must be 1..50");
         return db.query(
-            "SELECT event_id::text,actor_username,class_id,teaching_schedule_id,"+
-            "request_key,version,payload_canonical,payload_hash "+
-            "FROM attendance_native_outbox WHERE confirmed_at IS NULL "+
-            "ORDER BY created_at,event_id LIMIT ?",
+            "SELECT o.event_id::text,o.actor_username,o.class_id,o.teaching_schedule_id,"+
+            "o.request_key,o.version,o.payload_canonical,o.payload_hash "+
+            "FROM attendance_native_outbox o LEFT JOIN attendance_native_recovery_attempts r "+
+            "ON r.event_id=o.event_id WHERE o.confirmed_at IS NULL "+
+            "AND (r.event_id IS NULL OR (r.state='RETRY' AND r.next_attempt_at<=NOW())) "+
+            "ORDER BY o.created_at,o.event_id LIMIT ?",
             (rs,i)->new Pending(rs.getString(1),rs.getString(2),rs.getString(3),
                 rs.getString(4),rs.getString(5),rs.getLong(6),
                 rs.getString(7),rs.getString(8)),limit);
+    }
+
+    /**
+     * Bound uncertain external reference retries without changing original
+     * immutable Attendance facts. An exhausted event remains PENDING and is
+     * quarantined for operator review; absence of a Core HTTP reply is NEVER
+     * interpreted as a failed or rolled-back business transaction.
+     */
+    @Transactional
+    public void recordRecoveryFailure(Pending event,Exception failure) {
+        if(event==null || event.eventId()==null || failure==null)
+            throw new IllegalArgumentException("Original native event and failure required");
+        try { UUID.fromString(event.eventId()); }
+        catch(IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Invalid native recovery event ID",ex);
+        }
+        Boolean isPending=db.queryForObject(
+            "SELECT confirmed_at IS NULL FROM attendance_native_outbox "+
+            "WHERE event_id=CAST(? AS UUID) FOR UPDATE",
+            Boolean.class,event.eventId());
+        if(!Boolean.TRUE.equals(isPending))return;
+        String errorClass=failure.getClass().getSimpleName();
+        if(errorClass.isBlank())errorClass="UnknownFailure";
+        db.update(
+            "INSERT INTO attendance_native_recovery_attempts "+
+            "(event_id,failure_count,state,next_attempt_at,last_failure_class) "+
+            "VALUES(CAST(? AS UUID),1,'RETRY',NOW()+INTERVAL '10 seconds',?) "+
+            "ON CONFLICT(event_id) DO UPDATE SET "+
+            "failure_count=attendance_native_recovery_attempts.failure_count+1,"+
+            "state=CASE WHEN attendance_native_recovery_attempts.failure_count+1>=8 "+
+            "THEN 'OPERATOR_REVIEW' ELSE 'RETRY' END,"+
+            "next_attempt_at=NOW()+make_interval(secs => "+
+            "LEAST(600,10*(1 << LEAST(attendance_native_recovery_attempts.failure_count,6)))),"+
+            "last_failure_class=EXCLUDED.last_failure_class,updated_at=NOW() "+
+            "WHERE attendance_native_recovery_attempts.state<>'RESOLVED'",
+            event.eventId(),errorClass);
+    }
+
+    /** The Core orphan scanner must not bypass local retry/quarantine policy. */
+    public boolean recoveryEligible(String eventId) {
+        if(eventId==null)throw new IllegalArgumentException("Recovery event ID required");
+        Boolean blocked=db.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM attendance_native_recovery_attempts "+
+            "WHERE event_id=CAST(? AS UUID) AND (state='OPERATOR_REVIEW' "+
+            "OR (state='RETRY' AND next_attempt_at>NOW())))",
+            Boolean.class,eventId);
+        return !Boolean.TRUE.equals(blocked);
+    }
+
+    public record RecoverySummary(long pending,long quarantined) {}
+    public RecoverySummary recoverySummary() {
+        Long pending=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_native_outbox WHERE confirmed_at IS NULL",
+            Long.class);
+        Long quarantined=db.queryForObject(
+            "SELECT COUNT(*) FROM attendance_native_outbox o "+
+            "JOIN attendance_native_recovery_attempts r ON r.event_id=o.event_id "+
+            "WHERE o.confirmed_at IS NULL AND r.state='OPERATOR_REVIEW'",
+            Long.class);
+        if(pending==null || quarantined==null || pending<0 || quarantined<0)
+            throw new IllegalStateException("Native recovery status unavailable");
+        return new RecoverySummary(pending,quarantined);
+    }
+
+    /** Only explicit, key-protected Admin verification may revisit quarantine. */
+    public boolean requiresOperatorReview(String eventId) {
+        if(eventId==null)throw new IllegalArgumentException("Recovery event ID required");
+        Boolean found=db.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM attendance_native_recovery_attempts r "+
+            "JOIN attendance_native_outbox o ON o.event_id=r.event_id "+
+            "WHERE r.event_id=CAST(? AS UUID) AND r.state='OPERATOR_REVIEW' "+
+            "AND o.confirmed_at IS NULL)",
+            Boolean.class,eventId);
+        return Boolean.TRUE.equals(found);
     }
 
     /**
@@ -428,5 +504,11 @@ public class AttendanceNativeLedgerRepository {
             event.eventId());
         if(finished>1)
             throw new IllegalStateException("Ambiguous native attendance command completion");
+        // The Core reference and local terminal receipt are already in the
+        // SAME local transaction; resolve diagnostics only after that proof.
+        db.update("UPDATE attendance_native_recovery_attempts "+
+            "SET state='RESOLVED',updated_at=NOW() "+
+            "WHERE event_id=CAST(? AS UUID) AND state<>'RESOLVED'",
+            event.eventId());
     }
 }

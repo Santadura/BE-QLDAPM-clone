@@ -36,6 +36,11 @@ public class AttendanceNativeReceiptRecovery {
             for(var event:ledger.pending(25)) {
                 try {repair(event);}
                 catch(Exception ex) {
+                    try { ledger.recordRecoveryFailure(event,ex); }
+                    catch(Exception storeFailure) {
+                        log.error("Native Attendance retry state could not be persisted for {}",
+                            event.eventId(),storeFailure);
+                    }
                     log.warn("Native Attendance Core reference still uncertain for {}: {}",
                         event.teachingScheduleId(),ex.getClass().getSimpleName());
                 }
@@ -99,7 +104,14 @@ public class AttendanceNativeReceiptRecovery {
             !event.teachingScheduleId().equals(claim.teachingScheduleId()) ||
             !event.requestKey().equals(claim.requestKey()))
             throw new IllegalStateException("Recovered claim has no matching immutable event");
-        return repair(event);
+        // Core may keep returning an OPEN claim after the local event has
+        // exhausted retries; it cannot override Attendance's durable DLQ.
+        if(!ledger.recoveryEligible(event.eventId()))return false;
+        try { return repair(event); }
+        catch(Exception ex) {
+            ledger.recordRecoveryFailure(event,ex);
+            throw ex;
+        }
     }
 
 }

@@ -54,7 +54,18 @@ class AttendanceNativeReceiptRecoveryTest {
                 new ObjectMapper().createObjectNode().put("teachingScheduleId","teach-2")));
         repair.tick();
         verify(ledger,never()).confirm(eq(one),any());
+        verify(ledger).recordRecoveryFailure(eq(one),any(ResponseStatusException.class));
         verify(ledger).confirm(eq(other),any());
+    }
+
+    @Test void quarantinedOrBackoffOrphanCannotBypassRetryBudget() {
+        var claim=orphan("request-1");
+        when(ledger.stage(any())).thenReturn(
+            new AttendanceNativeLedgerRepository.Committed(one.eventId(),"PRESENT",1,false));
+        when(ledger.event(one.eventId())).thenReturn(one);
+        when(ledger.recoveryEligible(one.eventId())).thenReturn(false);
+        assertFalse(repair.recoverClaim(claim));
+        verify(core,never()).reference(any());
     }
 
     @Test void reconcilerRequiresOptInAndNeverStartsByDefault() {
