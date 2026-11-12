@@ -40,6 +40,47 @@ public class AcademicSessionCandidateRepository {
         long attendanceGeneration,long schedulingGeneration,String commandId,
         String outboxHash) {}
 
+    /**
+     * Read all four Academic-local pieces for one actor/key without mutating
+     * anything. An incomplete local transaction is NOT treated as absence:
+     * it is returned as divergent evidence and blocks any automatic recovery.
+     */
+    public record LocalCandidate(Evidence evidence,boolean slotMatches,
+        boolean outboxMatches,boolean handoffPresent,boolean handoffMatches) {}
+
+    public LocalCandidate inspectCandidate(String actor,String requestKey) {
+        List<LocalCandidate> rows=db.query(
+            "SELECT c.operator_username,c.request_key,c.request_hash,c.class_id,"+
+            "c.class_session_id,c.source_event_id,c.source_revision,"+
+            "c.academic_generation,c.attendance_generation,c.scheduling_generation,"+
+            "c.command_id::text,o.payload_hash,"+
+            "COALESCE(s.class_id=c.class_id AND "+
+            "s.class_session_id=c.class_session_id AND "+
+            "s.source_event_id=c.source_event_id AND "+
+            "s.source_revision=c.source_revision,FALSE),"+
+            "COALESCE(o.event_kind='REHEARSAL_ONLY',FALSE),"+
+            "(r.command_id IS NOT NULL),"+
+            "COALESCE(r.actor_username=c.operator_username AND "+
+            "r.request_key=c.request_key AND "+
+            "r.core_outbox_hash=o.payload_hash,FALSE) "+
+            "FROM academic_session_candidate_commands c "+
+            "LEFT JOIN academic_session_candidate_slots s ON s.command_id=c.command_id "+
+            "LEFT JOIN academic_session_candidate_outbox o ON o.command_id=c.command_id "+
+            "LEFT JOIN academic_candidate_handoff_receipts r ON r.command_id=c.command_id "+
+            "WHERE c.operator_username=? AND c.request_key=?",
+            (rs,i)->new LocalCandidate(new Evidence(
+                rs.getString(1),rs.getString(2),rs.getString(3),
+                rs.getString(4),rs.getString(5),rs.getLong(6),
+                rs.getLong(7),rs.getLong(8),rs.getLong(9),
+                rs.getLong(10),rs.getString(11),rs.getString(12)),
+                rs.getBoolean(13),rs.getBoolean(14),
+                rs.getBoolean(15),rs.getBoolean(16)),actor,requestKey);
+        if(rows.size()>1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Duplicate Academic candidate identity in local database");
+        return rows.isEmpty()?null:rows.get(0);
+    }
+
     /** Durable local proof, read only AFTER the @Transactional stage commits. */
     public Evidence committedEvidence(String actor,String key,String commandId) {
         List<Evidence> proof=db.query(
