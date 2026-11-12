@@ -105,3 +105,73 @@ CREATE TABLE IF NOT EXISTS attendance_history_backfill_cursor (
 );
 INSERT INTO attendance_history_backfill_cursor(singleton,last_event_id)
 VALUES(TRUE,0) ON CONFLICT(singleton) DO NOTHING;
+
+
+-- New native Attendance write model. Not the legacy Core source mirror.
+-- No HTTP controller may invoke it before Core's audited exclusive
+-- ATTENDANCE ownership admission protocol has been implemented and proven.
+-- Commands, typed presence and immutable outbox commit in ONE Attendance PG
+-- transaction. A remote Core reference receipt cannot be inferred from a
+-- 200/timeout: confirmation is a separate durable state transition.
+CREATE TABLE IF NOT EXISTS attendance_native_teacher_rows (
+  teaching_schedule_id VARCHAR(50) PRIMARY KEY,
+  class_id VARCHAR(50) NOT NULL,
+  attendance_id VARCHAR(50) NOT NULL,
+  status VARCHAR(20) NOT NULL CHECK(status IN ('PRESENT','ABSENT','LATE')),
+  recorded_by VARCHAR(50) NOT NULL,
+  version BIGINT NOT NULL CHECK(version>=0),
+  recorded_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attendance_native_recorded_by
+  ON attendance_native_teacher_rows(recorded_by,updated_at);
+
+CREATE TABLE IF NOT EXISTS attendance_native_commands (
+  actor_username VARCHAR(100) NOT NULL,
+  class_id VARCHAR(50) NOT NULL,
+  teaching_schedule_id VARCHAR(50) NOT NULL,
+  request_key VARCHAR(128) NOT NULL,
+  request_hash CHAR(64) NOT NULL CHECK(request_hash ~ '^[0-9a-f]{64}$'),
+  facts_token CHAR(64) NOT NULL CHECK(facts_token ~ '^[0-9a-f]{64}$'),
+  writer_generation BIGINT NOT NULL CHECK(writer_generation>0),
+  event_id UUID NOT NULL UNIQUE,
+  state VARCHAR(20) NOT NULL DEFAULT 'PENDING_REFERENCE'
+    CHECK(state IN ('PENDING_REFERENCE','COMMITTED')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ,
+  PRIMARY KEY(actor_username,class_id,teaching_schedule_id,request_key),
+  CONSTRAINT native_attendance_completion CHECK (
+    (state='PENDING_REFERENCE' AND completed_at IS NULL) OR
+    (state='COMMITTED' AND completed_at IS NOT NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_attendance_native_pending
+  ON attendance_native_commands(created_at)
+  WHERE state='PENDING_REFERENCE';
+
+CREATE TABLE IF NOT EXISTS attendance_native_outbox (
+  event_id UUID PRIMARY KEY REFERENCES attendance_native_commands(event_id),
+  actor_username VARCHAR(100) NOT NULL,
+  class_id VARCHAR(50) NOT NULL,
+  teaching_schedule_id VARCHAR(50) NOT NULL,
+  request_key VARCHAR(128) NOT NULL,
+  version BIGINT NOT NULL CHECK(version>0),
+  payload JSONB NOT NULL CHECK(jsonb_typeof(payload)='object'),
+  payload_canonical TEXT NOT NULL,
+  payload_hash CHAR(64) NOT NULL CHECK(payload_hash ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  confirmed_at TIMESTAMPTZ,
+  reference_receipt JSONB,
+  CONSTRAINT native_outbox_reference_completion CHECK(
+    (confirmed_at IS NULL AND reference_receipt IS NULL) OR
+    (confirmed_at IS NOT NULL AND jsonb_typeof(reference_receipt)='object')
+  ),
+  FOREIGN KEY(actor_username,class_id,teaching_schedule_id,request_key)
+    REFERENCES attendance_native_commands
+      (actor_username,class_id,teaching_schedule_id,request_key),
+  UNIQUE(teaching_schedule_id,version),
+  UNIQUE(actor_username,class_id,teaching_schedule_id,request_key)
+);
+CREATE INDEX IF NOT EXISTS idx_attendance_native_outbox_pending
+  ON attendance_native_outbox(created_at,event_id)
+  WHERE confirmed_at IS NULL;
