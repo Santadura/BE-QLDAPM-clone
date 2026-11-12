@@ -26,4 +26,20 @@ class AcademicSessionCandidateRepositoryTest {
             ResponseStatusException.class,()->repo.stage(plan())).getStatusCode());
         verify(db,never()).update(anyString(),any(Object[].class));
     }
+    @Test void unpromotedRehearsalsIncludeReleasedClaimsUntilExplicitDisposition() {
+        when(db.queryForObject(
+            "SELECT COUNT(*) FROM academic_session_candidate_commands",
+            Long.class)).thenReturn(3L);
+        assertEquals(3,repo.unpromotedRehearsalCount());
+    }
+
+    @Test void missingRehearsalLedgerNeverCountsAsEmpty() {
+        when(db.queryForObject(
+            "SELECT COUNT(*) FROM academic_session_candidate_commands",
+            Long.class)).thenReturn(null);
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,repo::unpromotedRehearsalCount)
+            .getStatusCode());
+    }
+
 }
