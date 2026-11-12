@@ -18,12 +18,34 @@ public class AcademicRosterCandidateDispositionService {
     private final AcademicRosterSourceClient source;
     private final AcademicRosterClaimClient claims;
     private final AcademicRosterCandidateDispositionRepository dispositions;
+    private final AcademicRosterCandidateReconciliation reconciliation;
 
     public AcademicRosterCandidateDispositionService(AcademicCoreClient identity,
             AcademicRosterSourceClient source,AcademicRosterClaimClient claims,
-            AcademicRosterCandidateDispositionRepository dispositions) {
+            AcademicRosterCandidateDispositionRepository dispositions,
+            AcademicRosterCandidateReconciliation reconciliation) {
         this.identity=identity;this.source=source;
         this.claims=claims;this.dispositions=dispositions;
+        this.reconciliation=reconciliation;
+    }
+
+    private static void requireExactRehearsal(
+            AcademicRosterCandidateReconciliation.Diagnosis proof,
+            String actor,Request request,boolean afterDiscard) {
+        String state=afterDiscard?"REHEARSAL_DISCARDED":null;
+        if(proof==null || !actor.equals(proof.actor()) ||
+            !request.requestKey().equals(proof.requestKey()) ||
+            !request.commandId().equalsIgnoreCase(
+                proof.localCommandId()==null?"":proof.localCommandId()) ||
+            !"RELEASED".equals(proof.coreState()) ||
+            !proof.hasCompleteAcademicEvidence() ||
+            !proof.hasLocalHandoffReceipt() ||
+            (afterDiscard
+                ? !state.equals(proof.state()) || !proof.hasDisposition()
+                : !("RELEASED_REHEARSAL_UNAPPLIED".equals(proof.state()) ||
+                    "REHEARSAL_DISCARDED".equals(proof.state()))))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Exact released Core claim and immutable Academic rehearsal proof required");
     }
 
     @Transactional
@@ -44,8 +66,20 @@ public class AcademicRosterCandidateDispositionService {
             firstClaims==null || firstClaims.openClaims()!=0)
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Core must own roster writes and have zero unresolved claims");
+        // The global zero-OPEN count is insufficient: a restored Core
+        // snapshot could lose this exact RELEASED claim while Academic keeps
+        // a local handoff receipt. Compare immutable identities and outbox
+        // evidence across BOTH databases before accepting a disposition.
+        requireExactRehearsal(reconciliation.inspect(
+            bearer,actor.username(),request.requestKey()),
+            actor.username(),request,false);
         dispositions.discard(actor.username(),request.requestKey(),
             request.commandId(),actor.username());
+        // Our local transaction must see its new disposition; an idempotent
+        // replay must likewise retain the same exact cross-DB evidence.
+        requireExactRehearsal(reconciliation.inspect(
+            bearer,actor.username(),request.requestKey()),
+            actor.username(),request,true);
         var last=source.writerFence();
         var lastClaims=claims.summary();
         if(!first.equals(last) || !firstClaims.equals(lastClaims) ||
