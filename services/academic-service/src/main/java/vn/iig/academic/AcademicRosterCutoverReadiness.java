@@ -39,7 +39,22 @@ public class AcademicRosterCutoverReadiness {
             "Academic roster cutover not ready: "+reason);
     }
 
+    /** Strict future production cutover gate: NO unapplied rehearsal may remain. */
     public Evidence verify() {
+        return check(false);
+    }
+
+    /**
+     * Private command staging is NOT cutover. It may safely retry existing
+     * REHEARSAL_ONLY commands while Core is frozen, provided every previous
+     * remote handback is acknowledged, no Core claim is OPEN, and immutable
+     * parity/claim/disposition ledgers remain generation-stable.
+     */
+    public Evidence verifyStaging() {
+        return check(true);
+    }
+
+    private Evidence check(boolean rehearsalAdmission) {
         var before=core.writerFence();
         if(before==null || !"QUIESCED".equals(before.mode()) ||
             before.generation()<2)
@@ -55,8 +70,8 @@ public class AcademicRosterCutoverReadiness {
         // Explicitly dispose every unpromoted proposal while Core still
         // owns writes. Otherwise a false READY may discard user intent.
         var beforeDisposition=dispositions.summary();
-        if(beforeDisposition==null || beforeDisposition.unresolved()!=0 ||
-            beforeDisposition.pendingHandoffs()!=0)
+        if(beforeDisposition==null || beforeDisposition.pendingHandoffs()!=0 ||
+            (!rehearsalAdmission && beforeDisposition.unresolved()!=0))
             throw blocked("unresolved non-authoritative Academic roster candidate exists");
         var history=parity.verify();
         var after=core.writerFence();
@@ -64,8 +79,8 @@ public class AcademicRosterCutoverReadiness {
         if(afterClaims==null || afterClaims.openClaims()!=0)
             throw blocked("Core roster candidate became OPEN during proof");
         var afterDisposition=dispositions.summary();
-        if(afterDisposition==null || afterDisposition.unresolved()!=0 ||
-            afterDisposition.pendingHandoffs()!=0)
+        if(afterDisposition==null || afterDisposition.pendingHandoffs()!=0 ||
+            (!rehearsalAdmission && afterDisposition.unresolved()!=0))
             throw blocked("new unresolved Academic roster rehearsal during source proof");
         if(!before.equals(after) || !"QUIESCED".equals(after.mode()) ||
             !beforeClaims.equals(afterClaims) ||
