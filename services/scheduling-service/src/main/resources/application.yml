@@ -32,6 +32,8 @@ iig:
     teacher-executor-enabled: ${SCHEDULING_TEACHER_EXECUTOR_ENABLED:false}
     # Admin-only exact receipt reconciliation, never an automatic rollback.
     recovery-enabled: ${SCHEDULING_RECOVERY_ENABLED:false}
+    # Requires receipt-confirmed Core commit; NEVER blindly replay writer events.
+    receipt-recovery-enabled: ${SCHEDULING_RECEIPT_RECOVERY_ENABLED:false}
 management:
   endpoints:
     web:
