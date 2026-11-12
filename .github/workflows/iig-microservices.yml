@@ -49,6 +49,7 @@ on:
       - 'scripts/smoke-academic-roster-candidates.sh'
       - 'scripts/smoke-academic-roster-duplicate-source.sh'
       - 'scripts/smoke-academic-roster-disposition.sh'
+      - 'scripts/smoke-academic-roster-orphan-diagnosis.sh'
       - 'src/main/java/com/example/demo/controller/AcademicStudentRosterSourceBridge.java'
       - 'src/test/java/com/example/demo/controller/AcademicStudentRosterSourceBridgeTest.java'
       - '.github/workflows/iig-microservices.yml'
@@ -197,6 +198,10 @@ jobs:
         env:
           IIG_TERMINAL_ORPHAN_PROBE: 'true'
         run: bash scripts/smoke-academic-core-only-claim.sh
+      - name: Diagnose Core-only Academic roster orphan after restart without releasing it
+        env:
+          IIG_TERMINAL_ORPHAN_PROBE: 'true'
+        run: bash scripts/smoke-academic-roster-orphan-diagnosis.sh
       - name: Print service logs when smoke fails
         if: failure()
         run: docker compose -f docker-compose.microservices.yml logs --no-color --tail=160 db-init postgres backend api-gateway attendance-service attendance-postgres academic-service academic-postgres audit-service catalog-service identity-service reporting-service hr-service payroll-service scheduling-service
