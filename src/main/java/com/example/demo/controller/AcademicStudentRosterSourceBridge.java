@@ -73,6 +73,43 @@ public class AcademicStudentRosterSourceBridge {
             },after,limit);
     }
 
+    /**
+     * Independent Core source-integrity proof. A current Core record must
+     * appear as the latest immutable UPSERT (including its entire JSON);
+     * a tombstone may never point to a still-live entity. This detects
+     * missed triggers and unauthorized post-event updates, not only counts.
+     */
+    public record Integrity(long studentRows,long membershipRows,
+        long newestStudentRows,long newestMembershipRows,long divergentRows) {}
+
+    @GetMapping("/integrity")
+    @Transactional(readOnly=true)
+    public Integrity integrity(
+            @RequestHeader(value="X-Internal-Key",required=false) String supplied) {
+        requireKey(supplied);
+        return db.queryForObject(
+            "WITH newest AS ("+
+            " SELECT DISTINCT ON(entity_type,entity_id) entity_type,entity_id,"+
+            " event_kind,payload FROM academic_roster_source_outbox "+
+            " ORDER BY entity_type,entity_id,event_id DESC), "+
+            " mismatches AS (SELECT COUNT(*) AS n FROM newest e "+
+            " LEFT JOIN students s ON e.entity_type='STUDENT' AND s.student_id=e.entity_id "+
+            " LEFT JOIN class_students m ON e.entity_type='MEMBERSHIP' AND m.class_student_id=e.entity_id "+
+            " WHERE (e.entity_type='STUDENT' AND "+
+            " ((e.event_kind='UPSERT' AND (s.student_id IS NULL OR e.payload IS DISTINCT FROM to_jsonb(s))) "+
+            " OR (e.event_kind='DELETE' AND s.student_id IS NOT NULL))) "+
+            " OR (e.entity_type='MEMBERSHIP' AND "+
+            " ((e.event_kind='UPSERT' AND (m.class_student_id IS NULL OR e.payload IS DISTINCT FROM to_jsonb(m))) "+
+            " OR (e.event_kind='DELETE' AND m.class_student_id IS NOT NULL)))) "+
+            " SELECT (SELECT COUNT(*) FROM students),"+
+            " (SELECT COUNT(*) FROM class_students),"+
+            " (SELECT COUNT(*) FROM newest WHERE entity_type='STUDENT' AND event_kind='UPSERT'),"+
+            " (SELECT COUNT(*) FROM newest WHERE entity_type='MEMBERSHIP' AND event_kind='UPSERT'),"+
+            " (SELECT n FROM mismatches)",
+            (rs,i)->new Integrity(rs.getLong(1),rs.getLong(2),rs.getLong(3),
+                rs.getLong(4),rs.getLong(5)));
+    }
+
     @GetMapping("/summary")
     @Transactional(readOnly=true)
     public Summary summary(
