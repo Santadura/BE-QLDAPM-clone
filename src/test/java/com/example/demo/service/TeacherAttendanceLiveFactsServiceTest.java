@@ -62,6 +62,10 @@ class TeacherAttendanceLiveFactsServiceTest {
     }
 
     private void coreModes(String attendanceMode,String schedulingMode) throws Exception {
+        coreModes(attendanceMode,schedulingMode,"CORE");
+    }
+    private void coreModes(String attendanceMode,String schedulingMode,
+                           String academicMode) throws Exception {
         when(db.queryForObject(startsWith("SELECT a.writer_mode"),
             any(RowMapper.class))).thenAnswer(inv->{
                 RowMapper mapper=inv.getArgument(1);
@@ -70,6 +74,8 @@ class TeacherAttendanceLiveFactsServiceTest {
                 when(rs.getLong(2)).thenReturn(3L);
                 when(rs.getString(3)).thenReturn(schedulingMode);
                 when(rs.getLong(4)).thenReturn(5L);
+                when(rs.getString(5)).thenReturn(academicMode);
+                when(rs.getLong(6)).thenReturn(9L);
                 return mapper.mapRow(rs,0);
             });
     }
@@ -125,4 +131,26 @@ class TeacherAttendanceLiveFactsServiceTest {
             ()->facts.requireUnchanged("class-1","teach-1","forged")).getStatus());
         verifyNoInteractions(db,access);
     }
+    @Test void nativeCSProofRequiresExclusiveAttendanceAndFrozenAcademic() throws Exception {
+        activeCs();plannedLesson();exactSupport();
+        coreModes("ATTENDANCE","QUIESCED","QUIESCED");
+        var proof=facts.nativeCurrent("class-1","teach-1");
+        assertTrue(proof.token().matches("[0-9a-f]{64}"));
+        assertEquals(3,proof.attendanceGeneration());
+        assertEquals("cs-001",proof.actorEmployeeId());
+        assertEquals(HttpStatus.CONFLICT,assertThrows(ApiException.class,
+            ()->facts.current("class-1","teach-1")).getStatus());
+    }
+
+    @Test void nativeCSProofNeverSucceedsWhileLegacyCoreWriterOrAcademicRuns()
+            throws Exception {
+        activeCs();plannedLesson();exactSupport();
+        coreModes("CORE","QUIESCED","QUIESCED");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(ApiException.class,
+            ()->facts.nativeCurrent("class-1","teach-1")).getStatus());
+        coreModes("ATTENDANCE","QUIESCED","CORE");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(ApiException.class,
+            ()->facts.nativeCurrent("class-1","teach-1")).getStatus());
+    }
+
 }
