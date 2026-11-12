@@ -114,4 +114,39 @@ class AttendanceNativeCommandServiceTest {
             .getStatusCode());
         verifyNoInteractions(ledger);
     }
+    @Test void completedSameKeyReplayReturnsOriginalCoreResponseWithoutNewClaim()
+            throws Exception {
+        when(identity.currentPrincipal("Bearer cs")).thenReturn(
+            new AttendanceCoreClient.Principal("cs001","ROLE_CS"));
+        var original=new AttendanceNativeLedgerRepository.Pending(
+            eventId,"cs001","class-1","teach-1","same-key",2,
+            "{\\"eventId\\":\\""+eventId+"\\"}","b".repeat(64));
+        when(ledger.completedForKey("cs001","class-1","teach-1","same-key",hash))
+            .thenReturn(original);
+        var response=mapper.readTree(
+            "{\\"id\\":\\"attendance-1\\",\\"teachingScheduleId\\":\\"teach-1\\","+
+            "\\"status\\":\\"PRESENT\\"}");
+        when(core.reference(original)).thenReturn(
+            new AttendanceNativeReferenceClient.Receipt(
+                eventId,"teach-1",2,"b".repeat(64),"COMMITTED",response));
+        assertEquals(response,service.mark(
+            "class-1","teach-1","Bearer cs","PRESENT","same-key"));
+        verify(core).reference(original);
+        verify(core,never()).facts(anyString(),anyString(),anyString());
+        verify(core,never()).claim(anyString(),anyString(),anyString(),
+            anyString(),anyString(),anyString(),anyString(),anyString());
+        verify(ledger,never()).stage(any());
+        verify(ledger,never()).confirm(any(),any());
+    }
+
+    @Test void completedReplayStillRejectsRevokedCSRoleBeforeDatabaseLookup() {
+        when(identity.currentPrincipal("Bearer admin")).thenReturn(
+            new AttendanceCoreClient.Principal("cs001","ROLE_ADMIN"));
+        assertEquals(HttpStatus.FORBIDDEN,assertThrows(
+            ResponseStatusException.class,
+            ()->service.mark("class-1","teach-1","Bearer admin","PRESENT","same-key"))
+            .getStatusCode());
+        verifyNoInteractions(core,ledger);
+    }
+
 }
