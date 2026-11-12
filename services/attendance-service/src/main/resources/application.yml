@@ -20,6 +20,8 @@ iig:
     evidence-key: ${PAYROLL_INTERNAL_API_KEY:}
   attendance:
     command-recovery-enabled: ${ATTENDANCE_COMMAND_RECOVERY_ENABLED:false}
+    native-writer-enabled: ${ATTENDANCE_NATIVE_WRITER_ENABLED:false}
+    native-recovery-enabled: ${ATTENDANCE_NATIVE_RECOVERY_ENABLED:false}
     source-relay-enabled: ${ATTENDANCE_SOURCE_RELAY_ENABLED:false}
     # Public PUT ingress is opt-in; Core remains the transactional writer.
     write-gateway-enabled: ${ATTENDANCE_WRITE_GATEWAY_ENABLED:false}
