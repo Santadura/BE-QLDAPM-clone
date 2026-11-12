@@ -42,4 +42,26 @@ public class TeacherAttendanceLiveFactsController {
         // role and exact class-support shift, never user-supplied actor IDs.
         return facts.current(classId,teachingScheduleId);
     }
+    /**
+     * Only valid after audited exclusive ATTENDANCE ownership. A Core
+     * writer token cannot be replayed to authorize an independent mutation.
+     */
+    @GetMapping("/native")
+    @ConditionalOnProperty(name="iig.attendance.native-reference-enabled",
+        havingValue="true")
+    public TeacherAttendanceLiveFactsService.Facts nativeCurrent(
+            @RequestHeader(value="X-Internal-Key",required=false) String key,
+            @RequestHeader(value="Authorization",required=false) String bearer,
+            @RequestParam String classId,@RequestParam String teachingScheduleId) {
+        byte[] supplied=(key==null?"":key).getBytes(StandardCharsets.UTF_8);
+        if(!MessageDigest.isEqual(secret,supplied))
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                "Invalid native Attendance facts key");
+        if(bearer==null || !bearer.startsWith("Bearer ") ||
+                bearer.substring(7).isBlank())
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                "Native Attendance CS bearer required");
+        return facts.nativeCurrent(classId,teachingScheduleId);
+    }
+
 }
