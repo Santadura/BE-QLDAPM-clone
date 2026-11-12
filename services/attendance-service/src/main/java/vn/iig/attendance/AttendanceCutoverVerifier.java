@@ -22,15 +22,18 @@ public class AttendanceCutoverVerifier {
     private final AttendanceSourceClient source;
     private final AttendanceEventProjectionRepository projection;
     private final AttendanceEventRelay relay;
+    private final AttendanceCommandInbox commands;
 
     public record Report(boolean ready,String state,long sourceRows,
                          long verifiedRows,int mismatchCount,List<String> mismatchKeys) {}
 
     public AttendanceCutoverVerifier(AttendanceSourceClient source,
-            AttendanceEventProjectionRepository projection,AttendanceEventRelay relay) {
+            AttendanceEventProjectionRepository projection,AttendanceEventRelay relay,
+            AttendanceCommandInbox commands) {
         this.source=source;
         this.projection=projection;
         this.relay=relay;
+        this.commands=commands;
     }
 
     /**
@@ -44,8 +47,24 @@ public class AttendanceCutoverVerifier {
         if(!isFrozen(before))
             return new Report(false,"NOT_FROZEN",0,0,1,
                 List.of("CORE_WRITERS_NOT_QUIESCED"));
+        long pendingBefore=commands.pendingCount();
+        if(pendingBefore!=0)
+            return new Report(false,"UNRESOLVED_ATTENDANCE_COMMANDS",0,0,1,
+                List.of("ATTENDANCE_PENDING_CORE_RESULT"));
         var report=verify();
+        // Re-read the independent inbox after the full immutable source scan,
+        // not only at its start. A concurrent PENDING command must invalidate
+        // a previously complete projection snapshot.
+        long pendingAfter=commands.pendingCount();
         var after=source.writerFence();
+        if(pendingAfter!=0) {
+            var errors=new ArrayList<>(report.mismatchKeys());
+            if(errors.size()<MAX_MISMATCH_KEYS)
+                errors.add("ATTENDANCE_COMMAND_STARTED_DURING_SCAN");
+            return new Report(false,"UNRESOLVED_ATTENDANCE_COMMANDS",
+                report.sourceRows(),report.verifiedRows(),
+                report.mismatchCount()+1,List.copyOf(errors));
+        }
         if(!before.equals(after) || !isFrozen(after)) {
             List<String> errors=new ArrayList<>(report.mismatchKeys());
             if(errors.size()<MAX_MISMATCH_KEYS)
