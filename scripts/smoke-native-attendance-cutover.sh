@@ -120,7 +120,7 @@ test "$(core_sql "SELECT writer_mode FROM teacher_attendance_writer_control WHER
 # This is a deterministic crash-before-local-transaction simulation.
 facts="$(private_get "http://backend:8081/internal/attendance/lesson-facts/native?classId=$class_id&teachingScheduleId=$schedule_id")"
 token="$(printf '%s' "$facts" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')"
-request_hash="$(python3 -c 'import hashlib;print(hashlib.sha256(b"v1\\nclass-0001\\nteaching-001\\nPRESENT").hexdigest())')"
+request_hash="$(python3 -c 'import hashlib;print(hashlib.sha256(b"v1\nclass-0001\nteaching-001\nPRESENT").hexdigest())')"
 claim_body="$(FACT_TOKEN="$token" HASH="$request_hash" KEY="$claim_key" python3 -c 'import json,os;print(json.dumps(dict(classId="class-0001",teachingScheduleId="teaching-001",requestKey=os.environ["KEY"],requestHash=os.environ["HASH"],status="PRESENT",factsToken=os.environ["FACT_TOKEN"])))')"
 claim="$(private_post http://backend:8081/internal/attendance/native/claims "$claim_body")"
 test "$(printf '%s' "$claim" | python3 -c 'import json,sys;print(json.load(sys.stdin)["state"])')" = "OPEN" ||
