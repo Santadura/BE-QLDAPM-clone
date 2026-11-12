@@ -95,17 +95,29 @@ public class AcademicStudentRosterSourceBridge {
             " mismatches AS (SELECT COUNT(*) AS n FROM newest e "+
             " LEFT JOIN students s ON e.entity_type='STUDENT' AND s.student_id=e.entity_id "+
             " LEFT JOIN class_students m ON e.entity_type='MEMBERSHIP' AND m.class_student_id=e.entity_id "+
+            " LEFT JOIN student_targets t ON e.entity_type='TARGET' AND t.student_target_id=e.entity_id "+
+            " LEFT JOIN student_results r ON e.entity_type='RESULT' AND r.student_result_id=e.entity_id "+
             " WHERE (e.entity_type='STUDENT' AND "+
             " ((e.event_kind='UPSERT' AND (s.student_id IS NULL OR e.payload IS DISTINCT FROM to_jsonb(s))) "+
             " OR (e.event_kind='DELETE' AND s.student_id IS NOT NULL))) "+
             " OR (e.entity_type='MEMBERSHIP' AND "+
             " ((e.event_kind='UPSERT' AND (m.class_student_id IS NULL OR e.payload IS DISTINCT FROM to_jsonb(m))) "+
-            " OR (e.event_kind='DELETE' AND m.class_student_id IS NOT NULL)))) "+
+            " OR (e.event_kind='DELETE' AND m.class_student_id IS NOT NULL))) "+
+            " OR (e.entity_type='TARGET' AND "+
+            " ((e.event_kind='UPSERT' AND (t.student_target_id IS NULL OR e.payload IS DISTINCT FROM to_jsonb(t))) "+
+            " OR (e.event_kind='DELETE' AND t.student_target_id IS NOT NULL))) "+
+            " OR (e.entity_type='RESULT' AND "+
+            " ((e.event_kind='UPSERT' AND (r.student_result_id IS NULL OR e.payload IS DISTINCT FROM to_jsonb(r))) "+
+            " OR (e.event_kind='DELETE' AND r.student_result_id IS NOT NULL)))) "+
             " SELECT (SELECT COUNT(*) FROM students),"+
             " (SELECT COUNT(*) FROM class_students),"+
             " (SELECT COUNT(*) FROM newest WHERE entity_type='STUDENT' AND event_kind='UPSERT'),"+
             " (SELECT COUNT(*) FROM newest WHERE entity_type='MEMBERSHIP' AND event_kind='UPSERT'),"+
-            " (SELECT n FROM mismatches)",
+            " (SELECT n FROM mismatches) + "+
+            " ABS((SELECT COUNT(*) FROM student_targets) - "+
+            " (SELECT COUNT(*) FROM newest WHERE entity_type='TARGET' AND event_kind='UPSERT')) + "+
+            " ABS((SELECT COUNT(*) FROM student_results) - "+
+            " (SELECT COUNT(*) FROM newest WHERE entity_type='RESULT' AND event_kind='UPSERT'))",
             (rs,i)->new Integrity(rs.getLong(1),rs.getLong(2),rs.getLong(3),
                 rs.getLong(4),rs.getLong(5)));
     }
