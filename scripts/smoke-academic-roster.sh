@@ -146,6 +146,94 @@ ADMIN_STUDENTS="$admin_recovered" STUDENT_KEY="$key" python3 -c \
   'import json,os; rows=json.loads(os.environ["ADMIN_STUDENTS"]); assert any(x.get("studentId")==os.environ["STUDENT_KEY"] for x in rows),rows'
 echo "PASS: private full-history parity, Admin Academic reads, Teacher Core ACL, and fail-closed drift"
 
+# Real PostgreSQL domain writes for both newly extracted kinds. Core's
+# primary keys and FKs are honored: a seeded course, class and employee
+# are referenced, and only Core's triggers generate history events.
+target_id="ci-target-${GITHUB_RUN_ID}"
+result_id="ci-result-${GITHUB_RUN_ID}"
+course_id="$(core_sql "SELECT course_id FROM classes WHERE class_id='$class_id'")"
+evaluator_id="$(core_sql "SELECT employee_id FROM employees ORDER BY employee_id LIMIT 1")"
+test -n "$course_id" && test -n "$evaluator_id" || {
+  echo "Missing seeded course or employee for student target/result fixture" >&2;exit 1;
+}
+compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+BEGIN;
+INSERT INTO student_targets(student_target_id,student_id,course_id,target_type,target_value)
+  VALUES('$target_id','$key','$course_id','READING',6.50);
+INSERT INTO student_results(student_result_id,student_id,class_id,score,evaluated_by,evaluated_at)
+  VALUES('$result_id','$key','$class_id',8.25,'$evaluator_id',NOW());
+COMMIT;
+SQL
+metrics_copied=false
+for attempt in $(seq 1 60); do
+  t="$(academic_sql "SELECT COUNT(*) FROM academic_student_targets_shadow
+    WHERE student_target_id='$target_id' AND event_kind='UPSERT' AND target_value=6.50")"
+  r="$(academic_sql "SELECT COUNT(*) FROM academic_student_results_shadow
+    WHERE student_result_id='$result_id' AND event_kind='UPSERT' AND score=8.25")"
+  if [ "$t" = "1" ] && [ "$r" = "1" ];then metrics_copied=true;break;fi
+  sleep 2
+done
+test "$metrics_copied" = true || {
+  echo "Academic failed to import real StudentTarget/StudentResult events" >&2;exit 1;
+}
+
+# Mutations must move the source revision and change the typed latest row.
+compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+BEGIN;
+UPDATE student_targets SET target_value=7.50 WHERE student_target_id='$target_id';
+UPDATE student_results SET score=9.00 WHERE student_result_id='$result_id';
+COMMIT;
+SQL
+metrics_updated=false
+for attempt in $(seq 1 60); do
+  t="$(academic_sql "SELECT COUNT(*) FROM academic_student_targets_shadow
+    WHERE student_target_id='$target_id' AND event_kind='UPSERT' AND target_value=7.50")"
+  r="$(academic_sql "SELECT COUNT(*) FROM academic_student_results_shadow
+    WHERE student_result_id='$result_id' AND event_kind='UPSERT' AND score=9.00")"
+  if [ "$t" = "1" ] && [ "$r" = "1" ];then metrics_updated=true;break;fi
+  sleep 2
+done
+test "$metrics_updated" = true || {
+  echo "Academic missed StudentTarget/StudentResult update events" >&2;exit 1;
+}
+
+# A count-only proof misses altered target values. The private full proof
+# must reject this tampering even though the number of rows is unchanged.
+compose exec -T academic-postgres psql -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 \
+  -c "UPDATE academic_student_targets_shadow SET target_value=1.00
+      WHERE student_target_id='$target_id'" >/dev/null
+target_drift="$(compose exec -T scheduling-postgres wget -S -O- \
+  --header "X-Internal-Key: $private_key" \
+  --header "Authorization: Bearer $admin_token" "$readiness_url" 2>&1 || true)"
+printf '%s' "$target_drift" | grep -q '409' || {
+  echo "Academic accepted a corrupted StudentTarget shadow" >&2;exit 1;
+}
+compose exec -T academic-postgres psql -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 \
+  -c "UPDATE academic_student_targets_shadow SET target_value=7.50
+      WHERE student_target_id='$target_id'" >/dev/null
+
+# DELETE tombstones for both kinds must be retained before the existing
+# membership/student fixture is removed (referential integrity).
+compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+BEGIN;
+DELETE FROM student_results WHERE student_result_id='$result_id';
+DELETE FROM student_targets WHERE student_target_id='$target_id';
+COMMIT;
+SQL
+metrics_deleted=false
+for attempt in $(seq 1 60); do
+  t="$(academic_sql "SELECT COUNT(*) FROM academic_student_targets_shadow
+    WHERE student_target_id='$target_id' AND event_kind='DELETE'")"
+  r="$(academic_sql "SELECT COUNT(*) FROM academic_student_results_shadow
+    WHERE student_result_id='$result_id' AND event_kind='DELETE'")"
+  if [ "$t" = "1" ] && [ "$r" = "1" ];then metrics_deleted=true;break;fi
+  sleep 2
+done
+test "$metrics_deleted" = true || {
+  echo "Academic failed to preserve StudentTarget/StudentResult tombstones" >&2;exit 1;
+}
+echo "PASS: independent StudentTarget/StudentResult create/update/delete and typed parity"
+
 # Exercise status transition, membership tombstone, then student tombstone.
 # A deleted row must NOT be resurrected by replay or container restart.
 compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
@@ -177,6 +265,8 @@ ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true compose restart academic-service
 sleep 20
 require_equal "student tombstone" "$(academic_sql "SELECT event_kind FROM academic_students_shadow WHERE student_id='$key'")" "DELETE"
 require_equal "membership tombstone" "$(academic_sql "SELECT event_kind FROM academic_class_memberships_shadow WHERE class_student_id='$member'")" "DELETE"
+require_equal "target tombstone" "$(academic_sql "SELECT event_kind FROM academic_student_targets_shadow WHERE student_target_id='$target_id'")" "DELETE"
+require_equal "result tombstone" "$(academic_sql "SELECT event_kind FROM academic_student_results_shadow WHERE student_result_id='$result_id'")" "DELETE"
 require_equal "source-event count" "$(academic_sql "SELECT COUNT(*) FROM academic_roster_source_receipts")" \
   "$(core_sql "SELECT COUNT(*) FROM academic_roster_source_outbox")"
 
