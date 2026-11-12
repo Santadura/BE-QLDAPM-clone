@@ -160,6 +160,14 @@ public class AcademicCoreClient {
         };
     }
 
+    /** Existing Core student detail enforces CURRENT user and class ACL. */
+    public String studentDetail(String studentId,String bearer) {
+        if(studentId==null || !studentId.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Valid student ID required");
+        return liveGet("/api/students/{classId}",bearer,studentId);
+    }
+
     public String students(String bearer) {
         return liveGet("/api/students",bearer,null);
     }
