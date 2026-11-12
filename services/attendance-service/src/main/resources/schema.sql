@@ -115,14 +115,20 @@ VALUES(TRUE,0) ON CONFLICT(singleton) DO NOTHING;
 -- 200/timeout: confirmation is a separate durable state transition.
 CREATE TABLE IF NOT EXISTS attendance_native_teacher_rows (
   teaching_schedule_id VARCHAR(50) PRIMARY KEY,
-  class_id VARCHAR(50) NOT NULL,
+  -- Core owns the teacher/class roster; the immutable admission proves
+  -- which class this globally unique schedule belongs to.
   attendance_id VARCHAR(50) NOT NULL,
-  status VARCHAR(20) NOT NULL CHECK(status IN ('PRESENT','ABSENT','LATE')),
-  recorded_by VARCHAR(50) NOT NULL,
+  status VARCHAR(20) CHECK(status IN ('PRESENT','ABSENT','LATE')),
+  recorded_by VARCHAR(50),
   version BIGINT NOT NULL CHECK(version>=0),
-  recorded_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL
+  recorded_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL,
+  CONSTRAINT attendance_native_initial_state CHECK(
+    (status IS NULL AND recorded_by IS NULL AND recorded_at IS NULL) OR
+    (status IS NOT NULL AND recorded_by IS NOT NULL AND recorded_at IS NOT NULL))
 );
+ALTER TABLE attendance_native_teacher_rows
+  DROP COLUMN IF EXISTS class_id;
 CREATE INDEX IF NOT EXISTS idx_attendance_native_recorded_by
   ON attendance_native_teacher_rows(recorded_by,updated_at);
 
