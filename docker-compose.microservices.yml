@@ -45,6 +45,8 @@ services:
       ACADEMIC_BRIDGE_ENABLED: "true"
       ACADEMIC_PUBLIC_WRITE_ENABLED: "false"
       ACADEMIC_CANDIDATE_CLAIMS_ENABLED: "true"
+      # Private claim barrier; no public Academic write authority.
+      ACADEMIC_ROSTER_CLAIMS_ENABLED: "true"
       ACADEMIC_INTERNAL_API_KEY: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}
       SCHEDULING_BRIDGE_ENABLED: "true"
       SCHEDULING_ASSIGNMENT_RELAY_ENABLED: "true"
