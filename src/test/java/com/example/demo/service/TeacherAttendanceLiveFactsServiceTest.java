@@ -153,4 +153,19 @@ class TeacherAttendanceLiveFactsServiceTest {
             ()->facts.nativeCurrent("class-1","teach-1")).getStatus());
     }
 
+    @Test void CoreProjectionMustRecheckOriginalCsClaimAgainstActiveRole()
+            throws Exception {
+        plannedLesson();exactSupport();coreModes("ATTENDANCE","QUIESCED","QUIESCED");
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM users u JOIN employees e"),
+            eq(Long.class),eq("cs001"),eq("cs-001"))).thenReturn(1L);
+        var proof=facts.nativeForClaim("class-1","teach-1","cs001","cs-001");
+        assertEquals("cs-001",proof.actorEmployeeId());
+        verify(access,never()).requireRole(anyString());
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM users u JOIN employees e"),
+            eq(Long.class),eq("cs001"),eq("cs-001"))).thenReturn(0L);
+        assertEquals(HttpStatus.FORBIDDEN,assertThrows(ApiException.class,
+            ()->facts.nativeForClaim("class-1","teach-1","cs001","cs-001"))
+            .getStatus());
+    }
+
 }
