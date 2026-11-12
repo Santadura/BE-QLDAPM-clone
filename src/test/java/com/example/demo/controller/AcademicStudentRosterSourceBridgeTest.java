@@ -21,6 +21,15 @@ class AcademicStudentRosterSourceBridgeTest {
             ()->source.summary("invalid")).getStatusCode());
         verifyNoInteractions(db);
     }
+    @Test void unauthorizedWriterFenceCannotInspectCoreRosterMode() {
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->source.writerFence(null)).getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->source.writerFence("wrong")).getStatusCode());
+        verifyNoInteractions(db);
+    }
     @Test void unboundedHistoryOrNegativeCursorIsRejectedBeforeSQL() {
         assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
             ResponseStatusException.class,
