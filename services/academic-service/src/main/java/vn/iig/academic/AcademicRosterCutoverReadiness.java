@@ -23,12 +23,15 @@ public class AcademicRosterCutoverReadiness {
     private final AcademicRosterSourceClient core;
     private final AcademicRosterReadiness parity;
     private final AcademicRosterClaimClient claims;
+    private final AcademicRosterCandidateDispositionRepository dispositions;
 
     public AcademicRosterCutoverReadiness(AcademicRosterSourceClient core,
-            AcademicRosterReadiness parity,AcademicRosterClaimClient claims) {
+            AcademicRosterReadiness parity,AcademicRosterClaimClient claims,
+            AcademicRosterCandidateDispositionRepository dispositions) {
         this.core=core;
         this.parity=parity;
         this.claims=claims;
+        this.dispositions=dispositions;
     }
 
     private static ResponseStatusException blocked(String reason) {
@@ -47,14 +50,27 @@ public class AcademicRosterCutoverReadiness {
         var beforeClaims=claims.summary();
         if(beforeClaims==null || beforeClaims.openClaims()!=0)
             throw blocked("unreleased Core roster candidate claim exists");
+        // RELEASED Core claim does NOT mean the staged REHEARSAL_ONLY
+        // proposal became an authoritative Academic domain mutation.
+        // Explicitly dispose every unpromoted proposal while Core still
+        // owns writes. Otherwise a false READY may discard user intent.
+        var beforeDisposition=dispositions.summary();
+        if(beforeDisposition==null || beforeDisposition.unresolved()!=0 ||
+            beforeDisposition.pendingHandoffs()!=0)
+            throw blocked("unresolved non-authoritative Academic roster candidate exists");
         var history=parity.verify();
         var after=core.writerFence();
         var afterClaims=claims.summary();
         if(afterClaims==null || afterClaims.openClaims()!=0)
             throw blocked("Core roster candidate became OPEN during proof");
+        var afterDisposition=dispositions.summary();
+        if(afterDisposition==null || afterDisposition.unresolved()!=0 ||
+            afterDisposition.pendingHandoffs()!=0)
+            throw blocked("new unresolved Academic roster rehearsal during source proof");
         if(!before.equals(after) || !"QUIESCED".equals(after.mode()) ||
-            !beforeClaims.equals(afterClaims))
-            throw blocked("Core roster writer or claim ledger changed during immutable history proof");
+            !beforeClaims.equals(afterClaims) ||
+            !beforeDisposition.equals(afterDisposition))
+            throw blocked("Core roster writer, candidate disposition or claim ledger changed during immutable history proof");
         return new Evidence(after.generation(),history.sourceEvents(),
             history.lastEventId(),history.students(),history.memberships(),
             history.distinctEntities());
