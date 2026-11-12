@@ -10,6 +10,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.List;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.util.regex.Pattern;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -47,6 +49,56 @@ public class TeacherAttendanceCommandReceiptService {
                 .digest(canonical.getBytes(StandardCharsets.UTF_8)));
         } catch(NoSuchAlgorithmException ex) {
             throw new IllegalStateException("SHA-256 unavailable",ex);
+        }
+    }
+
+    public record ReceiptQuery(String actorUsername,String classId,
+        String teachingScheduleId,String requestKey,String requestHash) {}
+    public record CommittedReceipt(String actorUsername,String classId,
+        String teachingScheduleId,String requestKey,String requestHash,
+        JsonNode response) {}
+
+    /**
+     * Safe service-to-service outcome reconciliation. Reading the exact
+     * committed Core transaction is NOT a mutation retry and never acts
+     * under a revoked CS user's old bearer. The response remains private.
+     */
+    @Transactional(readOnly=true)
+    public CommittedReceipt committedReceipt(ReceiptQuery q) {
+        if(q==null || q.actorUsername()==null || q.classId()==null ||
+            q.teachingScheduleId()==null || q.requestKey()==null ||
+            q.requestHash()==null ||
+            !q.actorUsername().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,99}") ||
+            !q.classId().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
+            !q.teachingScheduleId().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
+            !SAFE_KEY.matcher(q.requestKey()).matches() ||
+            !q.requestHash().matches("[0-9a-f]{64}"))
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                "Exact committed Core attendance receipt identity required");
+        var rows=db.queryForList(
+            "SELECT request_hash,response_payload::text AS payload "+
+            "FROM teacher_attendance_command_receipts "+
+            "WHERE actor_username=? AND class_id=? AND teaching_schedule_id=? "+
+            "AND request_key=? AND response_payload IS NOT NULL AND completed_at IS NOT NULL",
+            q.actorUsername(),q.classId(),q.teachingScheduleId(),q.requestKey());
+        if(rows.size()!=1)
+            throw new ApiException(HttpStatus.NOT_FOUND,
+                "Core attendance transaction not confirmed; leave remote inbox pending");
+        String hash=String.valueOf(rows.get(0).get("request_hash"));
+        if(!q.requestHash().equals(hash))
+            throw new ApiException(HttpStatus.CONFLICT,
+                "Core attendance receipt digest changed or belongs to another request");
+        try {
+            JsonNode response=mapper.readTree(String.valueOf(rows.get(0).get("payload")));
+            if(response==null || !response.isObject() ||
+                !q.teachingScheduleId().equals(response.path("teachingScheduleId").asText()))
+                throw new ApiException(HttpStatus.CONFLICT,
+                    "Core committed attendance payload is invalid");
+            return new CommittedReceipt(q.actorUsername(),q.classId(),
+                q.teachingScheduleId(),q.requestKey(),q.requestHash(),response);
+        } catch(JsonProcessingException ex) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Corrupt committed Core attendance receipt");
         }
     }
 
