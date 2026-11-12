@@ -2614,6 +2614,28 @@ SQL
     echo "No frozen Core generations for Academic post-commit recovery"
     exit 1
   }
+  # Build a REAL authenticated candidate proof: request digest, canonical
+  # event SHA-256 and byte-exact JSON. The earlier dummy repeat('d'/'e')
+  # fixture is deliberately no longer accepted by production recovery.
+  recovery_command="00000000-0000-4000-8000-000000000151"
+  recovery_bundle="$(IIG_SOURCE_REQUEST="$candidate_payload" \
+    IIG_RECOVERY_ACTOR=ci-recovery IIG_RECOVERY_KEY="$recovery_key" \
+    IIG_RECOVERY_COMMAND="$recovery_command" \
+    IIG_AG="$ag" IIG_TG="$tg" IIG_SG="$sg" \
+    python3 scripts/academic-session-recovery-proof.py)"
+  mapfile -t recovery_parts < <(RECOVERY_JSON="$recovery_bundle" python3 -c '
+import json,os
+x=json.loads(os.environ["RECOVERY_JSON"])
+print(x["requestHash"])
+print(x["outboxHash"])
+print(x["payloadCanonical"])
+')
+  test "${#recovery_parts[@]}" = 3 || {
+    echo "No reproducible Academic canonical recovery evidence"; exit 1;
+  }
+  recovery_request_hash="${recovery_parts[0]}"
+  recovery_outbox_hash="${recovery_parts[1]}"
+  recovery_canonical="${recovery_parts[2]}"
   # Force a REAL private-Core outage before committing the Academic local
   # proof. The reconciler must retry without making up a local receipt.
   # PostgreSQL remains available so both independent transactions can commit.
@@ -2624,7 +2646,7 @@ INSERT INTO academic_candidate_claims
  (actor_username,request_key,request_hash,class_id,class_session_id,
   source_event_id,source_revision,academic_generation,
   attendance_generation,scheduling_generation)
-SELECT 'ci-recovery','${recovery_key}',repeat('d',64),
+SELECT 'ci-recovery','${recovery_key}','${recovery_request_hash}',
   e.class_id,e.class_session_id,e.event_id,e.source_revision,
   ${ag},${tg},${sg}
 FROM academic_session_source_outbox e
@@ -2632,14 +2654,15 @@ WHERE e.class_session_id='${candidate_session}' AND e.event_kind='UPSERT'
 ORDER BY e.event_id DESC LIMIT 1;
 SQL
   "${COMPOSE[@]}" exec -T academic-postgres psql \
-    -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 <<SQL
+    -U iig_academic -d iig_academic -v ON_ERROR_STOP=1 \
+    -v recovery_canonical="$recovery_canonical" <<SQL
 BEGIN;
 INSERT INTO academic_session_candidate_commands
  (operator_username,request_key,command_id,request_hash,class_id,
   class_session_id,source_event_id,source_revision,academic_generation,
   attendance_generation,scheduling_generation,action)
 SELECT 'ci-recovery','${recovery_key}',
- '00000000-0000-4000-8000-000000000151'::uuid,repeat('d',64),
+ '00000000-0000-4000-8000-000000000151'::uuid,'${recovery_request_hash}',
  s.class_id,s.class_session_id,s.source_event_id,s.source_revision,
  ${ag},${tg},${sg},'RESCHEDULE'
 FROM academic_class_sessions_shadow s
@@ -2653,10 +2676,11 @@ SELECT '00000000-0000-4000-8000-000000000151'::uuid,
 FROM academic_class_sessions_shadow s
 WHERE s.class_session_id='${candidate_session}' AND s.event_kind='UPSERT';
 INSERT INTO academic_session_candidate_outbox
- (outbox_id,command_id,event_kind,payload,payload_hash)
+ (outbox_id,command_id,event_kind,payload,payload_hash,payload_canonical)
 VALUES ('00000000-0000-4000-8000-000000000152'::uuid,
  '00000000-0000-4000-8000-000000000151'::uuid,
- 'REHEARSAL_ONLY','{"ciRecovery":true}'::jsonb,repeat('e',64));
+ 'REHEARSAL_ONLY',:'recovery_canonical'::jsonb,
+ '${recovery_outbox_hash}',:'recovery_canonical');
 COMMIT;
 SQL
   # Allow at least one scheduled Academic recovery attempt while Core HTTP is
@@ -2686,7 +2710,7 @@ SQL
        -U iig_academic -d iig_academic -tAc \
        "SELECT COUNT(*) FROM academic_candidate_handoff_receipts
         WHERE request_key='${recovery_key}'
-        AND core_outbox_hash=repeat('e',64);" |
+        AND core_outbox_hash='${recovery_outbox_hash}';" |
         tr -d '[:space:]')" = "1" ]; then
       recovery_complete=true
       break
