@@ -64,7 +64,8 @@ printf '%s' "$unauthorized" | grep -Eq 'HTTP/[0-9.]+[[:space:]]+401([[:space:]]|
   echo "Unified cutover verifier accepted an invalid service key"; exit 1;
 }
 not_frozen="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
-  --header "X-Internal-Key: $academic_key" "$full_url" 2>&1 || true)"
+  --header "X-Internal-Key: $academic_key" \
+  --header "Authorization: Bearer $TOKEN" "$full_url" 2>&1 || true)"
 printf '%s' "$not_frozen" | grep -Eq 'HTTP/[0-9.]+[[:space:]]+409([[:space:]]|$)' || {
   echo "Unified cutover verifier returned success while Core owns writer fences"; exit 1;
 }
