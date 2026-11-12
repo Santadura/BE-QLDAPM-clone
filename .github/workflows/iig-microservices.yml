@@ -187,14 +187,14 @@ jobs:
         env:
           IIG_ROSTER_FENCE_SMOKE: 'true'
         run: bash scripts/smoke-academic-roster-disposition.sh
-      - name: Exercise explicitly enabled private teacher writer on disposable databases
-        env:
-          CI: 'true'
-        run: bash scripts/smoke-teacher-cutover.sh
       - name: Prove exclusive native Attendance ownership and crash-before-local Core claim recovery
         env:
           IIG_NATIVE_ATTENDANCE_SMOKE: 'true'
         run: bash scripts/smoke-native-attendance-cutover.sh
+      - name: Exercise explicitly enabled private teacher writer on disposable databases
+        env:
+          CI: 'true'
+        run: bash scripts/smoke-teacher-cutover.sh
       # Terminal/destructive-by-design: run AFTER all browser and writer smokes.
       # This fixture intentionally leaves an OPEN orphan and QUIESCED writers;
       # the always() cleanup below destroys every disposable PostgreSQL volume.
