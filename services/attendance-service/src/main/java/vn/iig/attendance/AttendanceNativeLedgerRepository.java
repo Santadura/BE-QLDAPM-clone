@@ -168,6 +168,35 @@ public class AttendanceNativeLedgerRepository {
         if(!Long.valueOf(1).equals(active))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Native Attendance owner has no immutable frozen activation");
+        // Read the durable command BEFORE comparing the current domain row.
+        // After a Core COMMIT or a lost local ACK the Attendance domain
+        // version may already have advanced; same-key replay must return
+        // the ORIGINAL event instead of treating it as a new mutation.
+        List<Command> previousCommand=db.query(
+            "SELECT event_id::text,request_hash,facts_token,writer_generation,state "+
+            "FROM attendance_native_commands WHERE actor_username=? AND class_id=? "+
+            "AND teaching_schedule_id=? AND request_key=? FOR UPDATE",
+            (rs,i)->new Command(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getLong(4),rs.getString(5)),
+            a.actorUsername(),a.classId(),a.teachingScheduleId(),a.requestKey());
+        if(previousCommand.size()>1)
+            throw new IllegalStateException("Duplicate native command identity");
+        if(!previousCommand.isEmpty()) {
+            Command saved=previousCommand.get(0);
+            if(!a.requestHash().equals(saved.digest()) ||
+                !a.factsToken().equals(saved.factsToken()) ||
+                a.writerGeneration()!=saved.generation())
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Native idempotency key reused with different evidence");
+            Pending event=event(saved.eventId());
+            if(event==null || !a.actorUsername().equals(event.actorUsername()) ||
+                !a.classId().equals(event.classId()) ||
+                !a.teachingScheduleId().equals(event.teachingScheduleId()) ||
+                !a.requestKey().equals(event.requestKey()))
+                throw new IllegalStateException("Native command has no exact outbox");
+            return new Committed(event.eventId(),a.status(),event.version(),
+                "COMMITTED".equals(saved.state()));
+        }
         // A never-marked teacher schedule has no Core attendance row to
         // import. Only an exact Core claim proving an ABSENT baseline may
         // create an empty native record with a stable generated ID.
