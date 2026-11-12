@@ -44,6 +44,9 @@ on:
       - 'prisma/**'
       - 'scripts/smoke-microservices.sh'
       - 'scripts/smoke-academic-core-only-claim.sh'
+      - 'scripts/smoke-academic-roster.sh'
+      - 'src/main/java/com/example/demo/controller/AcademicStudentRosterSourceBridge.java'
+      - 'src/test/java/com/example/demo/controller/AcademicStudentRosterSourceBridgeTest.java'
       - '.github/workflows/iig-microservices.yml'
   push:
     branches:
@@ -159,6 +162,12 @@ jobs:
           E2E_API_URL: http://localhost:8080/api
           E2E_SEED_PASSWORD: '123456'
         run: ./e2e/node_modules/.bin/playwright test --config=e2e/playwright.config.mjs
+      # Enable only an independent read-source importer in disposable CI.
+      # This test covers committed student/roster updates, deletions and replay.
+      - name: Exercise private Academic student and membership source replay
+        env:
+          IIG_ROSTER_SMOKE: 'true'
+        run: bash scripts/smoke-academic-roster.sh
       - name: Exercise explicitly enabled private teacher writer on disposable databases
         env:
           CI: 'true'
