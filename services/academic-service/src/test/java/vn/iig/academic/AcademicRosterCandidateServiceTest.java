@@ -95,7 +95,7 @@ class AcademicRosterCandidateServiceTest {
     }
     @Test void noFrozenProofCannotJournalIndependentCandidates() {
         admin();
-        when(readiness.verify()).thenThrow(
+        when(readiness.verifyStaging()).thenThrow(
             new ResponseStatusException(HttpStatus.CONFLICT,
                 "Core source writer still active"));
         assertEquals(HttpStatus.CONFLICT,assertThrows(
