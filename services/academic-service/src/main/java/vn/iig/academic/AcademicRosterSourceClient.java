@@ -52,6 +52,25 @@ public class AcademicRosterSourceClient {
         }
     }
 
+    public record WriterFence(String mode,long generation) {}
+
+    public WriterFence writerFence() {
+        try {
+            WriterFence result=core.get()
+                .uri("/internal/academic/student-roster/events/fence")
+                .header("X-Internal-Key",key).retrieve().body(WriterFence.class);
+            if(result==null || result.generation()<1 ||
+                (!"CORE".equals(result.mode()) &&
+                 !"QUIESCED".equals(result.mode())))
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Core student roster writer fence evidence invalid");
+            return result;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core roster writer fence unavailable",ex);
+        }
+    }
+
     public record Integrity(long studentRows,long membershipRows,
         long newestStudentRows,long newestMembershipRows,long divergentRows) {}
 
