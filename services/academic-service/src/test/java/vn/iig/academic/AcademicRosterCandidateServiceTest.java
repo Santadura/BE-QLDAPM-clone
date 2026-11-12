@@ -40,7 +40,7 @@ class AcademicRosterCandidateServiceTest {
         assertEquals("STAGED",svc.stage("Bearer admin",request).state());
         var ordered=inOrder(identity,readiness,claims,journal,source);
         ordered.verify(identity).currentPrincipal("Bearer admin");
-        ordered.verify(readiness).verify();
+        ordered.verify(readiness).verifyStaging();
         ordered.verify(claims).acquire(argThat(claim->
             "TARGET".equals(claim.entityType()) &&
             claim.sourceEventId()==10 && claim.writerGeneration()==4));
