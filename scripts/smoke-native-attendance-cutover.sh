@@ -67,10 +67,7 @@ cleanup() {
     exit "$result"
   fi
   if [ "${started:-false}" = true ]; then
-    "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<'SQL' || {
-      echo "FAIL: audited native Attendance ownership handback SQL did not commit" >&2
-      exit 1
-    }
+    if ! "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
 BEGIN;
 SELECT set_config('iig.attendance_handback_approved','true',true);
 UPDATE teacher_attendance_writer_control SET writer_mode='QUIESCED'
@@ -85,6 +82,10 @@ UPDATE academic_roster_writer_control SET writer_mode='CORE'
  WHERE singleton=TRUE AND writer_mode='QUIESCED';
 COMMIT;
 SQL
+    then
+      echo "FAIL: audited native Attendance ownership handback SQL did not commit" >&2
+      exit 1
+    fi
     # A silent SQL handback failure would poison the next Teacher smoke.
     # Before beginning another writer transfer ALL four Core writer controls
     # must be back to their known pre-test authority.
