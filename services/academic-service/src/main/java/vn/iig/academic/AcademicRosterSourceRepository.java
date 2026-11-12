@@ -59,6 +59,86 @@ public class AcademicRosterSourceRepository {
         return count;
     }
 
+    /**
+     * Compare all latest immutable events to both typed Academic shadows.
+     * COUNT alone misses swapped IDs, payload tampering and resurrected DELETEs.
+     */
+    public long latestDivergence() {
+        Long count=db.queryForObject(
+            "WITH latest AS (SELECT DISTINCT ON(entity_type,entity_id) "+
+            "entity_type,entity_id,event_id,event_kind,source_revision,source_payload "+
+            "FROM academic_roster_source_receipts ORDER BY entity_type,entity_id,event_id DESC) "+
+            "SELECT COUNT(*) FROM ("+
+            " SELECT COALESCE(l.entity_id,s.student_id) AS id "+
+            " FROM (SELECT * FROM latest WHERE entity_type='STUDENT') l "+
+            " FULL OUTER JOIN academic_students_shadow s ON s.student_id=l.entity_id "+
+            " WHERE l.entity_id IS NULL OR s.student_id IS NULL "+
+            " OR s.event_kind IS DISTINCT FROM l.event_kind "+
+            " OR s.source_event_id IS DISTINCT FROM l.event_id "+
+            " OR s.source_revision IS DISTINCT FROM l.source_revision "+
+            " OR s.source_payload IS DISTINCT FROM l.source_payload "+
+            " OR s.student_code IS DISTINCT FROM l.source_payload->>'student_code' "+
+            " OR s.full_name IS DISTINCT FROM l.source_payload->>'full_name' "+
+            " OR s.status IS DISTINCT FROM l.source_payload->>'status' "+
+            " UNION ALL "+
+            " SELECT COALESCE(l.entity_id,m.class_student_id) AS id "+
+            " FROM (SELECT * FROM latest WHERE entity_type='MEMBERSHIP') l "+
+            " FULL OUTER JOIN academic_class_memberships_shadow m ON m.class_student_id=l.entity_id "+
+            " WHERE l.entity_id IS NULL OR m.class_student_id IS NULL "+
+            " OR m.event_kind IS DISTINCT FROM l.event_kind "+
+            " OR m.source_event_id IS DISTINCT FROM l.event_id "+
+            " OR m.source_revision IS DISTINCT FROM l.source_revision "+
+            " OR m.source_payload IS DISTINCT FROM l.source_payload "+
+            " OR m.class_id IS DISTINCT FROM l.source_payload->>'class_id' "+
+            " OR m.student_id IS DISTINCT FROM l.source_payload->>'student_id' "+
+            " OR m.membership_status IS DISTINCT FROM l.source_payload->>'status' "+
+            ") mismatches",Long.class);
+        if(count==null || count<0)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic roster latest-row reconciliation failed");
+        return count;
+    }
+
+    /** Full historical parity, including tombstones and every source digest. */
+    public boolean matchesEvent(AcademicRosterSourceClient.Event event) {
+        if(event==null || event.payloadJson()==null ||
+            !AcademicSessionSourceRepository.sha256(event.payloadJson())
+                .equals(event.payloadHash()))return false;
+        List<Receipt> rows=db.query(
+            "SELECT entity_type,entity_id,event_kind,source_revision,"+
+            "payload_hash,source_payload::text FROM academic_roster_source_receipts "+
+            "WHERE event_id=?",
+            (rs,i)->new Receipt(rs.getString(1),rs.getString(2),rs.getString(3),
+                rs.getLong(4),rs.getString(5),rs.getString(6)),event.eventId());
+        if(rows.size()!=1)return false;
+        var row=rows.get(0);
+        try {
+            return event.entityType().equals(row.type()) &&
+                event.entityId().equals(row.id()) &&
+                event.eventKind().equals(row.kind()) &&
+                event.sourceRevision()==row.revision() &&
+                event.payloadHash().equals(row.hash()) &&
+                mapper.readTree(event.payloadJson()).equals(mapper.readTree(row.payload()));
+        } catch(Exception ex) {return false;}
+    }
+
+    /** FE StudentSummary fields, never an unfiltered raw Core JSON payload. */
+    @Transactional(readOnly=true)
+    public String adminStudentListJson() {
+        String result=db.queryForObject(
+            "SELECT COALESCE(jsonb_agg(jsonb_build_object("+
+            "'studentId',student_id,'studentCode',student_code,"+
+            "'fullName',full_name,'email',source_payload->>'email',"+
+            "'phone',source_payload->>'phone','level',source_payload->>'level',"+
+            "'status',status) ORDER BY full_name,student_id),"+
+            "'[]'::jsonb)::text FROM academic_students_shadow "+
+            "WHERE event_kind='UPSERT'",String.class);
+        if(result==null || result.isBlank())
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic student list unavailable");
+        return result;
+    }
+
     private record Receipt(String type,String id,String kind,long revision,
         String hash,String payload) {}
 
