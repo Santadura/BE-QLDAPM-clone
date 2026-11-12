@@ -1,6 +1,8 @@
 package com.example.demo.controller;
 
 import com.example.demo.service.TeacherAttendanceCommandReceiptService;
+import com.example.demo.service.TeacherAttendanceCommandReceiptService.ReceiptQuery;
+import com.example.demo.service.TeacherAttendanceCommandReceiptService.CommittedReceipt;
 import com.example.demo.service.TeacherSessionAttendanceService.MarkRequest;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -54,4 +56,20 @@ public class TeacherAttendancePrivateCommandController {
                 "A live CS bearer token is required");
         return attendance.mark(classId,teachingScheduleId,requestKey,expectedFactsToken,request);
     }
+    /**
+     * PRIVATE read-only recovery: only an exact already-COMMITTED Core
+     * receipt may resolve an Attendance PENDING inbox after an HTTP outage.
+     * This endpoint does NOT replay the attendance mutation.
+     */
+    @PostMapping("/receipt")
+    public CommittedReceipt committedReceipt(
+            @RequestHeader(value="X-Internal-Key",required=false) String key,
+            @RequestBody ReceiptQuery request) {
+        byte[] supplied=(key==null?"":key).getBytes(StandardCharsets.UTF_8);
+        if(!MessageDigest.isEqual(secret,supplied))
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                "Invalid private Attendance recovery key");
+        return attendance.committedReceipt(request);
+    }
+
 }
