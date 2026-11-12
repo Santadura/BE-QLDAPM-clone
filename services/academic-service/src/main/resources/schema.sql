@@ -534,3 +534,81 @@ DROP TRIGGER IF EXISTS trg_iig_roster_disposition_no_truncate
 CREATE TRIGGER trg_iig_roster_disposition_no_truncate
   BEFORE TRUNCATE ON academic_roster_candidate_dispositions
   FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+
+
+-- Independent Academic native timetable command journal (private rehearsal).
+-- Never interpret these rows as public/Core session business success.
+-- The Core source mirror and the native model have separate write ownership.
+-- Actual cutover requires the signed downstream reference + writer handoff.
+CREATE TABLE IF NOT EXISTS academic_native_session_activations (
+  class_id VARCHAR(50) PRIMARY KEY,
+  writer_generation BIGINT NOT NULL CHECK(writer_generation>=1),
+  roster_generation BIGINT NOT NULL CHECK(roster_generation>=1),
+  source_last_event_id BIGINT NOT NULL CHECK(source_last_event_id>=0),
+  class_status VARCHAR(16) NOT NULL CHECK(class_status IN ('READY','RUNNING')),
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL CHECK(end_date>=start_date),
+  state VARCHAR(20) NOT NULL DEFAULT 'REHEARSAL_ONLY'
+    CHECK(state='REHEARSAL_ONLY'),
+  activated_by VARCHAR(100) NOT NULL,
+  activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+
+CREATE TABLE IF NOT EXISTS academic_native_session_rows (
+  class_session_id VARCHAR(50) PRIMARY KEY,
+  class_id VARCHAR(50) NOT NULL REFERENCES academic_native_session_activations(class_id),
+  session_date DATE NOT NULL,
+  start_time TIME(0) NOT NULL,
+  end_time TIME(0) NOT NULL,
+  status VARCHAR(20) NOT NULL CHECK(status IN ('PLANNED','CANCELLED')),
+  source_imported BOOLEAN NOT NULL,
+  version BIGINT NOT NULL DEFAULT 0 CHECK(version>=0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK(end_time>start_time)
+)@@
+CREATE INDEX IF NOT EXISTS academic_native_session_class_range
+  ON academic_native_session_rows(class_id,session_date,start_time)@@
+
+CREATE TABLE IF NOT EXISTS academic_native_session_commands (
+  actor_username VARCHAR(100) NOT NULL,
+  class_id VARCHAR(50) NOT NULL REFERENCES academic_native_session_activations(class_id),
+  operation VARCHAR(20) NOT NULL CHECK(operation IN ('PLAN','RESCHEDULE')),
+  request_key VARCHAR(128) NOT NULL,
+  request_hash CHAR(64) NOT NULL CHECK(request_hash ~ '^[0-9a-f]{64}$'),
+  response_json JSONB NOT NULL CHECK(jsonb_typeof(response_json)='array'),
+  writer_generation BIGINT NOT NULL CHECK(writer_generation>=1),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(actor_username,class_id,operation,request_key)
+)@@
+
+CREATE TABLE IF NOT EXISTS academic_native_session_outbox (
+  event_id UUID PRIMARY KEY,
+  actor_username VARCHAR(100) NOT NULL,
+  class_id VARCHAR(50) NOT NULL,
+  operation VARCHAR(20) NOT NULL,
+  request_key VARCHAR(128) NOT NULL,
+  writer_generation BIGINT NOT NULL CHECK(writer_generation>=1),
+  event_kind VARCHAR(20) NOT NULL DEFAULT 'REHEARSAL_ONLY'
+    CHECK(event_kind='REHEARSAL_ONLY'),
+  payload JSONB NOT NULL CHECK(jsonb_typeof(payload)='object'),
+  payload_canonical TEXT NOT NULL,
+  payload_hash CHAR(64) NOT NULL CHECK(payload_hash ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY(actor_username,class_id,operation,request_key)
+    REFERENCES academic_native_session_commands(actor_username,class_id,operation,request_key),
+  UNIQUE(actor_username,class_id,operation,request_key)
+)@@
+
+-- Tampering with this independent rehearsal history must be impossible even
+-- by direct SQL. Delivery is not permitted: it is not the live domain outbox.
+DROP TRIGGER IF EXISTS trg_iig_native_session_outbox_immutable
+  ON academic_native_session_outbox@@
+CREATE TRIGGER trg_iig_native_session_outbox_immutable
+  BEFORE UPDATE OR DELETE ON academic_native_session_outbox
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_native_session_outbox_no_truncate
+  ON academic_native_session_outbox@@
+CREATE TRIGGER trg_iig_native_session_outbox_no_truncate
+  BEFORE TRUNCATE ON academic_native_session_outbox
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
