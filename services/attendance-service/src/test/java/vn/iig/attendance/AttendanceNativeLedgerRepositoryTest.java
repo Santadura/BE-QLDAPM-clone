@@ -200,8 +200,8 @@ class AttendanceNativeLedgerRepositoryTest {
             eq(Long.class))).thenReturn(5L);
         when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_teacher_ledger WHERE event_kind"),
             eq(Long.class))).thenReturn(1L);
-        when(db.update(startsWith("INSERT INTO attendance_native_teacher_rows"),
-            any(Object[].class))).thenReturn(1);
+        when(db.update(startsWith("INSERT INTO attendance_native_teacher_rows")))
+            .thenReturn(1);
         when(db.update(startsWith("INSERT INTO attendance_native_activations"),
             any(Object[].class))).thenReturn(1);
         var proof=new AttendanceNativeLedgerRepository.Activation(
