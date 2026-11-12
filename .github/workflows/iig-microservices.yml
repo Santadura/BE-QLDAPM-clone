@@ -43,6 +43,8 @@ on:
       - 'src/main/resources/application.yml'
       - 'prisma/**'
       - 'scripts/smoke-microservices.sh'
+      - 'scripts/smoke-native-attendance-cutover.sh'
+      - 'scripts/smoke-teacher-cutover.sh'
       - 'scripts/smoke-academic-core-only-claim.sh'
       - 'scripts/smoke-academic-roster.sh'
       - 'scripts/smoke-academic-roster-fence.sh'
@@ -87,6 +89,11 @@ jobs:
           cache: npm
       - name: Preflight Scheduling PostgreSQL script and feature flag topology
         run: python3 scripts/verify-scheduling-sql.py
+      - name: Verify all microservices smoke scripts parse before Docker builds
+        run: |
+          for script in scripts/smoke-*.sh; do
+            bash -n "$script"
+          done
       - name: Core tests
         run: mvn -B -ntp test
       - name: API Gateway tests
@@ -127,6 +134,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Preflight Scheduling PostgreSQL and Compose config
         run: python3 scripts/verify-scheduling-sql.py
+      - name: Fail fast on invalid migration smoke shell scripts
+        run: |
+          for script in scripts/smoke-*.sh; do
+            bash -n "$script"
+          done
       - name: Build and start isolated microservices
         run: docker compose -f docker-compose.microservices.yml up --build -d
       - name: Gateway / business / audit outage regression
