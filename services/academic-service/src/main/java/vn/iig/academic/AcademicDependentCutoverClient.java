@@ -1,6 +1,7 @@
 package vn.iig.academic;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -31,6 +32,7 @@ public class AcademicDependentCutoverClient {
         return RestClient.builder().baseUrl(url).requestFactory(factory).build();
     }
 
+    @Autowired
     public AcademicDependentCutoverClient(
             @Value("${iig.crossdomain.attendance-url}") String attendanceUrl,
             @Value("${iig.crossdomain.attendance-key}") String attendanceKey,
