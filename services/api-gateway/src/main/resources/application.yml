@@ -36,6 +36,14 @@ spring:
           uri: ${SCHEDULING_SERVICE_URI:http://localhost:8098}
           predicates:
             - Path=/api/availabilities,/api/availabilities/**
+        # Academic student-list GET ingress. Default is Core-delegated; when
+        # explicitly enabled only Admin reads source-verified Academic PG,
+        # while Teacher retains the original Core class-scoped visibility.
+        - id: academic-students-list-read
+          uri: ${ACADEMIC_SERVICE_URI:http://localhost:8099}
+          predicates:
+            - Path=/api/students
+            - Method=GET
         # Academic's isolated PostgreSQL records the read result on every
         # authorized request. Core still owns lesson mutations and ACLs until
         # event-based Academic ownership is fully verified.
