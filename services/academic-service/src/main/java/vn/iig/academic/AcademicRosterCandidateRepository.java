@@ -131,6 +131,8 @@ public class AcademicRosterCandidateRepository {
         var pending=db.query(
             "SELECT c.operator_username,c.request_key,c.command_id::text "+
             "FROM academic_roster_candidate_commands c "+
+            "JOIN academic_roster_candidate_outbox o ON o.command_id=c.command_id "+
+            "AND o.payload_canonical IS NOT NULL "+
             "LEFT JOIN academic_roster_candidate_handoff_receipts h "+
             "ON h.command_id=c.command_id "+
             "WHERE h.command_id IS NULL "+
