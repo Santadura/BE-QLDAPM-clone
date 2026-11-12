@@ -183,9 +183,9 @@ public_url="$BASE/api/classes/$class_id/teacher-attendance/$schedule_id"
 # Preserve the real Spring/Gateway response body when the second native
 # command fails. A generic curl -f 409 obscures whether the rejected step
 # was facts, Core claim, independent ledger or Core reference projection.
-http_code="$(curl -sS -o /tmp/iig-native-second-response.json -w '%{http_code}' \\
-  -X PUT "$public_url" -H "Authorization: Bearer $cs_token" \\
-  -H "Idempotency-Key: $second_key" \\
+http_code="$(curl -sS -o /tmp/iig-native-second-response.json -w '%{http_code}' \
+  -X PUT "$public_url" -H "Authorization: Bearer $cs_token" \
+  -H "Idempotency-Key: $second_key" \
   -H 'Content-Type: application/json' -d '{"status":"LATE"}')"
 if [ "$http_code" != 200 ]; then
   echo "Native Attendance public PUT HTTP $http_code: $(cat /tmp/iig-native-second-response.json)" >&2
