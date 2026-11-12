@@ -123,6 +123,53 @@ public class AttendanceNativeReferenceClient {
     }
 
     /**
+     * Recover a durable OPEN claim after Core accepted a user command but
+     * Attendance crashed before its own local transaction. Core has already
+     * revalidated the current CS role, shift and immutable lesson token.
+     * No stored bearer or unchecked caller-supplied intent is used.
+     */
+    public java.util.List<Claim> recoverable(int limit) {
+        if(limit<1 || limit>50)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Native claim recovery batch must be 1..50");
+        final Claim[] claims;
+        try {
+            claims=core.get().uri(uri->uri
+                .path("/internal/attendance/native/claims/recoverable")
+                .queryParam("limit",limit).build())
+                .header("X-Internal-Key",key)
+                .retrieve().body(Claim[].class);
+        } catch(RestClientResponseException ex) {throw invalid(ex,"orphan claims");}
+        catch(RestClientException ex) {throw new ResponseStatusException(
+            HttpStatus.SERVICE_UNAVAILABLE,"Core orphan claim scan unavailable",ex);}
+        if(claims==null || claims.length>limit)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Core returned an invalid orphan-claim batch");
+        for(var claim:claims) {
+            if(claim==null || !"OPEN".equals(claim.state()) ||
+                !"ATTENDANCE".equals(claim.ownerMode()) ||
+                claim.writerGeneration()<2 ||
+                claim.actorUsername()==null ||
+                claim.actorEmployeeId()==null ||
+                claim.coreClaimId()==null ||
+                !claim.coreClaimId().matches("[0-9a-fA-F-]{36}") ||
+                claim.classId()==null || claim.teachingScheduleId()==null ||
+                claim.requestKey()==null ||
+                claim.requestHash()==null ||
+                !claim.requestHash().matches("[0-9a-f]{64}") ||
+                claim.factsToken()==null ||
+                !claim.factsToken().matches("[0-9a-f]{64}") ||
+                !java.util.Set.of("PRESENT","ABSENT","LATE").contains(claim.status()) ||
+                !AttendanceCommandService.fingerprint(
+                    claim.classId(),claim.teachingScheduleId(),claim.status())
+                    .equals(claim.requestHash()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Core orphan claim identity is incomplete or divergent");
+        }
+        return java.util.List.copyOf(java.util.Arrays.asList(claims));
+    }
+
+    /**
      * Idempotent exact projection. Timeout may occur AFTER a Core COMMIT;
      * retry only this SAME immutable event, never mutate the source again.
      */
