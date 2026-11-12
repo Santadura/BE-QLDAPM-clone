@@ -379,3 +379,74 @@ CREATE TABLE IF NOT EXISTS academic_student_results_shadow (
 )@@
 CREATE INDEX IF NOT EXISTS academic_result_by_student
   ON academic_student_results_shadow(student_id,event_kind,evaluated_at DESC)@@
+
+-- Phase 8u: independent, durable but NON-AUTHORITATIVE Academic Target/Result
+-- candidate commands. The three facts (command, proposed JSON, outbox)
+-- commit atomically in Academic PostgreSQL. NO dispatcher consumes this
+-- REHEARSAL_ONLY outbox, and no public Core/Academic source rows are changed.
+CREATE TABLE IF NOT EXISTS academic_roster_candidate_commands (
+  command_id UUID NOT NULL UNIQUE,
+  operator_username VARCHAR(100) NOT NULL,
+  request_key VARCHAR(128) NOT NULL,
+  request_hash CHAR(64) NOT NULL CHECK(request_hash ~ '^[0-9a-f]{64}$'),
+  entity_type VARCHAR(20) NOT NULL CHECK(entity_type IN ('TARGET','RESULT')),
+  entity_id VARCHAR(50) NOT NULL,
+  source_event_id BIGINT NOT NULL CHECK(source_event_id>0),
+  source_revision BIGINT NOT NULL CHECK(source_revision>0),
+  writer_generation BIGINT NOT NULL CHECK(writer_generation>=2),
+  action VARCHAR(10) NOT NULL CHECK(action IN ('UPSERT','DELETE')),
+  state VARCHAR(12) NOT NULL DEFAULT 'STAGED' CHECK(state='STAGED'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(operator_username,request_key),
+  UNIQUE(entity_type,entity_id,source_event_id)
+)@@
+
+CREATE TABLE IF NOT EXISTS academic_roster_candidate_payloads (
+  command_id UUID PRIMARY KEY REFERENCES academic_roster_candidate_commands(command_id)
+    ON DELETE RESTRICT,
+  proposed_payload JSONB NOT NULL CHECK(jsonb_typeof(proposed_payload)='object'),
+  proposed_value NUMERIC(8,2) CHECK(proposed_value>=0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+
+CREATE TABLE IF NOT EXISTS academic_roster_candidate_outbox (
+  outbox_id UUID PRIMARY KEY,
+  command_id UUID NOT NULL UNIQUE REFERENCES academic_roster_candidate_commands(command_id)
+    ON DELETE RESTRICT,
+  event_kind VARCHAR(30) NOT NULL DEFAULT 'REHEARSAL_ONLY'
+    CHECK(event_kind='REHEARSAL_ONLY'),
+  payload JSONB NOT NULL CHECK(jsonb_typeof(payload)='object'),
+  payload_hash CHAR(64) NOT NULL CHECK(payload_hash ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+
+DROP TRIGGER IF EXISTS trg_iig_roster_candidate_command_immutable
+  ON academic_roster_candidate_commands@@
+CREATE TRIGGER trg_iig_roster_candidate_command_immutable
+  BEFORE UPDATE OR DELETE ON academic_roster_candidate_commands
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_roster_candidate_command_no_truncate
+  ON academic_roster_candidate_commands@@
+CREATE TRIGGER trg_iig_roster_candidate_command_no_truncate
+  BEFORE TRUNCATE ON academic_roster_candidate_commands
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_roster_candidate_payload_immutable
+  ON academic_roster_candidate_payloads@@
+CREATE TRIGGER trg_iig_roster_candidate_payload_immutable
+  BEFORE UPDATE OR DELETE ON academic_roster_candidate_payloads
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_roster_candidate_payload_no_truncate
+  ON academic_roster_candidate_payloads@@
+CREATE TRIGGER trg_iig_roster_candidate_payload_no_truncate
+  BEFORE TRUNCATE ON academic_roster_candidate_payloads
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_roster_candidate_outbox_immutable
+  ON academic_roster_candidate_outbox@@
+CREATE TRIGGER trg_iig_roster_candidate_outbox_immutable
+  BEFORE UPDATE OR DELETE ON academic_roster_candidate_outbox
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_roster_candidate_outbox_no_truncate
+  ON academic_roster_candidate_outbox@@
+CREATE TRIGGER trg_iig_roster_candidate_outbox_no_truncate
+  BEFORE TRUNCATE ON academic_roster_candidate_outbox
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
