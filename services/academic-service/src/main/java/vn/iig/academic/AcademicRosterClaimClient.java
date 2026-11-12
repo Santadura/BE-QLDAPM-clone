@@ -71,6 +71,36 @@ public class AcademicRosterClaimClient {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Core did not release exact committed roster candidate");
     }
+    public record ClaimInspection(Claim claim,String state,
+        String candidateCommandId,String outboxHash) {}
+
+    /** Never modifies Core state. A missing/malformed response fails closed. */
+    public ClaimInspection inspect(String actor,String requestKey) {
+        try {
+            ClaimInspection result=core.get()
+                .uri(builder->builder
+                    .path("/internal/academic/roster-candidate-claims/inspect")
+                    .queryParam("actor",actor)
+                    .queryParam("requestKey",requestKey).build())
+                .header("X-Internal-Key",key)
+                .retrieve().body(ClaimInspection.class);
+            if(result==null || result.claim()==null ||
+                !actor.equals(result.claim().actor()) ||
+                !requestKey.equals(result.claim().requestKey()) ||
+                !("OPEN".equals(result.state()) ||
+                  "RELEASED".equals(result.state())))
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Core returned incomplete Academic roster claim evidence");
+            return result;
+        } catch(RestClientResponseException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core roster claim inspection refused or unavailable",ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core roster claim inspection network unavailable",ex);
+        }
+    }
+
     public Summary summary() {
         try {
             Summary summary=core.get()
