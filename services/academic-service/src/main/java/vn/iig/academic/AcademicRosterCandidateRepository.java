@@ -40,6 +40,133 @@ public class AcademicRosterCandidateRepository {
         return new ResponseStatusException(HttpStatus.CONFLICT,text);
     }
 
+    /**
+     * Immutable local evidence, strictly verified BEFORE any remote Core
+     * release. JSONB is compared structurally; SHA256 is verified from the
+     * original canonical byte string (never a reserialized JSONB document).
+     */
+    public record Evidence(String actor,String key,String digest,
+        String entityType,String entityId,long eventId,long revision,
+        long writerGeneration,String action,String commandId,String outboxHash) {}
+    private record EvidenceRow(Evidence evidence,String proposedPayload,
+        BigDecimal value,String canonical,String jsonbPayload) {}
+    private record Pending(String actor,String key,String commandId) {}
+
+    public Evidence committedEvidence(String actor,String key,String commandId) {
+        List<EvidenceRow> rows=db.query(
+            "SELECT c.operator_username,c.request_key,c.request_hash,c.entity_type,"+
+            "c.entity_id,c.source_event_id,c.source_revision,c.writer_generation,"+
+            "c.action,c.command_id::text,o.payload_hash,p.proposed_payload::text,"+
+            "p.proposed_value,o.payload_canonical,o.payload::text "+
+            "FROM academic_roster_candidate_commands c "+
+            "JOIN academic_roster_candidate_payloads p ON p.command_id=c.command_id "+
+            "JOIN academic_roster_candidate_outbox o ON o.command_id=c.command_id "+
+            "WHERE c.operator_username=? AND c.request_key=? "+
+            "AND c.command_id=CAST(? AS UUID) AND c.state='STAGED' "+
+            "AND o.event_kind='REHEARSAL_ONLY'",
+            (rs,i)->new EvidenceRow(new Evidence(rs.getString(1),
+                rs.getString(2),rs.getString(3),rs.getString(4),
+                rs.getString(5),rs.getLong(6),rs.getLong(7),rs.getLong(8),
+                rs.getString(9),rs.getString(10),rs.getString(11)),
+                rs.getString(12),rs.getBigDecimal(13),rs.getString(14),
+                rs.getString(15)),actor,key,commandId);
+        if(rows.size()!=1)
+            throw conflict("No complete immutable Academic candidate/outbox pair");
+        EvidenceRow row=rows.get(0);
+        Evidence proof=row.evidence();
+        if(row.canonical()==null || proof.outboxHash()==null ||
+            !proof.outboxHash().matches("[0-9a-f]{64}") ||
+            !AcademicSessionSourceRepository.sha256(row.canonical())
+                .equals(proof.outboxHash()))
+            throw conflict("Academic roster outbox canonical SHA256 evidence missing");
+
+        final com.fasterxml.jackson.databind.JsonNode raw;
+        final com.fasterxml.jackson.databind.JsonNode stored;
+        final com.fasterxml.jackson.databind.JsonNode proposed;
+        try {
+            raw=json.readTree(row.canonical());
+            stored=json.readTree(row.jsonbPayload());
+            proposed=json.readTree(row.proposedPayload());
+        } catch(Exception ex) {
+            throw conflict("Committed Academic outbox contains invalid JSON");
+        }
+        if(raw==null || !raw.isObject() || !raw.equals(stored) ||
+            !raw.path("proposedPayload").equals(proposed) ||
+            !proof.commandId().equals(raw.path("commandId").asText("")) ||
+            !proof.actor().equals(raw.path("operator").asText("")) ||
+            !proof.key().equals(raw.path("requestKey").asText("")) ||
+            !proof.entityType().equals(raw.path("entityType").asText("")) ||
+            !proof.entityId().equals(raw.path("entityId").asText("")) ||
+            proof.eventId()!=raw.path("sourceEventId").asLong(-1) ||
+            proof.revision()!=raw.path("sourceRevision").asLong(-1) ||
+            proof.writerGeneration()!=raw.path("writerGeneration").asLong(-1) ||
+            !proof.action().equals(raw.path("action").asText("")))
+            throw conflict("Academic roster candidate command and outbox disagree");
+        String numericField="TARGET".equals(proof.entityType())
+            ? "target_value" : "score";
+        if(!proof.entityId().equals(proposed.path(
+                "TARGET".equals(proof.entityType())?"student_target_id":"student_result_id"
+                ).asText("")) ||
+            !proposed.path("student_id").isTextual() ||
+            ("UPSERT".equals(proof.action()) &&
+                (row.value()==null ||
+                 !proposed.path(numericField).isNumber() ||
+                 proposed.path(numericField).decimalValue().compareTo(row.value())!=0)) ||
+            ("DELETE".equals(proof.action()) && row.value()!=null))
+            throw conflict("Proposed Academic target/result value differs from receipt");
+        String canonicalRequest="academic-roster-candidate-v1\\n"+
+            proof.entityType()+"\\n"+proof.entityId()+"\\n"+
+            proof.eventId()+"\\n"+proof.revision()+"\\n"+
+            proof.action()+"\\n"+
+            (row.value()==null?"DELETE":row.value().toPlainString());
+        if(!AcademicSessionSourceRepository.sha256(canonicalRequest)
+                .equals(proof.digest()))
+            throw conflict("Academic candidate source request digest differs");
+        return proof;
+    }
+
+    public java.util.List<Evidence> pendingHandoffs(int limit) {
+        if(limit<1 || limit>100)
+            throw new IllegalArgumentException("Roster handoff scan budget 1..100");
+        var pending=db.query(
+            "SELECT c.operator_username,c.request_key,c.command_id::text "+
+            "FROM academic_roster_candidate_commands c "+
+            "LEFT JOIN academic_roster_candidate_handoff_receipts h "+
+            "ON h.command_id=c.command_id "+
+            "WHERE h.command_id IS NULL "+
+            "ORDER BY c.created_at,c.command_id LIMIT ?",
+            (rs,i)->new Pending(rs.getString(1),rs.getString(2),
+                rs.getString(3)),limit);
+        // Do not synthesize release evidence when one of the three durable
+        // local facts is missing. A Core-only orphan is never queued here.
+        return pending.stream()
+            .map(p->committedEvidence(p.actor(),p.key(),p.commandId()))
+            .toList();
+    }
+
+    public void recordHandoff(Evidence committed) {
+        if(committed==null || committed.commandId()==null ||
+            committed.outboxHash()==null)
+            throw conflict("Missing Academic roster handback proof");
+        int inserted=db.update(
+            "INSERT INTO academic_roster_candidate_handoff_receipts "+
+            "(command_id,actor_username,request_key,core_outbox_hash) "+
+            "VALUES(CAST(? AS UUID),?,?,?) ON CONFLICT(command_id) DO NOTHING",
+            committed.commandId(),committed.actor(),committed.key(),
+            committed.outboxHash());
+        if(inserted==0) {
+            Long equal=db.queryForObject(
+                "SELECT COUNT(*) FROM academic_roster_candidate_handoff_receipts "+
+                "WHERE command_id=CAST(? AS UUID) AND actor_username=? "+
+                "AND request_key=? AND core_outbox_hash=?",
+                Long.class,committed.commandId(),committed.actor(),
+                committed.key(),committed.outboxHash());
+            if(!Long.valueOf(1).equals(equal))
+                throw conflict("Academic roster handback receipt was changed");
+        } else if(inserted!=1)
+            throw new IllegalStateException("Ambiguous Academic roster handback receipt");
+    }
+
     public Receipt stage(Plan plan) {
         String table="TARGET".equals(plan.entityType())
             ? "academic_student_targets_shadow"
@@ -146,10 +273,10 @@ public class AcademicRosterCandidateRepository {
         String event=outbox.toString();
         int staged=db.update(
             "INSERT INTO academic_roster_candidate_outbox "+
-            "(outbox_id,command_id,event_kind,payload,payload_hash) "+
-            "VALUES(CAST(? AS UUID),CAST(? AS UUID),'REHEARSAL_ONLY',CAST(? AS JSONB),?)",
+            "(outbox_id,command_id,event_kind,payload,payload_hash,payload_canonical) "+
+            "VALUES(CAST(? AS UUID),CAST(? AS UUID),'REHEARSAL_ONLY',CAST(? AS JSONB),?,?)",
             UUID.randomUUID().toString(),committed.commandId(),event,
-            AcademicSessionSourceRepository.sha256(event));
+            AcademicSessionSourceRepository.sha256(event),event);
         if(payload!=1 || staged!=1)
             throw new IllegalStateException(
                 "Academic candidate payload and outbox must commit atomically");
