@@ -2,6 +2,7 @@ package vn.iig.academic;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -25,6 +26,7 @@ public class AcademicRosterCandidateDispositionService {
         this.claims=claims;this.dispositions=dispositions;
     }
 
+    @Transactional
     public Receipt discard(String bearer,Request request) {
         if(request==null || request.requestKey()==null ||
             !request.requestKey().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}") ||
