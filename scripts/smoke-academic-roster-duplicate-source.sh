@@ -59,7 +59,9 @@ print(json.dumps(dict(
     --header "X-Internal-Key: $key" \
     --header "Content-Type: application/json" \
     --post-data "$payload" "$endpoint" 2>&1 || true)"
-  printf '%s' "$response" | grep -q '409 Conflict' ||
+  # BusyBox wget prints "HTTP/1.1 409 " without the optional reason
+  # phrase. Require the numeric status line, not English status wording.
+  printf '%s' "$response" | grep -Eq 'HTTP/[0-9.]+[[:space:]]+409([[:space:]]|$)' ||
     fail "Different key reacquired $type source event: $response"
   test "$(sql "SELECT COUNT(*) FROM academic_roster_candidate_claims")" = "$before" ||
     fail "$type rejected duplicate inserted a Core claim"
