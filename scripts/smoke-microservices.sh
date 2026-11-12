@@ -2415,6 +2415,17 @@ SQL
     echo "Academic local handback receipt missing after Core acknowledged release"
     exit 1
   }
+  # A private, live-Admin read-only comparison must see both independent
+  # durable receipts. No route is added to the browser-facing Gateway.
+  candidate_diagnosis="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    --header "X-Internal-Key: ${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}" \
+    --header "Authorization: Bearer ${TOKEN}" \
+    "http://academic-service:8099/internal/academic/cutover/sessions/candidates/reconciliation?actor=admin&requestKey=${candidate_key}")"
+  DIAGNOSIS="$candidate_diagnosis" python3 -c \
+    'import json,os; d=json.loads(os.environ["DIAGNOSIS"]); assert d["state"]=="CONSISTENT_RELEASED" and d["coreState"]=="RELEASED" and d["hasLocalHandoffReceipt"] is True,d'
+  test "$(curl -sS -o /dev/null -w '%{http_code}' \
+    "${BASE}/internal/academic/cutover/sessions/candidates/reconciliation")" = "404"
+  echo "PASS: admin-only Academic/Core claim reconciliation verifies exact remote and local release evidence"
 
   # A direct Core handback must be impossible until a claim is released.
   # The synthetic claim exists ONLY inside a PostgreSQL transaction that
