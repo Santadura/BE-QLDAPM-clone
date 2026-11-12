@@ -196,6 +196,16 @@ public class AcademicSessionCandidateRepository {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Invalid typed Academic session candidate source evidence",ex);
         }
+        String requestBody="academic-candidate-v1\n"+proof.classId()+"\n"+
+            proof.sessionId()+"\n"+proof.eventId()+"\n"+
+            proof.revision()+"\n"+row.action()+"\n"+
+            expected.path("date").asText()+"\n"+
+            expected.path("startTime").asText()+"\n"+
+            expected.path("endTime").asText()+"\n"+row.status();
+        if(!AcademicSessionSourceRepository.sha256(requestBody)
+                .equals(proof.digest()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic session claim request hash differs from typed proposal");
         if(!expected.toString().equals(row.canonical()) ||
             !AcademicSessionSourceRepository.sha256(row.canonical())
                 .equals(proof.outboxHash()) ||
