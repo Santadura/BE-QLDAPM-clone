@@ -156,11 +156,6 @@ assert p["writerGeneration"]==2 and p["sourceEvents"]>=0
 assert p["lastEventId"]>=0 and p["distinctEntities"]>=0,p
 '
 
-# The two independently staged Target/Result write rehearsals are allowed
-# only while the entire Core student/roster write domain is frozen. They
-# never publish authoritative events or mutate the imported projections.
-bash scripts/smoke-academic-roster-candidates.sh
-
 # Cross-service full-cutover preflight is READ ONLY and must not pass while
 # any Scheduling, Attendance or Academic session writer remains CORE.
 # The three extra writers are frozen in one Core SQL transaction and then
@@ -207,6 +202,12 @@ assert p["rosterLastEventId"]>=0 and p["sessionLastEventId"]>=0
 assert p["rosterClaimAuditEvents"]>=4
 print("PASS: four stable writer generations and two complete Academic histories")
 '
+# Both candidate mutations are deliberately REHEARSAL_ONLY. Even after
+# their Core claim is RELEASED, neither was applied as a domain write, so
+# both combined and roster-only cutover must refuse them.
+bash scripts/smoke-academic-roster-candidates.sh
+check_http 409 "$cutover_url" "$admin_token" "$key"
+check_http 409 "$full_url" "$admin_token" "$key"
 # Must not be possible to consider cross-domain cutover ready once ANY
 # one of three related writers has been handed back to Core.
 compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
@@ -236,12 +237,10 @@ core_sql "UPDATE academic_roster_writer_control SET writer_mode='QUIESCED'
 did_freeze=true
 test "$(core_sql "SELECT generation FROM academic_roster_writer_control WHERE singleton=TRUE")" = "4" ||
   fail "Second freeze did not advance generation"
-cutover="$(get_cutover)"
-CUTOVER="$cutover" python3 -c '
-import json,os
-p=json.loads(os.environ["CUTOVER"])
-assert p["writerGeneration"]==4,p
-'
+# Re-freezing after Core handback does NOT make staged proposals disappear.
+# Explicit audited REHEARSAL_DISCARDED acknowledgement is required before
+# a later full cutover may be considered.
+check_http 409 "$cutover_url" "$admin_token" "$key"
 
 # PostgreSQL—not the Java controller—manages the fence generation.
 if compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
@@ -269,4 +268,4 @@ test "$(core_sql "SELECT COUNT(*) FROM academic_roster_writer_audit")" = "4" ||
   fail "Expected four immutable Core roster writer transitions"
 test "$(core_sql "SELECT COUNT(*) FROM academic_roster_source_outbox")" = "$baseline_core" ||
   fail "Core roster source history unexpectedly changed during read-only rehearsal"
-echo "PASS: Core SQL fences all four Academic roster writers and logs four durable generations; only stable frozen full-history proof permits read-only Academic cutover readiness"
+echo "PASS: frozen four-writer full history preflight and Core handback; non-authoritative Target/Result rehearsals block all later cutover until explicit audited disposition"
