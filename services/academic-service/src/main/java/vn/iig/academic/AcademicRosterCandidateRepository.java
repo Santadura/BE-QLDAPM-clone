@@ -52,6 +52,52 @@ public class AcademicRosterCandidateRepository {
         BigDecimal value,String canonical,String jsonbPayload) {}
     private record Pending(String actor,String key,String commandId) {}
 
+    /**
+     * Read-only local side of an independent Core/Academic claim comparison.
+     * Invalid or incomplete local facts are reported as nonmatching evidence,
+     * not repaired or released. Never fabricate a command for a Core orphan.
+     */
+    public record LocalInspection(String commandId,boolean hasOutbox,
+        boolean hasHandoffReceipt,boolean hasDisposition,
+        boolean handoffMatches,boolean dispositionMatches,
+        Evidence evidence) {}
+    private record LocalRow(String commandId,boolean outbox,boolean handoff,
+        String handoffHash,boolean disposition,String dispositionHash) {}
+
+    public LocalInspection inspectCandidate(String actor,String requestKey) {
+        var rows=db.query(
+            "SELECT c.command_id::text,o.command_id IS NOT NULL,"+
+            "h.command_id IS NOT NULL,h.core_outbox_hash,"+
+            "d.command_id IS NOT NULL,d.outbox_hash "+
+            "FROM academic_roster_candidate_commands c "+
+            "LEFT JOIN academic_roster_candidate_outbox o ON o.command_id=c.command_id "+
+            "LEFT JOIN academic_roster_candidate_handoff_receipts h "+
+            "ON h.command_id=c.command_id "+
+            "LEFT JOIN academic_roster_candidate_dispositions d "+
+            "ON d.command_id=c.command_id "+
+            "WHERE c.operator_username=? AND c.request_key=?",
+            (rs,i)->new LocalRow(rs.getString(1),rs.getBoolean(2),
+                rs.getBoolean(3),rs.getString(4),
+                rs.getBoolean(5),rs.getString(6)),actor,requestKey);
+        if(rows.isEmpty())return null;
+        if(rows.size()!=1)
+            throw conflict("Duplicate Academic roster command identity");
+        var row=rows.get(0);
+        Evidence exact=null;
+        try {
+            exact=committedEvidence(actor,requestKey,row.commandId());
+        } catch(ResponseStatusException ex) {
+            if(ex.getStatusCode().value()!=409)throw ex;
+            // Report incomplete/damaged local evidence for manual triage.
+        }
+        return new LocalInspection(row.commandId(),row.outbox(),
+            row.handoff(),row.disposition(),
+            exact!=null && row.handoff() &&
+                exact.outboxHash().equals(row.handoffHash()),
+            exact!=null && row.disposition() &&
+                exact.outboxHash().equals(row.dispositionHash()),exact);
+    }
+
     public Evidence committedEvidence(String actor,String key,String commandId) {
         List<EvidenceRow> rows=db.query(
             "SELECT c.operator_username,c.request_key,c.request_hash,c.entity_type,"+
