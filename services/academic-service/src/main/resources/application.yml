@@ -17,6 +17,8 @@ spring:
 iig:
   academic:
     session-relay-enabled: ${ACADEMIC_SESSION_SOURCE_RELAY_ENABLED:false}
+    # Student and membership source import is read-only, opt-in until CI parity proof.
+    roster-relay-enabled: ${ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED:false}
     event-session-read-enabled: ${ACADEMIC_EVENT_SESSION_READ_ENABLED:false}
     # Private, non-authoritative candidate-only transaction; OFF for all users.
     candidate-handoff-recovery-enabled: ${ACADEMIC_CANDIDATE_HANDOFF_RECOVERY_ENABLED:false}
