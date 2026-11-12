@@ -92,6 +92,33 @@ public class AcademicRosterSourceRepository {
             " OR m.class_id IS DISTINCT FROM l.source_payload->>'class_id' "+
             " OR m.student_id IS DISTINCT FROM l.source_payload->>'student_id' "+
             " OR m.membership_status IS DISTINCT FROM l.source_payload->>'status' "+
+            " UNION ALL "+
+            " SELECT COALESCE(l.entity_id,t.student_target_id) AS id "+
+            " FROM (SELECT * FROM latest WHERE entity_type='TARGET') l "+
+            " FULL OUTER JOIN academic_student_targets_shadow t ON t.student_target_id=l.entity_id "+
+            " WHERE l.entity_id IS NULL OR t.student_target_id IS NULL "+
+            " OR t.event_kind IS DISTINCT FROM l.event_kind "+
+            " OR t.source_event_id IS DISTINCT FROM l.event_id "+
+            " OR t.source_revision IS DISTINCT FROM l.source_revision "+
+            " OR t.source_payload IS DISTINCT FROM l.source_payload "+
+            " OR t.student_id IS DISTINCT FROM l.source_payload->>'student_id' "+
+            " OR t.course_id IS DISTINCT FROM l.source_payload->>'course_id' "+
+            " OR t.target_type IS DISTINCT FROM l.source_payload->>'target_type' "+
+            " OR t.target_value IS DISTINCT FROM (l.source_payload->>'target_value')::numeric "+
+            " UNION ALL "+
+            " SELECT COALESCE(l.entity_id,r.student_result_id) AS id "+
+            " FROM (SELECT * FROM latest WHERE entity_type='RESULT') l "+
+            " FULL OUTER JOIN academic_student_results_shadow r ON r.student_result_id=l.entity_id "+
+            " WHERE l.entity_id IS NULL OR r.student_result_id IS NULL "+
+            " OR r.event_kind IS DISTINCT FROM l.event_kind "+
+            " OR r.source_event_id IS DISTINCT FROM l.event_id "+
+            " OR r.source_revision IS DISTINCT FROM l.source_revision "+
+            " OR r.source_payload IS DISTINCT FROM l.source_payload "+
+            " OR r.student_id IS DISTINCT FROM l.source_payload->>'student_id' "+
+            " OR r.class_id IS DISTINCT FROM l.source_payload->>'class_id' "+
+            " OR r.score IS DISTINCT FROM (l.source_payload->>'score')::numeric "+
+            " OR r.evaluated_by IS DISTINCT FROM l.source_payload->>'evaluated_by' "+
+            " OR r.evaluated_at IS DISTINCT FROM (l.source_payload->>'evaluated_at')::timestamptz "+
             ") mismatches",Long.class);
         if(count==null || count<0)
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
@@ -147,7 +174,7 @@ public class AcademicRosterSourceRepository {
         if(event==null || event.eventId()<1 || event.sourceRevision()<1 ||
             event.entityId()==null ||
             !event.entityId().matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
-            !Set.of("STUDENT","MEMBERSHIP").contains(event.entityType()) ||
+            !Set.of("STUDENT","MEMBERSHIP","TARGET","RESULT").contains(event.entityType()) ||
             !Set.of("UPSERT","DELETE").contains(event.eventKind()) ||
             event.payloadJson()==null || event.payloadHash()==null ||
             !event.payloadHash().matches("[0-9a-f]{64}") ||
@@ -161,18 +188,45 @@ public class AcademicRosterSourceRepository {
         if(payload==null || !payload.isObject())
             throw rejected("Missing Core roster object payload");
         boolean student="STUDENT".equals(event.entityType());
-        String id=payload.path(student?"student_id":"class_student_id").asText("");
+        boolean membership="MEMBERSHIP".equals(event.entityType());
+        boolean target="TARGET".equals(event.entityType());
+        String identityField=student?"student_id":membership?"class_student_id":
+            target?"student_target_id":"student_result_id";
+        String id=payload.path(identityField).asText("");
         String code=payload.path("student_code").asText("");
         String name=payload.path("full_name").asText("");
         String status=payload.path("status").asText("");
         String classId=payload.path("class_id").asText("");
         String studentId=payload.path("student_id").asText("");
-        if(!event.entityId().equals(id) || status.isBlank() ||
-            (student && (code.isBlank() || name.isBlank())) ||
-            (!student && (classId.isBlank() || studentId.isBlank())) ||
-            (!student && (!classId.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
-                !studentId.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}"))))
-            throw rejected("Incomplete or inconsistent Core student roster payload");
+        String courseId=payload.path("course_id").asText("");
+        String targetType=payload.path("target_type").asText("");
+        String evaluatedBy=payload.path("evaluated_by").asText("");
+        java.math.BigDecimal amount=null;
+        java.time.OffsetDateTime evaluatedAt=null;
+        if(target || "RESULT".equals(event.entityType())) {
+            try {
+                amount=new java.math.BigDecimal(payload.path(target?"target_value":"score")
+                    .asText(""));
+                if(amount.signum()<0 || amount.scale()>(target?2:2) ||
+                    amount.precision()>(target?8:5))
+                    throw new IllegalArgumentException("Invalid academic numeric scale");
+                if(!target)
+                    evaluatedAt=java.time.OffsetDateTime.parse(
+                        payload.path("evaluated_at").asText(""));
+            } catch(Exception ex) {
+                throw rejected("Invalid Core Academic target/result value or timestamp");
+            }
+        }
+        if(!event.entityId().equals(id) ||
+            (student && (status.isBlank() || code.isBlank() || name.isBlank())) ||
+            (membership && (status.isBlank() || classId.isBlank() ||
+                studentId.isBlank())) ||
+            (target && (studentId.isBlank() || courseId.isBlank() ||
+                targetType.isBlank() || amount==null)) ||
+            (!student && !membership && !target &&
+                (studentId.isBlank() || classId.isBlank() ||
+                 evaluatedBy.isBlank() || evaluatedAt==null)))
+            throw rejected("Incomplete or inconsistent Core student/roster payload");
 
         // A committed replay must match its immutable original, including
         // canonical JSON, hash and source revision. Never rewrite history.
@@ -222,7 +276,7 @@ public class AcademicRosterSourceRepository {
                 "WHERE academic_students_shadow.source_event_id<EXCLUDED.source_event_id",
                 id,code,name,status,event.eventKind(),event.eventId(),
                 event.sourceRevision(),event.payloadJson());
-        } else {
+        } else if(membership) {
             db.update(
                 "INSERT INTO academic_class_memberships_shadow "+
                 "(class_student_id,class_id,student_id,membership_status,"+
@@ -238,6 +292,39 @@ public class AcademicRosterSourceRepository {
                 "WHERE academic_class_memberships_shadow.source_event_id<EXCLUDED.source_event_id",
                 id,classId,studentId,status,event.eventKind(),
                 event.eventId(),event.sourceRevision(),event.payloadJson());
+        }
+        if(target) {
+            db.update(
+                "INSERT INTO academic_student_targets_shadow "+
+                "(student_target_id,student_id,course_id,target_type,target_value,"+
+                "event_kind,source_event_id,source_revision,source_payload) "+
+                "VALUES(?,?,?,?,?,?,?,?,CAST(? AS JSONB)) "+
+                "ON CONFLICT(student_target_id) DO UPDATE SET "+
+                "student_id=EXCLUDED.student_id,course_id=EXCLUDED.course_id,"+
+                "target_type=EXCLUDED.target_type,target_value=EXCLUDED.target_value,"+
+                "event_kind=EXCLUDED.event_kind,source_event_id=EXCLUDED.source_event_id,"+
+                "source_revision=EXCLUDED.source_revision,"+
+                "source_payload=EXCLUDED.source_payload,updated_at=NOW() "+
+                "WHERE academic_student_targets_shadow.source_event_id<EXCLUDED.source_event_id",
+                id,studentId,courseId,targetType,amount,event.eventKind(),
+                event.eventId(),event.sourceRevision(),event.payloadJson());
+        } else if("RESULT".equals(event.entityType())) {
+            db.update(
+                "INSERT INTO academic_student_results_shadow "+
+                "(student_result_id,student_id,class_id,score,evaluated_by,"+
+                "evaluated_at,event_kind,source_event_id,source_revision,source_payload) "+
+                "VALUES(?,?,?,?,?,CAST(? AS TIMESTAMPTZ),?,?,?,CAST(? AS JSONB)) "+
+                "ON CONFLICT(student_result_id) DO UPDATE SET "+
+                "student_id=EXCLUDED.student_id,class_id=EXCLUDED.class_id,"+
+                "score=EXCLUDED.score,evaluated_by=EXCLUDED.evaluated_by,"+
+                "evaluated_at=EXCLUDED.evaluated_at,event_kind=EXCLUDED.event_kind,"+
+                "source_event_id=EXCLUDED.source_event_id,"+
+                "source_revision=EXCLUDED.source_revision,"+
+                "source_payload=EXCLUDED.source_payload,updated_at=NOW() "+
+                "WHERE academic_student_results_shadow.source_event_id<EXCLUDED.source_event_id",
+                id,studentId,classId,amount,evaluatedBy,evaluatedAt.toString(),
+                event.eventKind(),event.eventId(),event.sourceRevision(),
+                event.payloadJson());
         }
         db.update("UPDATE academic_roster_history_cursor "+
                 "SET last_event_id=GREATEST(last_event_id,?),updated_at=NOW() "+
