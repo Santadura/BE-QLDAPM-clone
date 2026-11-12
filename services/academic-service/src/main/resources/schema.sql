@@ -209,6 +209,13 @@ CREATE TABLE IF NOT EXISTS academic_session_candidate_outbox (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )@@
 
+-- Preserve the exact bytes signed by the candidate's SHA-256. Existing
+-- historical rehearsals intentionally remain NULL and cannot be used to
+-- release a Core claim until manually reconciled; never manufacture a
+-- canonical body by reserializing JSONB.
+ALTER TABLE academic_session_candidate_outbox
+  ADD COLUMN IF NOT EXISTS payload_canonical TEXT@@
+
 -- Database-level guarantees: no direct SQL may silently rewrite a
 -- committed candidate or forge a delivered domain mutation after staging.
 CREATE OR REPLACE FUNCTION iig_block_academic_candidate_tampering()
