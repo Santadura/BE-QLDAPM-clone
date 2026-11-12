@@ -112,9 +112,43 @@ public class AcademicSessionCandidateService {
      */
     public void acknowledge(String bearer,Request request,
             AcademicSessionCandidateRepository.Receipt receipt) {
-        if(receipt==null || receipt.commandId()==null || request==null)
+        // An HTTP retry must carry the EXACT staged receipt; a matching
+        // command UUID alone is not sufficient to release a Core claim.
+        if(request==null || receipt==null ||
+            receipt.commandId()==null ||
+            !receipt.commandId().matches(
+                "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}") ||
+            request.requestKey()==null || request.classId()==null ||
+            request.sessionId()==null || request.action()==null ||
+            request.status()==null ||
+            request.expectedEventId()<1 || request.expectedRevision()<1 ||
+            !request.requestKey().equals(receipt.requestKey()) ||
+            !request.classId().equals(receipt.classId()) ||
+            !request.sessionId().equals(receipt.sessionId()) ||
+            request.expectedEventId()!=receipt.sourceEventId() ||
+            request.expectedRevision()!=receipt.sourceRevision() ||
+            !"STAGED".equals(receipt.state()) ||
+            !(("RESCHEDULE".equals(request.action()) &&
+                "PLANNED".equals(request.status())) ||
+              ("CANCEL".equals(request.action()) &&
+                "CANCELLED".equals(request.status()))))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "No committed Academic candidate receipt");
+                "Academic candidate receipt differs from original staged command");
+        final LocalDate day;
+        final LocalTime from;
+        final LocalTime to;
+        try {
+            day=LocalDate.parse(request.date());
+            from=LocalTime.parse(request.startTime());
+            to=LocalTime.parse(request.endTime());
+        } catch(DateTimeParseException | NullPointerException ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Malformed Academic session retry date or time",ex);
+        }
+        if(!to.isAfter(from))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic session retry interval is invalid");
+
         var actor=identity.currentPrincipal(bearer);
         if(actor==null || actor.username()==null ||
             !"ROLE_ADMIN".equals(actor.role()))
@@ -126,9 +160,7 @@ public class AcademicSessionCandidateService {
         String canonical="academic-candidate-v1\n"+request.classId()+"\n"+
             request.sessionId()+"\n"+request.expectedEventId()+"\n"+
             request.expectedRevision()+"\n"+request.action()+"\n"+
-            java.time.LocalDate.parse(request.date())+"\n"+
-            java.time.LocalTime.parse(request.startTime())+"\n"+
-            java.time.LocalTime.parse(request.endTime())+"\n"+request.status();
+            day+"\n"+from+"\n"+to+"\n"+request.status();
         String digest=AcademicSessionSourceRepository.sha256(canonical);
         if(!digest.equals(proof.digest()) ||
             !request.classId().equals(proof.classId()) ||
