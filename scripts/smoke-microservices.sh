@@ -40,6 +40,37 @@ code="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/audit/events")
 test "$code" = "404"
 echo "PASS: private audit API is not exposed through Gateway"
 
+# Full Academic / Attendance / Scheduling read-only preflight is private and
+# must refuse to claim READY while Core still owns the four writer fences.
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE}/internal/academic/cutover/full-readiness")" = 404 || {
+  echo "Unified private cutover preflight exposed through public Gateway"; exit 1;
+}
+full_url="http://academic-service:8099/internal/academic/cutover/full-readiness"
+academic_key="${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}"
+for attempt in $(seq 1 60); do
+  if "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    http://academic-service:8099/actuator/health 2>/dev/null | grep -q '"UP"'; then
+    break
+  fi
+  if [ "$attempt" -eq 60 ]; then
+    echo "Academic private cutover verifier never became healthy"; exit 1;
+  fi
+  sleep 2
+done
+unauthorized="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
+  --header "X-Internal-Key: forged-key" "$full_url" 2>&1 || true)"
+printf '%s' "$unauthorized" | grep -Eq 'HTTP/[0-9.]+[[:space:]]+401([[:space:]]|$)' || {
+  echo "Unified cutover verifier accepted an invalid service key"; exit 1;
+}
+not_frozen="$("${COMPOSE[@]}" exec -T scheduling-postgres wget -S -O- \
+  --header "X-Internal-Key: $academic_key" "$full_url" 2>&1 || true)"
+printf '%s' "$not_frozen" | grep -Eq 'HTTP/[0-9.]+[[:space:]]+409([[:space:]]|$)' || {
+  echo "Unified cutover verifier returned success while Core owns writer fences"; exit 1;
+}
+echo "PASS: unified Academic / Scheduling / Attendance proof remains private and fail-closed"
+
+
 audit_count() {
   "${COMPOSE[@]}" exec -T audit-postgres psql -U iig_audit -d iig_audit -tAc \
     "SELECT count(*) FROM audit_events WHERE action='CREATE_CLASS';" | tr -d '[:space:]'
