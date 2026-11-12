@@ -16,6 +16,8 @@ spring:
       continue-on-error: false
 iig:
   academic:
+    # Private native Academic PLAN/RESCHEDULE rehearsal; NEVER public authority.
+    native-rehearsal-enabled: ${ACADEMIC_NATIVE_REHEARSAL_ENABLED:false}
     session-relay-enabled: ${ACADEMIC_SESSION_SOURCE_RELAY_ENABLED:false}
     # Student and membership source import is read-only, opt-in until CI parity proof.
     roster-relay-enabled: ${ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED:false}
