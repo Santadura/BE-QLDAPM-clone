@@ -31,6 +31,8 @@ iig:
     # Academic Target/Result candidate journal: private NON-AUTHORITATIVE
     # rehearsal, no downstream dispatcher, and OFF outside disposable CI.
     roster-candidate-enabled: ${ACADEMIC_ROSTER_CANDIDATE_ENABLED:false}
+    # Replays exact committed local evidence before Core claim release.
+    roster-handoff-recovery-enabled: ${ACADEMIC_ROSTER_HANDOFF_RECOVERY_ENABLED:false}
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${ACADEMIC_INTERNAL_API_KEY}
