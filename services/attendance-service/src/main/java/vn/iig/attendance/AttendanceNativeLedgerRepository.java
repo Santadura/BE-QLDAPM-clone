@@ -41,7 +41,7 @@ public class AttendanceNativeLedgerRepository {
     public record Activation(String adminUsername,long writerGeneration,
         long sourceRows,long historicalEvents,long sourceLastEventId,
         String academicProofHash) {}
-    private record Previous(String id,long version,String status) {}
+    private record Previous(String id,long version,String status,Instant recordedAt) {}
     private record Command(String eventId,String digest,String factsToken,
         long generation,String state) {}
     private final JdbcTemplate db;
@@ -180,11 +180,13 @@ public class AttendanceNativeLedgerRepository {
                 "ON CONFLICT(teaching_schedule_id) DO NOTHING",
                 a.teachingScheduleId(),UUID.randomUUID().toString());
         List<Previous> nativeRows=db.query(
-            "SELECT attendance_id,version,status "+
+            "SELECT attendance_id,version,status,recorded_at "+
             "FROM attendance_native_teacher_rows "+
             "WHERE teaching_schedule_id=? FOR UPDATE",
             (rs,i)->new Previous(rs.getString(1),rs.getLong(2),
-                rs.getString(3)),a.teachingScheduleId());
+                rs.getString(3),
+                rs.getTimestamp(4)==null?null:rs.getTimestamp(4).toInstant()),
+            a.teachingScheduleId());
         if(nativeRows.size()!=1 ||
             (a.previousAttendanceId()!=null &&
                 !a.previousAttendanceId().equals(nativeRows.get(0).id())) ||
@@ -260,6 +262,8 @@ public class AttendanceNativeLedgerRepository {
         else body.put("previousStatus",a.previousStatus());
         body.put("status",a.status());
         body.put("version",version);
+        body.put("recordedAt",
+            before.recordedAt()==null?now.toString():before.recordedAt().toString());
         body.put("updatedAt",now.toString());
         String canonical=body.toString();
         int created=db.update(
