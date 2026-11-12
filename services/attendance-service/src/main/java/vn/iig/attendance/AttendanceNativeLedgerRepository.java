@@ -309,6 +309,46 @@ public class AttendanceNativeLedgerRepository {
     }
 
     /**
+     * A completed native command is a historical immutable outcome. A same
+     * actor/key replay must retrieve its ORIGINAL Core response, not ask Core
+     * to admit a second command using the new (already changed) attendance
+     * baseline. This is read-only and requires a durable local confirmation.
+     */
+    public Pending completedForKey(String actor,String classId,
+            String scheduleId,String requestKey,String requestHash) {
+        if(!safe(actor,100)||!safe(classId,50)||!safe(scheduleId,50)||
+            !safe(requestKey,128)||requestHash==null||
+            !requestHash.matches("[a-f0-9]{64}"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Original native Attendance command identity required");
+        var matching=db.query(
+            "SELECT o.event_id::text,o.actor_username,o.class_id,"+
+            "o.teaching_schedule_id,o.request_key,o.version,"+
+            "o.payload_canonical,o.payload_hash,c.request_hash "+
+            "FROM attendance_native_commands c "+
+            "JOIN attendance_native_outbox o ON o.event_id=c.event_id "+
+            "WHERE c.actor_username=? AND c.class_id=? "+
+            "AND c.teaching_schedule_id=? AND c.request_key=? "+
+            "AND c.state='COMMITTED' AND o.confirmed_at IS NOT NULL "+
+            "AND o.reference_receipt IS NOT NULL",
+            (rs,i)->new java.util.AbstractMap.SimpleImmutableEntry<>(
+                new Pending(rs.getString(1),rs.getString(2),rs.getString(3),
+                    rs.getString(4),rs.getString(5),rs.getLong(6),
+                    rs.getString(7),rs.getString(8)),
+                rs.getString(9)),actor,classId,scheduleId,requestKey);
+        if(matching.size()>1)
+            throw new IllegalStateException("Duplicate completed native command");
+        if(matching.isEmpty())return null;
+        var row=matching.get(0);
+        if(!requestHash.equals(row.getValue())||
+            row.getKey().payloadCanonical()==null||
+            !digest(row.getKey().payloadCanonical()).equals(row.getKey().payloadHash()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Original native Attendance key or immutable event differs");
+        return row.getKey();
+    }
+
+    /**
      * A missing Core reference or a transport timeout MUST retain the event.
      * This method is read-only and never guesses whether the Core committed.
      */
