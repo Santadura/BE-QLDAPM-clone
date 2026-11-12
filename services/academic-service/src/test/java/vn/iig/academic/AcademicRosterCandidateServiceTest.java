@@ -125,4 +125,53 @@ class AcademicRosterCandidateServiceTest {
             ()->svc.stage("Bearer admin",request("TARGET","UPSERT",BigDecimal.ONE)))
             .getStatusCode());
     }
+
+    @Test void releaseOnlyAfterMatchingDurableLocalOutboxEvidence() {
+        admin();
+        var req=request("TARGET","UPSERT",new BigDecimal("7.5"));
+        String canonical="academic-roster-candidate-v1\nTARGET\nrecord-1\n10\n5\nUPSERT\n7.50";
+        var saved=new AcademicRosterCandidateRepository.Evidence(
+            "admin","same-key",AcademicSessionSourceRepository.sha256(canonical),
+            "TARGET","record-1",10,5,4,"UPSERT","command","b".repeat(64));
+        var receipt=new AcademicRosterCandidateRepository.Receipt(
+            "command","same-key","TARGET","record-1",10,"STAGED");
+        when(journal.committedEvidence("admin","same-key","command")).thenReturn(saved);
+        svc.acknowledge("Bearer admin",req,receipt);
+        verify(claims).release(argThat(r->
+            saved.commandId().equals(r.candidateCommandId()) &&
+            saved.outboxHash().equals(r.outboxHash()) &&
+            saved.digest().equals(r.claim().requestHash())));
+        verify(journal).recordHandoff(saved);
+    }
+    @Test void coreReleaseOutageCannotForgeLocalHandoffAcknowledgement() {
+        admin();
+        var req=request("TARGET","UPSERT",new BigDecimal("7.50"));
+        String canonical="academic-roster-candidate-v1\nTARGET\nrecord-1\n10\n5\nUPSERT\n7.50";
+        var saved=new AcademicRosterCandidateRepository.Evidence(
+            "admin","same-key",AcademicSessionSourceRepository.sha256(canonical),
+            "TARGET","record-1",10,5,4,"UPSERT","command","b".repeat(64));
+        var receipt=new AcademicRosterCandidateRepository.Receipt(
+            "command","same-key","TARGET","record-1",10,"STAGED");
+        when(journal.committedEvidence("admin","same-key","command")).thenReturn(saved);
+        doThrow(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+            "Core claim release unavailable")).when(claims).release(any());
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.acknowledge("Bearer admin",req,receipt)).getStatusCode());
+        verify(journal,never()).recordHandoff(any());
+    }
+    @Test void mismatchedRetryCannotReleaseAnotherCommittedProposal() {
+        admin();
+        var req=request("RESULT","UPSERT",new BigDecimal("9.00"));
+        var saved=new AcademicRosterCandidateRepository.Evidence(
+            "admin","same-key","a".repeat(64),
+            "RESULT","record-1",10,5,4,"UPSERT","command","b".repeat(64));
+        var receipt=new AcademicRosterCandidateRepository.Receipt(
+            "command","same-key","RESULT","record-1",10,"STAGED");
+        when(journal.committedEvidence("admin","same-key","command")).thenReturn(saved);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.acknowledge("Bearer admin",req,receipt)).getStatusCode());
+        verify(claims,never()).release(any());
+    }
 }
