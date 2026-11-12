@@ -120,12 +120,12 @@ class AttendanceNativeCommandServiceTest {
             new AttendanceCoreClient.Principal("cs001","ROLE_CS"));
         var original=new AttendanceNativeLedgerRepository.Pending(
             eventId,"cs001","class-1","teach-1","same-key",2,
-            "{\\"eventId\\":\\""+eventId+"\\"}","b".repeat(64));
+            "{\"eventId\":\""+eventId+"\"}","b".repeat(64));
         when(ledger.completedForKey("cs001","class-1","teach-1","same-key",hash))
             .thenReturn(original);
         var response=mapper.readTree(
-            "{\\"id\\":\\"attendance-1\\",\\"teachingScheduleId\\":\\"teach-1\\","+
-            "\\"status\\":\\"PRESENT\\"}");
+            "{\"id\":\"attendance-1\",\"teachingScheduleId\":\"teach-1\","+
+            "\"status\":\"PRESENT\"}");
         when(core.reference(original)).thenReturn(
             new AttendanceNativeReferenceClient.Receipt(
                 eventId,"teach-1",2,"b".repeat(64),"COMMITTED",response));
