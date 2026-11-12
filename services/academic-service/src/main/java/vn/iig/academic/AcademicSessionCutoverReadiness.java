@@ -17,7 +17,7 @@ public class AcademicSessionCutoverReadiness {
     private final AcademicSessionSourceClient core;
     private final AcademicSessionSourceRepository local;
     private final AcademicCandidateClaimClient claims;
-    private final AcademicSessionCandidateRepository candidates;
+    private final AcademicSessionCandidateDispositionRepository dispositions;
     public record Evidence(long sourceEvents,long lastEventId,long sourceRows,
         long distinctSessions,long academicGeneration,long attendanceGeneration,
         long schedulingGeneration) {}
@@ -25,9 +25,9 @@ public class AcademicSessionCutoverReadiness {
     public AcademicSessionCutoverReadiness(AcademicSessionSourceClient core,
             AcademicSessionSourceRepository local,
             AcademicCandidateClaimClient claims,
-            AcademicSessionCandidateRepository candidates) {
+            AcademicSessionCandidateDispositionRepository dispositions) {
         this.core=core;this.local=local;this.claims=claims;
-        this.candidates=candidates;
+        this.dispositions=dispositions;
     }
     private static ResponseStatusException incomplete(String why) {
         return new ResponseStatusException(HttpStatus.CONFLICT,
@@ -66,8 +66,10 @@ public class AcademicSessionCutoverReadiness {
         // candidate still owns a Core claim. No automatic release is allowed.
         var beforeClaims=claims.summary();
         requireNoOpenClaims(beforeClaims);
-        long beforeRehearsals=candidates.unpromotedRehearsalCount();
-        if(!stagingAdmission && beforeRehearsals!=0)
+        var beforeRehearsals=dispositions.summary();
+        if(beforeRehearsals.pendingHandoffs()!=0)
+            throw incomplete("pending Academic session/Core claim handback");
+        if(!stagingAdmission && beforeRehearsals.unresolved()!=0)
             throw incomplete("unpromoted REHEARSAL_ONLY timetable proposal exists");
         var source=core.integrity();
         if(source==null || source.sourceRows()<0 ||
@@ -115,11 +117,12 @@ public class AcademicSessionCutoverReadiness {
         var afterFence=core.writerFence();
         var afterClaims=claims.summary();
         requireNoOpenClaims(afterClaims);
-        long afterRehearsals=candidates.unpromotedRehearsalCount();
+        var afterRehearsals=dispositions.summary();
         if(!source.equals(afterIntegrity) || !before.equals(afterFence) ||
                 !beforeClaims.equals(afterClaims) ||
-                beforeRehearsals!=afterRehearsals ||
-                (!stagingAdmission && afterRehearsals!=0))
+                !beforeRehearsals.equals(afterRehearsals) ||
+                afterRehearsals.pendingHandoffs()!=0 ||
+                (!stagingAdmission && afterRehearsals.unresolved()!=0))
             throw incomplete("Core source, claim ledger or writer generation changed during proof");
 
         return new Evidence(scanned,cursor,source.sourceRows(),
