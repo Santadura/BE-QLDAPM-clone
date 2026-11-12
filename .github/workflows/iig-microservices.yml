@@ -47,6 +47,7 @@ on:
       - 'scripts/smoke-academic-roster.sh'
       - 'scripts/smoke-academic-roster-fence.sh'
       - 'scripts/smoke-academic-roster-candidates.sh'
+      - 'scripts/smoke-academic-roster-duplicate-source.sh'
       - 'src/main/java/com/example/demo/controller/AcademicStudentRosterSourceBridge.java'
       - 'src/test/java/com/example/demo/controller/AcademicStudentRosterSourceBridgeTest.java'
       - '.github/workflows/iig-microservices.yml'
@@ -176,6 +177,10 @@ jobs:
         env:
           IIG_ROSTER_FENCE_SMOKE: 'true'
         run: bash scripts/smoke-academic-roster-fence.sh
+      - name: Prove Core roster source event is claimed exactly once across retry keys
+        env:
+          IIG_ROSTER_FENCE_SMOKE: 'true'
+        run: bash scripts/smoke-academic-roster-duplicate-source.sh
       - name: Exercise explicitly enabled private teacher writer on disposable databases
         env:
           CI: 'true'
