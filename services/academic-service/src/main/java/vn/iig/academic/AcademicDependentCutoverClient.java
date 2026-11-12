@@ -36,11 +36,19 @@ public class AcademicDependentCutoverClient {
             @Value("${iig.crossdomain.attendance-key}") String attendanceKey,
             @Value("${iig.crossdomain.scheduling-url}") String schedulingUrl,
             @Value("${iig.crossdomain.scheduling-key}") String schedulingKey) {
-        if(attendanceKey==null || attendanceKey.isBlank() ||
+        this(client(attendanceUrl),attendanceKey,
+            client(schedulingUrl),schedulingKey);
+    }
+
+    // Test seam for signed, private cross-service HTTP contract assertions.
+    AcademicDependentCutoverClient(RestClient attendance,String attendanceKey,
+            RestClient scheduling,String schedulingKey) {
+        if(attendance==null || scheduling==null ||
+                attendanceKey==null || attendanceKey.isBlank() ||
                 schedulingKey==null || schedulingKey.isBlank())
-            throw new IllegalArgumentException("Independent cutover keys required");
-        this.attendance=client(attendanceUrl);
-        this.scheduling=client(schedulingUrl);
+            throw new IllegalArgumentException("Independent cutover clients and keys required");
+        this.attendance=attendance;
+        this.scheduling=scheduling;
         this.attendanceKey=attendanceKey;
         this.schedulingKey=schedulingKey;
     }
