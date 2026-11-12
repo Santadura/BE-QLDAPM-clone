@@ -13,8 +13,10 @@ class AttendanceCutoverVerifierTest {
         mock(AttendanceEventProjectionRepository.class);
     private final AttendanceEventRelay relay=mock(AttendanceEventRelay.class);
     private final AttendanceCommandInbox commands=mock(AttendanceCommandInbox.class);
+    private final AttendanceNativeLedgerRepository nativeLedger=
+        mock(AttendanceNativeLedgerRepository.class);
     private final AttendanceCutoverVerifier verifier=
-        new AttendanceCutoverVerifier(source,projection,relay,commands);
+        new AttendanceCutoverVerifier(source,projection,relay,commands,nativeLedger);
     private final AttendanceSourceClient.ManifestRow row=
         new AttendanceSourceClient.ManifestRow(7,"teach-1","UPSERT",
             "{\"teaching_schedule_id\":\"teach-1\",\"status\":\"PRESENT\"}",true);
@@ -25,6 +27,8 @@ class AttendanceCutoverVerifierTest {
         new AttendanceSourceClient.ManifestSummary(1,1,1,1,7,0,0);
 
     private void matching() {
+        when(nativeLedger.recoverySummary()).thenReturn(
+            new AttendanceNativeLedgerRepository.RecoverySummary(0,0));
         when(source.manifestSummary()).thenReturn(clean);
         when(source.manifest("",250)).thenReturn(List.of(row));
         when(projection.matchesManifest(row)).thenReturn(true);
@@ -202,6 +206,42 @@ class AttendanceCutoverVerifierTest {
             new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Postgres offline"));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
             ResponseStatusException.class,verifier::verifyFrozen).getStatusCode());
+        verify(source,never()).manifestSummary();
+    }
+
+    @Test void nativeUnconfirmedReferenceBlocksFrozenHandbackDespiteCompleteCoreHistory() {
+        matching();
+        when(source.writerFence()).thenReturn(frozen(7));
+        when(nativeLedger.recoverySummary()).thenReturn(
+            new AttendanceNativeLedgerRepository.RecoverySummary(1,1));
+        var report=verifier.verifyFrozen();
+        assertFalse(report.ready());
+        assertEquals("UNRESOLVED_NATIVE_ATTENDANCE",report.state());
+        assertTrue(report.mismatchKeys().contains("NATIVE_ATTENDANCE_REFERENCE_UNCONFIRMED"));
+        verify(source,never()).manifestSummary();
+    }
+
+    @Test void nativeReferenceStartedDuringImmutableScanBlocksHandback() {
+        matching();
+        when(source.writerFence()).thenReturn(frozen(7));
+        when(nativeLedger.recoverySummary()).thenReturn(
+            new AttendanceNativeLedgerRepository.RecoverySummary(0,0),
+            new AttendanceNativeLedgerRepository.RecoverySummary(1,0));
+        var report=verifier.verifyFrozen();
+        assertFalse(report.ready());
+        assertEquals("UNRESOLVED_NATIVE_ATTENDANCE",report.state());
+        assertTrue(report.mismatchKeys().contains(
+            "NATIVE_ATTENDANCE_REFERENCE_CHANGED_DURING_SCAN"));
+    }
+
+    @Test void nativePostgresOutageCannotBeCountedAsFrozenReadiness() {
+        matching();
+        when(source.writerFence()).thenReturn(frozen(7));
+        when(nativeLedger.recoverySummary()).thenThrow(
+            new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"native store offline"));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,
+            assertThrows(ResponseStatusException.class,verifier::verifyFrozen)
+            .getStatusCode());
         verify(source,never()).manifestSummary();
     }
 

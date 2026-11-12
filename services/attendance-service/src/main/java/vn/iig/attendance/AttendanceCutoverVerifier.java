@@ -23,17 +23,19 @@ public class AttendanceCutoverVerifier {
     private final AttendanceEventProjectionRepository projection;
     private final AttendanceEventRelay relay;
     private final AttendanceCommandInbox commands;
+    private final AttendanceNativeLedgerRepository nativeLedger;
 
     public record Report(boolean ready,String state,long sourceRows,
                          long verifiedRows,int mismatchCount,List<String> mismatchKeys) {}
 
     public AttendanceCutoverVerifier(AttendanceSourceClient source,
             AttendanceEventProjectionRepository projection,AttendanceEventRelay relay,
-            AttendanceCommandInbox commands) {
+            AttendanceCommandInbox commands,AttendanceNativeLedgerRepository nativeLedger) {
         this.source=source;
         this.projection=projection;
         this.relay=relay;
         this.commands=commands;
+        this.nativeLedger=nativeLedger;
     }
 
     /**
@@ -51,12 +53,31 @@ public class AttendanceCutoverVerifier {
         if(pendingBefore!=0)
             return new Report(false,"UNRESOLVED_ATTENDANCE_COMMANDS",0,0,1,
                 List.of("ATTENDANCE_PENDING_CORE_RESULT"));
+        // Core parity alone is insufficient once independent Attendance
+        // owns native mutations: an unconfirmed local native event may not
+        // be present in Core's historical manifest yet. NEVER authorize
+        // Core handback while that event still has uncertain reference fate.
+        var nativeBefore=nativeLedger.recoverySummary();
+        if(nativeBefore==null || nativeBefore.pending()!=0 ||
+                nativeBefore.quarantined()!=0)
+            return new Report(false,"UNRESOLVED_NATIVE_ATTENDANCE",0,0,1,
+                List.of("NATIVE_ATTENDANCE_REFERENCE_UNCONFIRMED"));
         var report=verify();
         // Re-read the independent inbox after the full immutable source scan,
         // not only at its start. A concurrent PENDING command must invalidate
         // a previously complete projection snapshot.
         long pendingAfter=commands.pendingCount();
         var after=source.writerFence();
+        var nativeAfter=nativeLedger.recoverySummary();
+        if(nativeAfter==null || !nativeBefore.equals(nativeAfter) ||
+                nativeAfter.pending()!=0 || nativeAfter.quarantined()!=0) {
+            var errors=new ArrayList<>(report.mismatchKeys());
+            if(errors.size()<MAX_MISMATCH_KEYS)
+                errors.add("NATIVE_ATTENDANCE_REFERENCE_CHANGED_DURING_SCAN");
+            return new Report(false,"UNRESOLVED_NATIVE_ATTENDANCE",
+                report.sourceRows(),report.verifiedRows(),
+                report.mismatchCount()+1,List.copyOf(errors));
+        }
         if(pendingAfter!=0) {
             var errors=new ArrayList<>(report.mismatchKeys());
             if(errors.size()<MAX_MISMATCH_KEYS)
