@@ -3,6 +3,9 @@
 # Docker volumes. Deliberately leaves a Core-only OPEN claim and QUIESCED writers;
 # the workflow's "down -v" is responsible for destroying this fixture.
 set -euo pipefail
+# Keep a diagnostic for silent 'test' failures: last CI run exited before
+# reaching the injected crash because a preceding teacher test froze Scheduling.
+trap 'rc=$?; echo "Academic orphan probe failed at line $LINENO (exit $rc)" >&2' ERR
 if [ "$GITHUB_ACTIONS" != "true" ] || [ "$IIG_TERMINAL_ORPHAN_PROBE" != "true" ]; then
   echo "Refusing non-disposable Academic orphan crash probe" >&2
   exit 2
@@ -23,17 +26,37 @@ test "$(core_scalar "SELECT COUNT(*) FROM academic_candidate_claims WHERE state=
   echo "Other OPEN claims exist: refusing ambiguous crash test" >&2
   exit 1
 }
-test "$(core_scalar "SELECT writer_mode FROM academic_session_writer_control WHERE singleton=TRUE")" = "CORE"
-test "$(core_scalar "SELECT writer_mode FROM scheduling_assignment_writer_control WHERE singleton=TRUE")" = "CORE"
-test "$(core_scalar "SELECT writer_mode FROM teacher_attendance_writer_control WHERE singleton=TRUE")" = "CORE"
-test "$(core_scalar "SELECT COUNT(*) FROM academic_session_source_outbox e JOIN class_sessions c ON c.class_session_id=e.class_session_id WHERE e.event_kind='UPSERT' AND e.delivered_at IS NOT NULL AND e.payload IS NOT DISTINCT FROM to_jsonb(c)")" -gt 0
+# The immediately preceding TEACHING cutover smoke intentionally leaves
+# Scheduling QUIESCED: a confirmed independent teacher reference blocks
+# handback to Core. That is a valid safe precondition, NOT a test failure.
+academic_mode="$(core_scalar "SELECT writer_mode FROM academic_session_writer_control WHERE singleton=TRUE")"
+scheduling_mode="$(core_scalar "SELECT writer_mode FROM scheduling_assignment_writer_control WHERE singleton=TRUE")"
+attendance_mode="$(core_scalar "SELECT writer_mode FROM teacher_attendance_writer_control WHERE singleton=TRUE")"
+echo "Orphan probe starting writer modes: Academic=$academic_mode Scheduling=$scheduling_mode Attendance=$attendance_mode"
+test "$academic_mode" = "CORE" && test "$attendance_mode" = "CORE" || {
+  echo "Cannot test Academic claim without exclusively Core-owned Academic/Attendance writers" >&2
+  exit 1
+}
+case "$scheduling_mode" in
+  CORE|QUIESCED) ;;
+  *) echo "Unexpected Scheduling writer mode: $scheduling_mode" >&2; exit 1 ;;
+esac
+test "$(core_scalar "SELECT COUNT(*) FROM academic_session_source_outbox e JOIN class_sessions c ON c.class_session_id=e.class_session_id WHERE e.event_kind='UPSERT' AND e.delivered_at IS NOT NULL AND e.payload IS NOT DISTINCT FROM to_jsonb(c)")" -gt 0 || {
+  echo "No acknowledged live Core Academic source event for orphan fixture" >&2
+  exit 1
+}
 
 # Freeze all Core writers atomically. Do not enable any public candidate route.
 compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
 BEGIN;
-UPDATE scheduling_assignment_writer_control SET writer_mode='QUIESCED' WHERE singleton=TRUE;
-UPDATE teacher_attendance_writer_control SET writer_mode='QUIESCED' WHERE singleton=TRUE;
-UPDATE academic_session_writer_control SET writer_mode='QUIESCED' WHERE singleton=TRUE;
+-- Already-QUIESCED Scheduling is an intentional ownership fence.
+-- Do not attempt a CORE handback or unnecessarily advance its generation.
+UPDATE scheduling_assignment_writer_control SET writer_mode='QUIESCED'
+  WHERE singleton=TRUE AND writer_mode='CORE';
+UPDATE teacher_attendance_writer_control SET writer_mode='QUIESCED'
+  WHERE singleton=TRUE AND writer_mode='CORE';
+UPDATE academic_session_writer_control SET writer_mode='QUIESCED'
+  WHERE singleton=TRUE AND writer_mode='CORE';
 COMMIT;
 SQL
 
