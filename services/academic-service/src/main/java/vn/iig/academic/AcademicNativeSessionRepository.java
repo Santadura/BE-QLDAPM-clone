@@ -43,6 +43,7 @@ public class AcademicNativeSessionRepository {
     private record Slot(String id,LocalDate date,LocalTime start,
         LocalTime end,String status,boolean sourceImported,long version) {}
     private record Prior(String digest,String response) {}
+    private record StoredActivation(Activation proof,String state) {}
     private final JdbcTemplate db;
     private final ObjectMapper json;
     private static final ZoneId TIMEZONE=ZoneId.of("Asia/Ho_Chi_Minh");
@@ -90,14 +91,36 @@ public class AcademicNativeSessionRepository {
             a.lastSourceEventId()<0)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Complete frozen native timetable bootstrap evidence required");
-        Long activated=db.queryForObject(
-            "SELECT COUNT(*) FROM academic_native_session_activations WHERE class_id=?",
-            Long.class,a.classId());
-        if(!Long.valueOf(0L).equals(activated))
-            throw conflict("Independent Academic class has already been bootstrapped");
+        // A lost activation HTTP response is NOT proof of failed commit.
+        // Reuse the exact immutable frozen source evidence on replay and
+        // refuse a changed epoch, class, actor, or source event cursor.
+        List<StoredActivation> prior=db.query(
+            "SELECT writer_generation,roster_generation,source_last_event_id,"+
+            "class_status,start_date,end_date,activated_by,state "+
+            "FROM academic_native_session_activations WHERE class_id=? FOR UPDATE",
+            (rs,i)->new StoredActivation(
+                new Activation(a.classId(),rs.getString(4),
+                    rs.getObject(5,LocalDate.class),rs.getObject(6,LocalDate.class),
+                    rs.getLong(1),rs.getLong(2),rs.getLong(3),rs.getString(7)),
+                rs.getString(8)),a.classId());
+        if(prior.size()>1)
+            throw new IllegalStateException("Duplicate Academic native class activation");
         Long expected=db.queryForObject(
             "SELECT COUNT(*) FROM academic_class_sessions_shadow WHERE class_id=? "+
             "AND event_kind='UPSERT'",Long.class,a.classId());
+        if(!prior.isEmpty()) {
+            StoredActivation recorded=prior.get(0);
+            if(!a.equals(recorded.proof()) ||
+                !"REHEARSAL_ONLY".equals(recorded.state()))
+                throw conflict("Native Academic activation replay has different immutable evidence");
+            Long imported=db.queryForObject(
+                "SELECT COUNT(*) FROM academic_native_session_rows "+
+                "WHERE class_id=? AND source_imported=TRUE",Long.class,a.classId());
+            if(expected==null || imported==null || expected<0 ||
+                !expected.equals(imported))
+                throw conflict("Native Academic activation replay baseline no longer matches source");
+            return imported;
+        }
         Long total=db.queryForObject(
             "SELECT COUNT(*) FROM academic_native_session_rows WHERE class_id=?",
             Long.class,a.classId());

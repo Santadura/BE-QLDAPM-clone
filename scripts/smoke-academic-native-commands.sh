@@ -120,7 +120,10 @@ source_count="$(core_sql "SELECT COUNT(*) FROM academic_session_source_outbox")"
 caught=false
 for attempt in $(seq 1 90); do
   local_count="$(academic_sql "SELECT COUNT(*) FROM academic_session_source_receipts")"
-  if [[ "$source_count" == "$local_count" ]]; then caught=true;break; fi
+  unacknowledged="$(core_sql "SELECT COUNT(*) FROM academic_session_source_outbox WHERE delivered_at IS NULL")"
+  if [[ "$source_count" == "$local_count" && "$unacknowledged" = 0 ]]; then
+    caught=true;break
+  fi
   sleep 2
 done
 test "$caught" = true || fail "Core/Academic immutable timetable history diverged"
@@ -130,6 +133,14 @@ source_outbox="$(core_sql "SELECT COUNT(*) FROM academic_session_source_outbox")
 activate="$(curl -fsS -X POST "$private/activate/$class_id" \
   -H "X-Internal-Key: $key" -H "Authorization: Bearer $admin")" ||
   fail "Core-frozen native Academic activation was rejected"
+# Replay exact original source/generation proof after a simulated lost ACK.
+activation_replay="$(curl -fsS -X POST "$private/activate/$class_id" \
+  -H "X-Internal-Key: $key" -H "Authorization: Bearer $admin")" ||
+  fail "An already committed Academic activation did not survive HTTP retry"
+ACTIVATION="$activate" REPLAY="$activation_replay" python3 -c '
+import json,os
+assert json.loads(os.environ["ACTIVATION"])==json.loads(os.environ["REPLAY"])
+' || fail "Native Academic activation replay returned a different result"
 ACTIVATION="$activate" python3 -c '
 import json,os
 a=json.loads(os.environ["ACTIVATION"])
