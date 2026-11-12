@@ -87,4 +87,21 @@ class AcademicFullCutoverReadinessTest {
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,verifier::verify).getStatusCode());
     }
+    @Test void oldFullReadinessJsonRemainsFlatWhileDownstreamProofIsAdditive() {
+        when(academic.verify()).thenReturn(academicProof(4));
+        when(downstream.verify()).thenReturn(downstreamProof(3));
+        var result=verifier.verify();
+        var json=mapper.valueToTree(result);
+        assertEquals(4,json.path("rosterGeneration").asInt());
+        assertEquals(4,json.path("sessionGeneration").asInt());
+        assertEquals(10,json.path("rosterEvents").asInt());
+        assertEquals(20,json.path("sessionEvents").asInt());
+        assertFalse(json.has("academic"),
+            "Never silently migrate old readiness clients to nested fields");
+        assertEquals(3,json.path("downstream").path("attendance")
+            .path("sourceRows").asInt());
+        assertEquals(3,json.path("downstream").path("scheduling")
+            .path("checkedRows").asInt());
+    }
+
 }
