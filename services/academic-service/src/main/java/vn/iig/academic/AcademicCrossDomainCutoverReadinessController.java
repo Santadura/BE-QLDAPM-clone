@@ -10,18 +10,19 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Internal read-only diagnostics. No Gateway route and no mutation.
+ * Verified Academic, Attendance and Scheduling read-only diagnostics.
+ * All Core writers stay QUIESCED during the independent proof.
  * Live Core ADMIN identity AND private service key required.
  */
 @RestController
 @RequestMapping("/internal/academic/cutover/full-readiness")
 public class AcademicCrossDomainCutoverReadinessController {
     private final AcademicCoreClient identity;
-    private final AcademicCrossDomainCutoverReadiness readiness;
+    private final AcademicFullCutoverReadiness readiness;
     private final byte[] key;
 
     public AcademicCrossDomainCutoverReadinessController(AcademicCoreClient identity,
-            AcademicCrossDomainCutoverReadiness readiness,
+            AcademicFullCutoverReadiness readiness,
             @Value("${iig.core.internal-key}") String secret) {
         if(secret==null || secret.isBlank())
             throw new IllegalArgumentException("Cross-domain cutover service key required");
@@ -29,7 +30,7 @@ public class AcademicCrossDomainCutoverReadinessController {
         this.key=secret.getBytes(StandardCharsets.UTF_8);
     }
     @GetMapping
-    public ResponseEntity<AcademicCrossDomainCutoverReadiness.Evidence> inspect(
+    public ResponseEntity<AcademicFullCutoverReadiness.Evidence> inspect(
             @RequestHeader(value="X-Internal-Key",required=false) String supplied,
             @RequestHeader(value="Authorization",required=false) String bearer) {
         byte[] provided=(supplied==null?"":supplied).getBytes(StandardCharsets.UTF_8);
