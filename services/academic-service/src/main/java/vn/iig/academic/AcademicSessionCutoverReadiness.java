@@ -16,13 +16,15 @@ public class AcademicSessionCutoverReadiness {
     private static final int MAX_PAGES=10000;
     private final AcademicSessionSourceClient core;
     private final AcademicSessionSourceRepository local;
+    private final AcademicCandidateClaimClient claims;
     public record Evidence(long sourceEvents,long lastEventId,long sourceRows,
         long distinctSessions,long academicGeneration,long attendanceGeneration,
         long schedulingGeneration) {}
 
     public AcademicSessionCutoverReadiness(AcademicSessionSourceClient core,
-            AcademicSessionSourceRepository local) {
-        this.core=core;this.local=local;
+            AcademicSessionSourceRepository local,
+            AcademicCandidateClaimClient claims) {
+        this.core=core;this.local=local;this.claims=claims;
     }
     private static ResponseStatusException incomplete(String why) {
         return new ResponseStatusException(HttpStatus.CONFLICT,
@@ -37,9 +39,20 @@ public class AcademicSessionCutoverReadiness {
             throw incomplete("all three Core writers must be QUIESCED");
     }
 
+    private static void requireNoOpenClaims(AcademicCandidateClaimClient.Summary summary) {
+        if(summary==null)
+            throw incomplete("Core candidate claim ledger unavailable");
+        if(summary.openClaims()!=0)
+            throw incomplete("unreleased Core Academic candidate claim exists");
+    }
+
     public Evidence verify() {
         var before=core.writerFence();
         requireFrozen(before);
+        // A complete history snapshot is NOT cutover-ready if a concurrent
+        // candidate still owns a Core claim. No automatic release is allowed.
+        var beforeClaims=claims.summary();
+        requireNoOpenClaims(beforeClaims);
         var source=core.integrity();
         if(source==null || source.sourceRows()<0 ||
                 source.trackedLiveRows()!=source.sourceRows() ||
@@ -84,8 +97,11 @@ public class AcademicSessionCutoverReadiness {
         // Detect CORE -> QUIESCED -> CORE -> QUIESCED (ABA) using generations.
         var afterIntegrity=core.integrity();
         var afterFence=core.writerFence();
-        if(!source.equals(afterIntegrity) || !before.equals(afterFence))
-            throw incomplete("Core source or writer generation changed during proof");
+        var afterClaims=claims.summary();
+        requireNoOpenClaims(afterClaims);
+        if(!source.equals(afterIntegrity) || !before.equals(afterFence) ||
+                !beforeClaims.equals(afterClaims))
+            throw incomplete("Core source, claim ledger or writer generation changed during proof");
 
         return new Evidence(scanned,cursor,source.sourceRows(),
             source.distinctSessions(),afterFence.academicGeneration(),
