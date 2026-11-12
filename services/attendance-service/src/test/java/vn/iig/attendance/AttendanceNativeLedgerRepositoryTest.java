@@ -231,7 +231,7 @@ class AttendanceNativeLedgerRepositoryTest {
     @SuppressWarnings({"unchecked","rawtypes"})
     @Test void completedCommandReplayReadsImmutableOriginalWithoutWritingAnything()
             throws Exception {
-        String canonical="{\\"eventId\\":\\""+ID+"\\"}";
+        String canonical="{\"eventId\":\""+ID+"\"}";
         String digest=AttendanceNativeLedgerRepository.digest(canonical);
         when(db.query(contains("c.state='COMMITTED' AND o.confirmed_at IS NOT NULL"),
             any(RowMapper.class),eq("cs001"),eq("class-1"),eq("teach-1"),
