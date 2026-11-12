@@ -174,4 +174,40 @@ class AcademicRosterCandidateServiceTest {
             ()->svc.acknowledge("Bearer admin",req,receipt)).getStatusCode());
         verify(claims,never()).release(any());
     }
+    @Test void wrongRetryReceiptKeyOrStateCannotReleaseCommittedCoreClaim() {
+        admin();
+        var request=request("TARGET","UPSERT",new BigDecimal("7.50"));
+        var changedKey=new AcademicRosterCandidateRepository.Receipt(
+            "command","another-key","TARGET","record-1",10,"STAGED");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.acknowledge("Bearer admin",request,changedKey)).getStatusCode());
+        var fakeState=new AcademicRosterCandidateRepository.Receipt(
+            "command","same-key","TARGET","record-1",10,"COMMITTED");
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.acknowledge("Bearer admin",request,fakeState)).getStatusCode());
+        verifyNoInteractions(journal,claims);
+        verify(identity,never()).currentPrincipal(any());
+    }
+
+    @Test void malformedRetryAmountsReturnConflictWithoutReleasingOrCommittingHandoff() {
+        admin();
+        var receipt=new AcademicRosterCandidateRepository.Receipt(
+            "command","same-key","TARGET","record-1",10,"STAGED");
+        var nonExact=request("TARGET","UPSERT",new BigDecimal("7.501"));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.acknowledge("Bearer admin",nonExact,receipt)).getStatusCode());
+        var missingValue=request("TARGET","UPSERT",null);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.acknowledge("Bearer admin",missingValue,receipt)).getStatusCode());
+        var forgedDelete=request("TARGET","DELETE",BigDecimal.ONE);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->svc.acknowledge("Bearer admin",forgedDelete,receipt)).getStatusCode());
+        verifyNoInteractions(journal,claims);
+    }
+
 }
