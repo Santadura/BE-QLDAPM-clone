@@ -15,9 +15,23 @@ public class AcademicCommandService {
     private final AcademicCoreClient identity;
     private final AcademicWriteClient core;
     private final AcademicCommandInbox inbox;
+    private final AcademicSessionSourceClient fences;
     public AcademicCommandService(AcademicCoreClient identity,
-            AcademicWriteClient core,AcademicCommandInbox inbox) {
-        this.identity=identity;this.core=core;this.inbox=inbox;
+            AcademicWriteClient core,AcademicCommandInbox inbox,
+            AcademicSessionSourceClient fences) {
+        this.identity=identity;this.core=core;this.inbox=inbox;this.fences=fences;
+    }
+
+    private void requireLegacyCoreOwnership() {
+        // A previously entered maintenance freeze must reject new commands
+        // BEFORE an independent PENDING inbox receipt is staged. Core's SQL
+        // triggers are the final race-safe writer fence at transaction commit.
+        var state=fences.writerFence();
+        if(!"CORE".equals(state.academicMode()) ||
+                !"CORE".equals(state.attendanceMode()) ||
+                !"CORE".equals(state.schedulingMode()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic/Scheduling/Attendance maintenance freeze: new Core writes disabled");
     }
     private String hash(String operation,String classId,JsonNode body) {
         try {
@@ -39,6 +53,7 @@ public class AcademicCommandService {
         if(!Set.of("ROLE_ADMIN","ROLE_CS").contains(actor.role()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                 "Only Admin or managing CS may edit class sessions");
+        requireLegacyCoreOwnership();
         if(key==null)return core.command(operation,classId,body,bearer,null);
         if(!key.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
