@@ -99,12 +99,24 @@ public class AcademicSessionCandidateRepository {
     }
 
     /** Durable local proof, read only AFTER the @Transactional stage commits. */
+    private record SignedEvent(Evidence evidence,String canonical,
+        String storedJson,String action,String date,String from,String to,
+        String status) {}
+
+    /**
+     * Verify the exact ORIGINAL canonical event bytes, the PostgreSQL
+     * JSONB copy and every typed session value before a Core release.
+     * A historic event lacking canonical bytes is an unresolved rehearsal,
+     * NEVER an implicit authorization to hand back the writer.
+     */
     public Evidence committedEvidence(String actor,String key,String commandId) {
-        List<Evidence> proof=db.query(
+        List<SignedEvent> rows=db.query(
             "SELECT c.operator_username,c.request_key,c.request_hash,c.class_id,"+
             "c.class_session_id,c.source_event_id,c.source_revision,"+
             "c.academic_generation,c.attendance_generation,c.scheduling_generation,"+
-            "c.command_id::text,o.payload_hash "+
+            "c.command_id::text,o.payload_hash,o.payload_canonical,o.payload::text,"+
+            "c.action,s.session_date::text,s.start_time::text,s.end_time::text,"+
+            "s.status "+
             "FROM academic_session_candidate_commands c "+
             "JOIN academic_session_candidate_slots s ON s.command_id=c.command_id "+
             "JOIN academic_session_candidate_outbox o ON o.command_id=c.command_id "+
@@ -113,15 +125,78 @@ public class AcademicSessionCandidateRepository {
             "AND s.class_id=c.class_id AND s.class_session_id=c.class_session_id "+
             "AND s.source_event_id=c.source_event_id "+
             "AND s.source_revision=c.source_revision AND o.event_kind='REHEARSAL_ONLY'",
-            (rs,i)->new Evidence(rs.getString(1),rs.getString(2),
-                rs.getString(3),rs.getString(4),rs.getString(5),rs.getLong(6),
+            (rs,i)->new SignedEvent(new Evidence(
+                rs.getString(1),rs.getString(2),rs.getString(3),
+                rs.getString(4),rs.getString(5),rs.getLong(6),
                 rs.getLong(7),rs.getLong(8),rs.getLong(9),rs.getLong(10),
-                rs.getString(11),rs.getString(12)),actor,key,commandId);
-        if(proof.size()!=1 || proof.get(0).outboxHash()==null ||
-            !proof.get(0).outboxHash().matches("[0-9a-f]{64}"))
+                rs.getString(11),rs.getString(12)),
+                rs.getString(13),rs.getString(14),rs.getString(15),
+                rs.getString(16),rs.getString(17),rs.getString(18),
+                rs.getString(19)),
+            actor,key,commandId);
+        if(rows.size()!=1)
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Academic candidate has no atomic durable command, slot and outbox");
-        return proof.get(0);
+        var row=rows.get(0);
+        var proof=row.evidence();
+        if(proof.outboxHash()==null ||
+            !proof.outboxHash().matches("[0-9a-f]{64}") ||
+            row.canonical()==null || row.canonical().isBlank() ||
+            row.storedJson()==null || row.action()==null ||
+            row.status()==null || row.date()==null ||
+            row.from()==null || row.to()==null)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic session candidate canonical outbox evidence missing");
+        final ObjectNode expected=json.createObjectNode();
+        final com.fasterxml.jackson.databind.JsonNode stored;
+        try {
+            var date=LocalDate.parse(row.date());
+            var from=LocalTime.parse(row.from());
+            var to=LocalTime.parse(row.to());
+            if(!to.isAfter(from) ||
+                !("RESCHEDULE".equals(row.action()) &&
+                    "PLANNED".equals(row.status()) ||
+                  "CANCEL".equals(row.action()) &&
+                    "CANCELLED".equals(row.status())))
+                throw new IllegalArgumentException("Invalid session candidate slot");
+            expected.put("commandId",proof.commandId());
+            expected.put("operator",proof.actor());
+            expected.put("requestKey",proof.key());
+            expected.put("classId",proof.classId());
+            expected.put("sessionId",proof.sessionId());
+            expected.put("sourceEventId",proof.eventId());
+            expected.put("sourceRevision",proof.revision());
+            expected.put("action",row.action());
+            expected.put("date",date.toString());
+            expected.put("startTime",from.toString());
+            expected.put("endTime",to.toString());
+            expected.put("status",row.status());
+            expected.put("academicGeneration",proof.academicGeneration());
+            expected.put("attendanceGeneration",proof.attendanceGeneration());
+            expected.put("schedulingGeneration",proof.schedulingGeneration());
+            stored=json.readTree(row.storedJson());
+        } catch(Exception ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Invalid typed Academic session candidate source evidence",ex);
+        }
+        if(!expected.toString().equals(row.canonical()) ||
+            !AcademicSessionSourceRepository.sha256(row.canonical())
+                .equals(proof.outboxHash()) ||
+            stored==null || !stored.isObject() ||
+            stored.size()!=expected.size())
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic session candidate canonical SHA-256 or JSONB copy diverged");
+        for(var iter=expected.fields();iter.hasNext();) {
+            var entry=iter.next();
+            var actual=stored.get(entry.getKey());
+            var wanted=entry.getValue();
+            if(actual==null || wanted.isTextual()!=actual.isTextual() ||
+                wanted.isNumber()!=actual.isNumber() ||
+                !wanted.asText().equals(actual.asText()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Academic session candidate payload differs from immutable receipt");
+        }
+        return proof;
     }
 
     /**
@@ -291,11 +366,11 @@ public class AcademicSessionCandidateRepository {
         String payload=event.toString();
         int outbox=db.update(
             "INSERT INTO academic_session_candidate_outbox "+
-            "(outbox_id,command_id,event_kind,payload,payload_hash) "+
+            "(outbox_id,command_id,event_kind,payload,payload_hash,payload_canonical) "+
             "VALUES(CAST(? AS UUID),CAST(? AS UUID),'REHEARSAL_ONLY',"+
-            "CAST(? AS JSONB),?)",
+            "CAST(? AS JSONB),?,?)",
             UUID.randomUUID().toString(),committedId,payload,
-            AcademicSessionSourceRepository.sha256(payload));
+            AcademicSessionSourceRepository.sha256(payload),payload);
         if(slot!=1 || outbox!=1)
             throw new IllegalStateException("Atomic Academic candidate/outbox write failed");
         return new Receipt(committedId,plan.key(),plan.classId(),
