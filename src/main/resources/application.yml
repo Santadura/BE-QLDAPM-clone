@@ -46,6 +46,8 @@ iig:
     internal-key: ${ACADEMIC_INTERNAL_API_KEY:}
     public-write-enabled: ${ACADEMIC_PUBLIC_WRITE_ENABLED:true}
     candidate-claims-enabled: ${ACADEMIC_CANDIDATE_CLAIMS_ENABLED:false}
+    # Private Core roster claims; production/default OFF until rehearsal.
+    roster-claims-enabled: ${ACADEMIC_ROSTER_CLAIMS_ENABLED:false}
   scheduling:
     bridge-enabled: ${SCHEDULING_BRIDGE_ENABLED:false}
     assignment-relay-enabled: ${SCHEDULING_ASSIGNMENT_RELAY_ENABLED:false}
