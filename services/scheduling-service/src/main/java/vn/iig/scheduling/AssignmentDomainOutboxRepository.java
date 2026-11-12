@@ -156,6 +156,30 @@ public class AssignmentDomainOutboxRepository {
                 rs.getInt(11)),limit);
     }
 
+    /**
+     * Immutable reference events whose local command reached COMPENSATING.
+     * A remote timeout is ambiguous: these rows are NEVER replayed as a
+     * business write, but may be checked against Core's committed receipt.
+     */
+    public List<Event> awaitingVerifiedRecovery(int limit) {
+        if(limit<1 || limit>50)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Verified Scheduling recovery batch must contain 1..50 rows");
+        return db.query(
+            "SELECT o.event_id,o.actor_username,o.operation,o.request_key,o.source_type,"+
+            "o.schedule_id,o.revision,o.event_kind,o.payload::text,o.payload_hash,o.attempt_count "+
+            "FROM scheduling_assignment_domain_outbox o "+
+            "JOIN scheduling_assignment_command_inbox inbox "+
+            "ON inbox.actor_username=o.actor_username "+
+            "AND inbox.operation=o.operation AND inbox.request_key=o.request_key "+
+            "WHERE o.delivered_at IS NULL AND inbox.state='COMPENSATING' "+
+            "ORDER BY o.created_at,o.event_id LIMIT ?",
+            (rs,i)->new Event(rs.getString(1),rs.getString(2),rs.getString(3),
+                rs.getString(4),rs.getString(5),rs.getString(6),
+                rs.getLong(7),rs.getString(8),rs.getString(9),rs.getString(10),
+                rs.getInt(11)),limit);
+    }
+
     /** Exact event+digest acknowledgement cannot skip a later revision. */
     public boolean acknowledge(String eventId,String hash) {
         if(eventId==null || eventId.isBlank() || hash==null ||
