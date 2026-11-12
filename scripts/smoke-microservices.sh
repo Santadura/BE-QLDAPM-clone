@@ -650,6 +650,34 @@ local_receipts="$("${COMPOSE[@]}" exec -T attendance-postgres psql -U iig_attend
 test "$core_receipts" = "1" && test "$local_receipts" = "1" || {
   echo "Transactional Core or Attendance command receipt missing"; exit 1;
 }
+
+# Core's completed receipt must be SQL-immutable: otherwise the independent
+# recovery worker could be tricked into accepting a forged outcome.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db \
+  -v ON_ERROR_STOP=1 >/dev/null <<SQL
+DO \$\$
+BEGIN
+  BEGIN
+    UPDATE teacher_attendance_command_receipts
+      SET request_hash=repeat('b',64)
+      WHERE actor_username='cs001' AND request_key='${receipt_key}';
+    RAISE EXCEPTION 'Core attendance committed receipt digest was mutable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM teacher_attendance_command_receipts
+      WHERE actor_username='cs001' AND request_key='${receipt_key}';
+    RAISE EXCEPTION 'Core attendance committed receipt was erasable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  BEGIN
+    TRUNCATE teacher_attendance_command_receipts;
+    RAISE EXCEPTION 'Core attendance command journal was truncatable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END \$\$;
+SQL
+
 audit_after="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
   "SELECT count(*) FROM audit_logs WHERE action='RECORD_TEACHER_ATTENDANCE_PRESENT' AND entity_id='teaching-001'" | tr -d '[:space:]')"
 source_after="$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -tAc \
