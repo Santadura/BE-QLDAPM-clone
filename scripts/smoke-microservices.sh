@@ -2524,15 +2524,53 @@ SQL
   race_key="${candidate_key}-race"
   race_payload="${candidate_payload/$candidate_key/$race_key}"
   race_dir="$(mktemp -d)"
-  (candidate_post "$race_payload" >"$race_dir/a.json") &
+  (candidate_post "$race_payload" >"$race_dir/a.json" 2>"$race_dir/a.err") &
   race_a=$!
-  (candidate_post "$race_payload" >"$race_dir/b.json") &
+  (candidate_post "$race_payload" >"$race_dir/b.json" 2>"$race_dir/b.err") &
   race_b=$!
-  if ! wait "$race_a" || ! wait "$race_b"; then
-    echo "Concurrent candidate HTTP retry failed"
+  if wait "$race_a"; then race_a_ok=true; else race_a_ok=false; fi
+  if wait "$race_b"; then race_b_ok=true; else race_b_ok=false; fi
+  if [ "$race_a_ok" = false ] && [ "$race_b_ok" = false ]; then
+    echo "Neither concurrent Academic candidate request committed" >&2
+    cat "$race_dir/"*.err >&2
     rm -rf "$race_dir"
     exit 1
   fi
+  # Safety fence intentionally rejects a second concurrent request while
+  # the first Core claim is OPEN. A bounded same-key retry is legitimate
+  # ONLY after one request has committed, and ONLY for the expected 409.
+  # A 5xx, timeout, different key or changed response is never swallowed.
+  for slot in a b; do
+    flag="race_${slot}_ok"
+    if [ "${!flag}" = false ]; then
+      grep -q '409' "$race_dir/$slot.err" || {
+        echo "Concurrent candidate returned unexpected failure" >&2
+        cat "$race_dir/$slot.err" >&2
+        rm -rf "$race_dir"
+        exit 1
+      }
+      succeeded=false
+      for attempt in $(seq 1 8); do
+        sleep 1
+        if candidate_post "$race_payload" >"$race_dir/$slot.json" 2>"$race_dir/$slot.err"; then
+          succeeded=true
+          break
+        fi
+        grep -q '409' "$race_dir/$slot.err" || {
+          echo "Candidate retry failed with a non-conflict error" >&2
+          cat "$race_dir/$slot.err" >&2
+          rm -rf "$race_dir"
+          exit 1
+        }
+      done
+      test "$succeeded" = true || {
+        echo "Academic claim never converged after bounded same-key retries" >&2
+        cat "$race_dir/$slot.err" >&2
+        rm -rf "$race_dir"
+        exit 1
+      }
+    fi
+  done
   RACE_A="$(cat "$race_dir/a.json")" RACE_B="$(cat "$race_dir/b.json")" \
     python3 -c 'import json,os; a=json.loads(os.environ["RACE_A"]); b=json.loads(os.environ["RACE_B"]); assert a==b and a["state"]=="STAGED",(a,b)'
   rm -rf "$race_dir"
