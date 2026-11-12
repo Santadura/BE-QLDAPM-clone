@@ -160,6 +160,10 @@ public class AcademicCoreClient {
         };
     }
 
+    public String students(String bearer) {
+        return liveGet("/api/students",bearer,null);
+    }
+
     public String planning(String bearer) {
         return liveGet("/api/class-planning",bearer,null);
     }
