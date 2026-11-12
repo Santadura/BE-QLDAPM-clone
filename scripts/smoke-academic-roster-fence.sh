@@ -144,6 +144,11 @@ assert p["writerGeneration"]==2 and p["sourceEvents"]>=0
 assert p["lastEventId"]>=0 and p["distinctEntities"]>=0,p
 '
 
+# The two independently staged Target/Result write rehearsals are allowed
+# only while the entire Core student/roster write domain is frozen. They
+# never publish authoritative events or mutate the imported projections.
+bash scripts/smoke-academic-roster-candidates.sh
+
 # Hand back, verify admission and return to QUIESCED. A naive proof looking
 # at writerMode alone cannot detect this ABA; only generation 4 is valid.
 core_sql "UPDATE academic_roster_writer_control SET writer_mode='CORE'
