@@ -13,11 +13,14 @@ class AcademicCommandServiceTest {
     AcademicWriteClient core=mock(AcademicWriteClient.class);
     AcademicCommandInbox inbox=mock(AcademicCommandInbox.class);
     AcademicSessionSourceClient fences=mock(AcademicSessionSourceClient.class);
-    AcademicCommandService service=new AcademicCommandService(identity,core,inbox,fences);
+    AcademicRosterSourceClient rosterFences=mock(AcademicRosterSourceClient.class);
+    AcademicCommandService service=new AcademicCommandService(identity,core,inbox,fences,rosterFences);
     AcademicCommandServiceTest() {
         when(fences.writerFence()).thenReturn(
             new AcademicSessionSourceClient.WriterFence(
                 "CORE",1,"CORE",1,"CORE",1));
+        when(rosterFences.writerFence()).thenReturn(
+            new AcademicRosterSourceClient.WriterFence("CORE",1));
     }
     JsonNode body=new ObjectMapper().createArrayNode();
     @Test void rejectsWrongRoleBeforeInsertingCommand() {
@@ -90,4 +93,30 @@ class AcademicCommandServiceTest {
         verifyNoInteractions(inbox,core);
     }
 
+    @Test void rosterOnlyFreezeBlocksCoreSessionWriteBeforeInboxStaging() {
+        when(identity.currentPrincipal("Bearer admin")).thenReturn(
+            new AcademicCoreClient.Principal("admin","ROLE_ADMIN"));
+        when(rosterFences.writerFence()).thenReturn(
+            new AcademicRosterSourceClient.WriterFence("QUIESCED",2));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(ResponseStatusException.class,
+            ()->service.execute("PLAN","class-1",body,"Bearer admin","frozen-roster-key"))
+            .getStatusCode());
+        assertEquals(HttpStatus.CONFLICT,assertThrows(ResponseStatusException.class,
+            ()->service.execute("RESCHEDULE","class-1",
+                new ObjectMapper().createObjectNode(),"Bearer admin",null))
+            .getStatusCode());
+        verifyNoInteractions(inbox,core);
+    }
+    @Test void rosterFenceOutageFailsClosedBeforeCoreMutation() {
+        when(identity.currentPrincipal("Bearer admin")).thenReturn(
+            new AcademicCoreClient.Principal("admin","ROLE_ADMIN"));
+        when(rosterFences.writerFence()).thenThrow(
+            new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core roster writer source offline"));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,
+            ()->service.execute("PLAN","class-1",body,"Bearer admin","key"))
+            .getStatusCode());
+        verifyNoInteractions(inbox,core);
+    }
 }

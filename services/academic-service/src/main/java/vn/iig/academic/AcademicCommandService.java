@@ -16,10 +16,12 @@ public class AcademicCommandService {
     private final AcademicWriteClient core;
     private final AcademicCommandInbox inbox;
     private final AcademicSessionSourceClient fences;
+    private final AcademicRosterSourceClient rosterFences;
     public AcademicCommandService(AcademicCoreClient identity,
             AcademicWriteClient core,AcademicCommandInbox inbox,
-            AcademicSessionSourceClient fences) {
+            AcademicSessionSourceClient fences,AcademicRosterSourceClient rosterFences) {
         this.identity=identity;this.core=core;this.inbox=inbox;this.fences=fences;
+        this.rosterFences=rosterFences;
     }
 
     private void requireLegacyCoreOwnership() {
@@ -27,11 +29,16 @@ public class AcademicCommandService {
         // BEFORE an independent PENDING inbox receipt is staged. Core's SQL
         // triggers are the final race-safe writer fence at transaction commit.
         var state=fences.writerFence();
-        if(!"CORE".equals(state.academicMode()) ||
+        // Session writes may affect class/student enrollments. A roster-only
+        // maintenance freeze must stop NEW commands before local inbox staging;
+        // Core's SQL session trigger is still the final concurrency fence.
+        var roster=rosterFences.writerFence();
+        if(roster==null || !"CORE".equals(roster.mode()) || roster.generation()<1 ||
+                !"CORE".equals(state.academicMode()) ||
                 !"CORE".equals(state.attendanceMode()) ||
                 !"CORE".equals(state.schedulingMode()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Academic/Scheduling/Attendance maintenance freeze: new Core writes disabled");
+                "Academic/Roster/Scheduling/Attendance maintenance freeze: new Core writes disabled");
     }
     private String hash(String operation,String classId,JsonNode body) {
         try {
