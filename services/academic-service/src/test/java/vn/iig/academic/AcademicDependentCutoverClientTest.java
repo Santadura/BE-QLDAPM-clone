@@ -14,6 +14,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 class AcademicDependentCutoverClientTest {
     private MockRestServiceServer attendance;
     private MockRestServiceServer scheduling;
+    private MockRestServiceServer payroll;
     private AcademicDependentCutoverClient client;
     private static final String A="{\"ready\":true,\"state\":\"READY\","+
         "\"sourceRows\":2,\"verifiedRows\":2,\"mismatchCount\":0}";
@@ -22,13 +23,18 @@ class AcademicDependentCutoverClientTest {
         "\"checkedRows\":3,\"mismatches\":0,\"pendingChanges\":0,"+
         "\"unresolvedCommands\":0,\"liveSchedules\":3,\"trackedLiveSchedules\":3}";
 
+    private static final String P="{\"ready\":true,\"lastEventId\":7,"+
+        "\"eventCount\":5,\"attendanceGeneration\":4,\"schedulingGeneration\":4}";
+
     @BeforeEach void setup() {
         RestClient.Builder a=RestClient.builder().baseUrl("http://attendance:8100");
         RestClient.Builder s=RestClient.builder().baseUrl("http://scheduling:8098");
+        RestClient.Builder p=RestClient.builder().baseUrl("http://payroll:8097");
         attendance=MockRestServiceServer.bindTo(a).build();
         scheduling=MockRestServiceServer.bindTo(s).build();
+        payroll=MockRestServiceServer.bindTo(p).build();
         client=new AcademicDependentCutoverClient(a.build(),"attendance-secret",
-            s.build(),"scheduling-secret");
+            s.build(),"scheduling-secret",p.build(),"payroll-secret");
     }
 
     void replyAttendance(String body) {
@@ -42,12 +48,34 @@ class AcademicDependentCutoverClientTest {
             .andRespond(withSuccess(body,MediaType.APPLICATION_JSON));
     }
 
+    void replyPayroll(String body) {
+        payroll.expect(requestTo("http://payroll:8097/internal/payroll/attendance-reference/verify"))
+            .andExpect(header("X-Internal-Key","payroll-secret"))
+            .andRespond(withSuccess(body,MediaType.APPLICATION_JSON));
+    }
+
     @Test void independentPrivateReportsMustBothBeFullyReady() {
-        replyAttendance(A);replyScheduling(S);
+        replyAttendance(A);replyScheduling(S);replyPayroll(P);
         var proof=client.verify();
         assertEquals(2,proof.attendance().path("verifiedRows").asInt());
         assertEquals(3,proof.scheduling().path("checkedRows").asInt());
-        attendance.verify();scheduling.verify();
+        assertEquals(5,proof.payroll().path("eventCount").asInt());
+        attendance.verify();scheduling.verify();payroll.verify();
+    }
+
+    @Test void payrollWithMissingImmutableHistoryCannotAuthorizeFullCutover() {
+        replyAttendance(A);replyScheduling(S);
+        replyPayroll(P.replace("\"eventCount\":5", "\"eventCount\":8"));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,client::verify).getStatusCode());
+    }
+
+    @Test void missingOrUnreachablePayrollProofFailsClosed() {
+        replyAttendance(A);replyScheduling(S);
+        payroll.expect(requestTo("http://payroll:8097/internal/payroll/attendance-reference/verify"))
+            .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,client::verify).getStatusCode());
     }
 
     @Test void forgedReadyFlagCannotHideSchedulingUnresolvedCommand() {

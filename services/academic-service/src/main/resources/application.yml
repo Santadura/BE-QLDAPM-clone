@@ -44,6 +44,8 @@ iig:
     attendance-key: ${ATTENDANCE_INTERNAL_API_KEY}
     scheduling-url: ${SCHEDULING_INTERNAL_URL:http://localhost:8098}
     scheduling-key: ${SCHEDULING_INTERNAL_API_KEY}
+    payroll-url: ${PAYROLL_INTERNAL_URL:http://localhost:8097}
+    payroll-key: ${PAYROLL_INTERNAL_API_KEY}
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${ACADEMIC_INTERNAL_API_KEY}

@@ -368,6 +368,8 @@ services:
       SCHEDULING_INTERNAL_URL: http://scheduling-service:8098
       ATTENDANCE_INTERNAL_API_KEY: ${ATTENDANCE_INTERNAL_API_KEY:-local-dev-attendance-key-change-before-deployment}
       SCHEDULING_INTERNAL_API_KEY: ${SCHEDULING_INTERNAL_API_KEY:-local-dev-scheduling-key-change-before-deployment}
+      PAYROLL_INTERNAL_URL: http://payroll-service:8097
+      PAYROLL_INTERNAL_API_KEY: ${PAYROLL_INTERNAL_API_KEY:-local-dev-payroll-key-change-before-deployment}
     expose:
       - "8099"
     depends_on:

@@ -17,11 +17,13 @@ import org.springframework.web.server.ResponseStatusException;
  */
 @Component
 public class AcademicDependentCutoverClient {
-    public record Proof(JsonNode attendance,JsonNode scheduling) {}
+    public record Proof(JsonNode attendance,JsonNode scheduling,JsonNode payroll) {}
     private final RestClient attendance;
     private final RestClient scheduling;
+    private final RestClient payroll;
     private final String attendanceKey;
     private final String schedulingKey;
+    private final String payrollKey;
 
     private static RestClient client(String url) {
         if(url==null || !url.matches("https?://[^\\s]+"))
@@ -37,22 +39,27 @@ public class AcademicDependentCutoverClient {
             @Value("${iig.crossdomain.attendance-url}") String attendanceUrl,
             @Value("${iig.crossdomain.attendance-key}") String attendanceKey,
             @Value("${iig.crossdomain.scheduling-url}") String schedulingUrl,
-            @Value("${iig.crossdomain.scheduling-key}") String schedulingKey) {
+            @Value("${iig.crossdomain.scheduling-key}") String schedulingKey,
+            @Value("${iig.crossdomain.payroll-url}") String payrollUrl,
+            @Value("${iig.crossdomain.payroll-key}") String payrollKey) {
         this(client(attendanceUrl),attendanceKey,
-            client(schedulingUrl),schedulingKey);
+            client(schedulingUrl),schedulingKey,
+            client(payrollUrl),payrollKey);
     }
 
     // Test seam for signed, private cross-service HTTP contract assertions.
     AcademicDependentCutoverClient(RestClient attendance,String attendanceKey,
-            RestClient scheduling,String schedulingKey) {
-        if(attendance==null || scheduling==null ||
+            RestClient scheduling,String schedulingKey,
+            RestClient payroll,String payrollKey) {
+        if(attendance==null || scheduling==null || payroll==null ||
                 attendanceKey==null || attendanceKey.isBlank() ||
-                schedulingKey==null || schedulingKey.isBlank())
+                schedulingKey==null || schedulingKey.isBlank() ||
+                payrollKey==null || payrollKey.isBlank())
             throw new IllegalArgumentException("Independent cutover clients and keys required");
         this.attendance=attendance;
-        this.scheduling=scheduling;
+        this.scheduling=scheduling;this.payroll=payroll;
         this.attendanceKey=attendanceKey;
-        this.schedulingKey=schedulingKey;
+        this.schedulingKey=schedulingKey;this.payrollKey=payrollKey;
     }
 
     private JsonNode report(RestClient remote,String key,String uri,String domain) {
@@ -103,6 +110,31 @@ public class AcademicDependentCutoverClient {
             s.path("liveSchedules").asLong()!=s.path("trackedLiveSchedules").asLong())
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Independent Attendance/Scheduling cutover counts diverged");
-        return new Proof(a.deepCopy(),s.deepCopy());
+        // Payroll is the final consumer of immutable Attendance history.
+        // Its private verifier replays source events and double-checks
+        // generation/cursor/parity against Payroll's independent database.
+        JsonNode pay;
+        try {
+            pay=payroll.get().uri("/internal/payroll/attendance-reference/verify")
+                .header("X-Internal-Key",payrollKey)
+                .retrieve().body(JsonNode.class);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Payroll independent Attendance reference proof unavailable",ex);
+        }
+        if(pay==null || !pay.isObject() ||
+            !pay.path("ready").isBoolean() || !pay.path("ready").asBoolean() ||
+            !pay.path("lastEventId").isIntegralNumber() ||
+            !pay.path("eventCount").isIntegralNumber() ||
+            !pay.path("attendanceGeneration").isIntegralNumber() ||
+            !pay.path("schedulingGeneration").isIntegralNumber() ||
+            pay.path("lastEventId").asLong()<0 ||
+            pay.path("eventCount").asLong()<0 ||
+            pay.path("eventCount").asLong()>pay.path("lastEventId").asLong() ||
+            pay.path("attendanceGeneration").asLong()<1 ||
+            pay.path("schedulingGeneration").asLong()<1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Payroll has no trustworthy immutable Attendance reference proof");
+        return new Proof(a.deepCopy(),s.deepCopy(),pay.deepCopy());
     }
 }

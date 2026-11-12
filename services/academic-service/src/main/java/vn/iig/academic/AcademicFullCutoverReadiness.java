@@ -73,8 +73,20 @@ public class AcademicFullCutoverReadiness {
         var a1=academic.verify();
         var d1=downstream.verify();
         var n1=nativeSessions.rehearsalSummary();
+        // Verify that Payroll's attendance/scheduling writer generation is
+        // exactly the same frozen Core generation seen by Academic. A
+        // completed projection from another writer epoch is not finality.
+        if(d0!=null && d0.payroll()!=null && a0!=null &&
+           (d0.payroll().path("attendanceGeneration").asLong(-1)!=a0.attendanceGeneration() ||
+            d0.payroll().path("schedulingGeneration").asLong(-1)!=a0.schedulingGeneration()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Payroll downstream writer generation differs from Academic proof");
         if(n1==null || !n0.equals(n1) ||
-            a0==null || d0==null || !a0.equals(a1) || !d0.equals(d1))
+            a0==null || d0==null || d0.payroll()==null ||
+            !a0.equals(a1) || !d0.equals(d1) ||
+            d1.payroll()==null ||
+            d1.payroll().path("attendanceGeneration").asLong(-1)!=a1.attendanceGeneration() ||
+            d1.payroll().path("schedulingGeneration").asLong(-1)!=a1.schedulingGeneration())
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Cross-service cutover evidence changed during independent scans");
         return new Evidence(a1,d1);

@@ -18,17 +18,20 @@ import org.springframework.web.server.ResponseStatusException;
 public class PayrollAttendanceReferenceController {
     private final PayrollAttendanceReferenceRelay relay;
     private final PayrollAttendanceReferenceRepository reference;
+    private final PayrollAttendanceEvidenceClient attendance;
     private final byte[] key;
 
-    public record Report(boolean ready,long lastEventId,long eventCount) {}
+    public record Report(boolean ready,long lastEventId,long eventCount,
+                         long attendanceGeneration,long schedulingGeneration) {}
 
     public PayrollAttendanceReferenceController(
             PayrollAttendanceReferenceRelay relay,
             PayrollAttendanceReferenceRepository reference,
+            PayrollAttendanceEvidenceClient attendance,
             @Value("${iig.core.internal-key}") String secret) {
         if(secret==null || secret.isBlank())
             throw new IllegalArgumentException("PAYROLL_INTERNAL_API_KEY required");
-        this.relay=relay;this.reference=reference;
+        this.relay=relay;this.reference=reference;this.attendance=attendance;
         this.key=secret.getBytes(StandardCharsets.UTF_8);
     }
 
@@ -40,6 +43,27 @@ public class PayrollAttendanceReferenceController {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
                 "Invalid Payroll Attendance reference key");
         relay.requireCaughtUp();
-        return ResponseEntity.ok(new Report(true,reference.cursor(),reference.eventCount()));
+        // An HTTP response is not a transaction across Attendance and Payroll.
+        // Require TWO independently sourced, generation-stable snapshots
+        // around Payroll's local cursor/count/parity queries; never infer
+        // business finality from a matching count alone.
+        var before=attendance.readiness();
+        long cursor=reference.cursor();
+        long count=reference.eventCount();
+        long divergent=reference.divergentLatestRows();
+        var after=attendance.readiness();
+        if(before==null || after==null ||
+            before.sourceRevision()<0 || before.sourceEventCount()<0 ||
+            before.attendanceGeneration()<1 || before.schedulingGeneration()<1 ||
+            before.sourceRevision()!=after.sourceRevision() ||
+            before.sourceEventCount()!=after.sourceEventCount() ||
+            before.attendanceGeneration()!=after.attendanceGeneration() ||
+            before.schedulingGeneration()!=after.schedulingGeneration() ||
+            cursor!=after.sourceRevision() || count!=after.sourceEventCount() ||
+            divergent!=0)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Payroll immutable Attendance reference finality changed or diverged");
+        return ResponseEntity.ok(new Report(true,cursor,count,
+            after.attendanceGeneration(),after.schedulingGeneration()));
     }
 }

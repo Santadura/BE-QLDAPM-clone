@@ -40,7 +40,12 @@ class AcademicFullCutoverReadinessTest {
         scheduling.put("mismatches",0);scheduling.put("pendingChanges",0);
         scheduling.put("unresolvedCommands",0);
         scheduling.put("liveSchedules",rows);scheduling.put("trackedLiveSchedules",rows);
-        return new AcademicDependentCutoverClient.Proof(attendance,scheduling);
+        var payroll=mapper.createObjectNode();
+        payroll.put("ready",true);payroll.put("lastEventId",4);
+        payroll.put("eventCount",3);
+        payroll.put("attendanceGeneration",4);
+        payroll.put("schedulingGeneration",4);
+        return new AcademicDependentCutoverClient.Proof(attendance,scheduling,payroll);
     }
 
     @Test void nativeRehearsalCannotMasqueradeAsProductionCutover() {
@@ -81,6 +86,20 @@ class AcademicFullCutoverReadinessTest {
     @Test void academicWriterAbaAfterFirstReadFailsClosed() {
         when(academic.verify()).thenReturn(academicProof(4),academicProof(6));
         when(downstream.verify()).thenReturn(downstreamProof(3));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,verifier::verify).getStatusCode());
+    }
+
+    @Test void payrollGenerationDoesNotMatchAcademicWriterEpoch() {
+        when(academic.verify()).thenReturn(academicProof(4));
+        var wrong=downstreamProof(3);
+        wrong.payroll().get("attendanceGeneration"); // identity is immutable; modify only a fresh proof
+        var payroll=mapper.createObjectNode();
+        payroll.put("ready",true).put("lastEventId",4).put("eventCount",3)
+            .put("attendanceGeneration",5).put("schedulingGeneration",4);
+        when(downstream.verify()).thenReturn(
+            new AcademicDependentCutoverClient.Proof(
+                wrong.attendance(),wrong.scheduling(),payroll));
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,verifier::verify).getStatusCode());
     }
@@ -130,6 +149,8 @@ class AcademicFullCutoverReadinessTest {
             .path("sourceRows").asInt());
         assertEquals(3,json.path("downstream").path("scheduling")
             .path("checkedRows").asInt());
+        assertEquals(3,json.path("downstream").path("payroll")
+            .path("eventCount").asInt());
     }
 
 }
