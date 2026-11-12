@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS teacher_attendance_native_reference_receipts (
   attendance_id VARCHAR(50) NOT NULL,
   status VARCHAR(20) NOT NULL CHECK(status IN ('PRESENT','ABSENT','LATE')),
   recorded_by VARCHAR(50) NOT NULL,
+  response_payload JSONB NOT NULL CHECK(jsonb_typeof(response_payload)='object'),
   committed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(teaching_schedule_id,version),
   UNIQUE(claim_id)
