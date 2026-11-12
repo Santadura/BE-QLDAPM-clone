@@ -16,6 +16,7 @@ class_id="class-0001"
 schedule_id="teaching-001"
 claim_key="ci-native-orphan-${GITHUB_RUN_ID}"
 second_key="ci-native-public-${GITHUB_RUN_ID}"
+support_id="native-ci-support-${GITHUB_RUN_ID}"
 FAIL() { echo "Native Attendance cutover E2E: $*" >&2; exit 1; }
 core_sql() {
   "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 -tAc "$1" | tr -d '\r\n'
@@ -36,6 +37,16 @@ login() {
   curl -fsS -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' -d "$1" |
     python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])'
 }
+
+# The default smoke intentionally revokes cs001's exact support shift.
+# Restore a NEW, auditable disposable shift before freezing Scheduling; no
+# stored/replayed CS credentials may be used to bypass current support ACL.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+INSERT INTO staff_schedules(staff_schedule_id,employee_id,class_id,date,
+ start_time,end_time,work_type,status)
+VALUES('$support_id','cs-001','class-0001','2026-10-06',
+ '18:30','20:30','CLASS_SUPPORT','ASSIGNED');
+SQL
 
 # Even on a failure no code path should silently leave an independent writer
 # active on a different machine. The CI runner then destroys all DB volumes.
@@ -58,6 +69,7 @@ UPDATE academic_roster_writer_control SET writer_mode='CORE'
  WHERE singleton=TRUE AND writer_mode='QUIESCED';
 COMMIT;
 SQL
+    core_sql "DELETE FROM staff_schedules WHERE staff_schedule_id='$support_id'" >/dev/null || true
     ATTENDANCE_NATIVE_WRITER_ENABLED=false ATTENDANCE_NATIVE_RECOVERY_ENABLED=false ATTENDANCE_NATIVE_ADMISSION_ENABLED=false "${COMPOSE[@]}" up -d --no-deps --force-recreate attendance-service >/dev/null || true
     ATTENDANCE_NATIVE_REFERENCE_ENABLED=false "${COMPOSE[@]}" up -d --no-deps --force-recreate backend >/dev/null || true
   fi
