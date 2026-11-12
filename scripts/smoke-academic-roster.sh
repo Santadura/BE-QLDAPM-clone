@@ -153,15 +153,18 @@ target_id="ci-target-${GITHUB_RUN_ID}"
 result_id="ci-result-${GITHUB_RUN_ID}"
 course_id="$(core_sql "SELECT course_id FROM classes WHERE class_id='$class_id'")"
 evaluator_id="$(core_sql "SELECT employee_id FROM employees ORDER BY employee_id LIMIT 1")"
-test -n "$course_id" && test -n "$evaluator_id" || {
-  echo "Missing seeded course or employee for student target/result fixture" >&2;exit 1;
+# Core requires an evaluated result to refer to exactly one activity:
+# assignment_id XOR exam_id. Reuse the seeded assignment for this class.
+assignment_id="$(core_sql "SELECT assignment_id FROM assignments WHERE class_id='$class_id' ORDER BY assignment_id LIMIT 1")"
+test -n "$course_id" && test -n "$evaluator_id" && test -n "$assignment_id" || {
+  echo "Missing seeded course, employee or class assignment for student target/result fixture" >&2;exit 1;
 }
 compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
 BEGIN;
 INSERT INTO student_targets(student_target_id,student_id,course_id,target_type,target_value)
   VALUES('$target_id','$key','$course_id','READING',6.50);
-INSERT INTO student_results(student_result_id,student_id,class_id,score,evaluated_by,evaluated_at)
-  VALUES('$result_id','$key','$class_id',8.25,'$evaluator_id',NOW());
+INSERT INTO student_results(student_result_id,student_id,class_id,assignment_id,score,evaluated_by,evaluated_at)
+  VALUES('$result_id','$key','$class_id','$assignment_id',8.25,'$evaluator_id',NOW());
 COMMIT;
 SQL
 metrics_copied=false
