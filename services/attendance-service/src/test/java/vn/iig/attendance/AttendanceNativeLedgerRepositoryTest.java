@@ -46,9 +46,16 @@ class AttendanceNativeLedgerRepositoryTest {
 
     @SuppressWarnings({"unchecked","rawtypes"})
     void originalCommand(String status,String state) {
+        originalCommand(status,state,false);
+    }
+
+    @SuppressWarnings({"unchecked","rawtypes"})
+    void originalCommand(String status,String state,boolean alreadyStored) {
+        var checks=new java.util.concurrent.atomic.AtomicInteger();
         when(db.query(startsWith("SELECT event_id::text,request_hash,facts_token"),
             any(RowMapper.class),eq("cs001"),eq("class-1"),
             eq("teach-1"),eq(KEY))).thenAnswer(call->{
+            if(!alreadyStored && checks.getAndIncrement()==0)return List.of();
             RowMapper mapper=call.getArgument(1);
             ResultSet row=mock(ResultSet.class);
             when(row.getString(1)).thenReturn(ID);
@@ -109,7 +116,7 @@ class AttendanceNativeLedgerRepositoryTest {
     @SuppressWarnings({"unchecked","rawtypes"})
     @Test void sameNativeKeyDoesNotGenerateAnotherDomainVersionOrEvent() {
         originalRow();
-        originalCommand("LATE","PENDING_REFERENCE");
+        originalCommand("LATE","PENDING_REFERENCE",true);
         when(db.update(startsWith("INSERT INTO attendance_native_commands"),
             any(Object[].class))).thenReturn(0);
         when(db.query(startsWith("SELECT event_id::text,actor_username"),
@@ -137,7 +144,7 @@ class AttendanceNativeLedgerRepositoryTest {
 
     @Test void hashChangeUnderSameKeyIsRejectedWithoutOverwritingAnEvent() {
         originalRow();
-        originalCommand("PRESENT","PENDING_REFERENCE");
+        originalCommand("PRESENT","PENDING_REFERENCE",true);
         when(db.update(startsWith("INSERT INTO attendance_native_commands"),
             any(Object[].class))).thenReturn(0);
         assertEquals(HttpStatus.CONFLICT,assertThrows(
