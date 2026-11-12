@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS attendance_native_recovery_attempts (
   next_attempt_at TIMESTAMPTZ NOT NULL,
   last_failure_class VARCHAR(120) NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-)@@
+);
 CREATE INDEX IF NOT EXISTS attendance_native_recovery_operator_queue
   ON attendance_native_recovery_attempts(state,next_attempt_at)
-  WHERE state IN ('RETRY','OPERATOR_REVIEW')@@
+  WHERE state IN ('RETRY','OPERATOR_REVIEW');
