@@ -38,6 +38,7 @@ class AcademicCrossDomainCutoverReadinessControllerTest {
         var evidence=new AcademicFullCutoverReadiness.Evidence(academic,
             new AcademicDependentCutoverClient.Proof(
                 new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode(),
+                new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode(),
                 new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()));
         when(readiness.verify()).thenReturn(evidence);
         var response=controller.inspect("private","Bearer admin");
