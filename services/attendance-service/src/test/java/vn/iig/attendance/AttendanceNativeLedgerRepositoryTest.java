@@ -228,4 +228,38 @@ class AttendanceNativeLedgerRepositoryTest {
         verify(db,never()).update(anyString(),any(Object[].class));
     }
 
+    @SuppressWarnings({"unchecked","rawtypes"})
+    @Test void completedCommandReplayReadsImmutableOriginalWithoutWritingAnything()
+            throws Exception {
+        String canonical="{\\"eventId\\":\\""+ID+"\\"}";
+        String digest=AttendanceNativeLedgerRepository.digest(canonical);
+        when(db.query(contains("c.state='COMMITTED' AND o.confirmed_at IS NOT NULL"),
+            any(RowMapper.class),eq("cs001"),eq("class-1"),eq("teach-1"),
+            eq(KEY))).thenAnswer(call->{
+            RowMapper mapper=call.getArgument(1);
+            ResultSet row=mock(ResultSet.class);
+            when(row.getString(1)).thenReturn(ID);
+            when(row.getString(2)).thenReturn("cs001");
+            when(row.getString(3)).thenReturn("class-1");
+            when(row.getString(4)).thenReturn("teach-1");
+            when(row.getString(5)).thenReturn(KEY);
+            when(row.getLong(6)).thenReturn(4L);
+            when(row.getString(7)).thenReturn(canonical);
+            when(row.getString(8)).thenReturn(digest);
+            when(row.getString(9)).thenReturn(admitted("LATE").requestHash());
+            return List.of(mapper.mapRow(row,0));
+        });
+        var replay=ledger.completedForKey("cs001","class-1","teach-1",KEY,
+            admitted("LATE").requestHash());
+        assertNotNull(replay);
+        assertEquals(ID,replay.eventId());
+        assertEquals(digest,replay.payloadHash());
+        assertEquals(4,replay.version());
+        verify(db,never()).update(anyString(),any(Object[].class));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->ledger.completedForKey("cs001","class-1","teach-1",KEY,
+                admitted("PRESENT").requestHash())).getStatusCode());
+    }
+
 }
