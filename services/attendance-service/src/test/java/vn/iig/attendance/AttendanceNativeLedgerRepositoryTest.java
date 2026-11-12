@@ -30,7 +30,10 @@ class AttendanceNativeLedgerRepositoryTest {
 
     @SuppressWarnings({"unchecked","rawtypes"})
     void originalRow() {
-        when(db.query(startsWith("SELECT attendance_id,class_id,version,status"),
+        when(db.queryForObject(
+            startsWith("SELECT COUNT(*) FROM attendance_native_activations"),
+            eq(Long.class),eq(2L))).thenReturn(1L);
+        when(db.query(startsWith("SELECT attendance_id,version,status"),
             any(RowMapper.class),eq("teach-1"))).thenAnswer(call->{
             RowMapper mapper=call.getArgument(1);
             ResultSet row=mock(ResultSet.class);
@@ -71,6 +74,9 @@ class AttendanceNativeLedgerRepositoryTest {
     }
 
     @Test void unchangedSourceMustBeBootstrappedBeforeNativeWrite() {
+        when(db.queryForObject(
+            startsWith("SELECT COUNT(*) FROM attendance_native_activations"),
+            eq(Long.class),eq(2L))).thenReturn(1L);
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,
             ()->ledger.stage(admitted("PRESENT"))).getStatusCode());
@@ -159,4 +165,60 @@ class AttendanceNativeLedgerRepositoryTest {
             ResponseStatusException.class,()->ledger.pending(51)).getStatusCode());
         verifyNoInteractions(db);
     }
+    @Test void nativeWriterActivationRefusesMissingHistoricalEvents() {
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_native_activations"),
+            eq(Long.class))).thenReturn(0L);
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_native_commands"),
+            eq(Long.class))).thenReturn(0L);
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_native_teacher_rows"),
+            eq(Long.class))).thenReturn(0L);
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_teacher_ledger"),
+            eq(Long.class))).thenReturn(1L);
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_teacher_event_history"),
+            eq(Long.class))).thenReturn(0L);
+        when(db.queryForObject(startsWith("SELECT last_event_id"),
+            eq(Long.class))).thenReturn(1L);
+        var proof=new AttendanceNativeLedgerRepository.Activation(
+            "admin",2,1,1,1,"a".repeat(64));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,()->ledger.activate(proof)).getStatusCode());
+        verify(db,never()).update(anyString(),any(Object[].class));
+    }
+
+    @Test void exactFrozenSourceIsSeededTogetherWithImmutableGenerationReceipt() {
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_native_activations"),
+            eq(Long.class))).thenReturn(0L);
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_native_commands"),
+            eq(Long.class))).thenReturn(0L);
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_native_teacher_rows"),
+            eq(Long.class))).thenReturn(0L);
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_teacher_ledger"),
+            eq(Long.class))).thenReturn(2L);
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_teacher_event_history"),
+            eq(Long.class))).thenReturn(3L);
+        when(db.queryForObject(startsWith("SELECT last_event_id"),
+            eq(Long.class))).thenReturn(5L);
+        when(db.queryForObject(startsWith("SELECT COUNT(*) FROM attendance_teacher_ledger WHERE event_kind"),
+            eq(Long.class))).thenReturn(1L);
+        when(db.update(startsWith("INSERT INTO attendance_native_teacher_rows"),
+            any(Object[].class))).thenReturn(1);
+        when(db.update(startsWith("INSERT INTO attendance_native_activations"),
+            any(Object[].class))).thenReturn(1);
+        var proof=new AttendanceNativeLedgerRepository.Activation(
+            "admin",4,2,3,5,"c".repeat(64));
+        assertEquals(1,ledger.activate(proof));
+        verify(db).update(startsWith("INSERT INTO attendance_native_activations"),
+            eq(4L),eq(2L),eq(3L),eq(5L),eq("c".repeat(64)),
+            eq("admin"),eq(1L));
+    }
+
+    @Test void noNativeGenerationMayWriteBeforeItsActivationWasProven() {
+        when(db.queryForObject(
+            startsWith("SELECT COUNT(*) FROM attendance_native_activations"),
+            eq(Long.class),eq(2L))).thenReturn(0L);
+        assertEquals(HttpStatus.CONFLICT,assertThrows(ResponseStatusException.class,
+            ()->ledger.stage(admitted("PRESENT"))).getStatusCode());
+        verify(db,never()).update(anyString(),any(Object[].class));
+    }
+
 }
