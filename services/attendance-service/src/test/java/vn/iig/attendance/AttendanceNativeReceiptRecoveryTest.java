@@ -66,4 +66,68 @@ class AttendanceNativeReceiptRecoveryTest {
         assertEquals("true",annotation.havingValue());
         assertFalse(annotation.matchIfMissing());
     }
+    private AttendanceNativeReferenceClient.Claim orphan(String key) {
+        return new AttendanceNativeReferenceClient.Claim(
+            "11111111-1111-1111-1111-111111111111","cs001","employee-1",
+            "class-1","teach-1",key,
+            AttendanceCommandService.fingerprint("class-1","teach-1","PRESENT"),
+            "PRESENT","a".repeat(64),2,null,null,"ATTENDANCE","OPEN");
+    }
+
+    @Test void claimSurvivesCrashBeforeLocalTransactionAndReconstructsExactEvent() {
+        var claim=orphan("request-1");
+        when(core.recoverable(25)).thenReturn(List.of(claim));
+        when(ledger.stage(any())).thenReturn(
+            new AttendanceNativeLedgerRepository.Committed(one.eventId(),"PRESENT",1,false));
+        when(ledger.event(one.eventId())).thenReturn(one);
+        when(core.reference(one)).thenReturn(
+            new AttendanceNativeReferenceClient.Receipt(one.eventId(),
+                one.teachingScheduleId(),1,one.payloadHash(),"COMMITTED",
+                new ObjectMapper().createObjectNode().put("teachingScheduleId","teach-1")));
+        repair.tick();
+        verify(ledger).stage(argThat(a->
+            claim.coreClaimId().equals(a.coreClaimId()) &&
+            claim.requestKey().equals(a.requestKey()) &&
+            claim.requestHash().equals(a.requestHash()) &&
+            claim.writerGeneration()==a.writerGeneration()));
+        verify(ledger).confirm(eq(one),any());
+    }
+
+    @Test void orphanClaimWithLostCoreReplyKeepsLocalOutboxPending() {
+        var claim=orphan("request-1");
+        when(ledger.stage(any())).thenReturn(
+            new AttendanceNativeLedgerRepository.Committed(one.eventId(),"PRESENT",1,false));
+        when(ledger.event(one.eventId())).thenReturn(one);
+        when(core.reference(one)).thenThrow(new ResponseStatusException(
+            HttpStatus.SERVICE_UNAVAILABLE,"Lost acknowledgement"));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,()->repair.recoverClaim(claim)).getStatusCode());
+        verify(ledger,never()).confirm(any(),any());
+    }
+
+    @Test void revokedOrIncompleteCoreClaimNeverWritesAttendance() {
+        var claim=new AttendanceNativeReferenceClient.Claim(
+            "11111111-1111-1111-1111-111111111111","cs001","employee-1",
+            "class-1","teach-1","request-1","a".repeat(64),
+            "PRESENT","a".repeat(64),2,null,null,"ATTENDANCE","CONFIRMED");
+        assertThrows(IllegalArgumentException.class,()->repair.recoverClaim(claim));
+        verifyNoInteractions(ledger);
+    }
+
+    @Test void localCommitCanSurviveCrashAndRepeatedCoreOrphanScan() {
+        var claim=orphan("request-1");
+        when(ledger.stage(any())).thenReturn(
+            new AttendanceNativeLedgerRepository.Committed(one.eventId(),"PRESENT",1,false));
+        when(ledger.event(one.eventId())).thenReturn(one);
+        when(core.reference(one)).thenReturn(
+            new AttendanceNativeReferenceClient.Receipt(one.eventId(),
+                one.teachingScheduleId(),1,one.payloadHash(),"COMMITTED",
+                new ObjectMapper().createObjectNode().put("teachingScheduleId","teach-1")));
+        assertTrue(repair.recoverClaim(claim));
+        assertTrue(repair.recoverClaim(claim));
+        verify(ledger,times(2)).stage(any());
+        verify(ledger,times(2)).event(one.eventId());
+        verify(ledger,times(2)).confirm(eq(one),any());
+    }
+
 }
