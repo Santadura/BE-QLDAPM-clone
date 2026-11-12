@@ -35,6 +35,11 @@ public class AcademicRosterCandidateController {
         if(!MessageDigest.isEqual(key,provided))
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
                 "Private Academic target/result candidate key required");
-        return service.stage(bearer,request);
+        // Stage returns ONLY after Academic's independent SQL transaction has
+        // committed all three immutable facts. Remote release is a distinct
+        // idempotent call; a crash here is repaired from local outbox evidence.
+        var receipt=service.stage(bearer,request);
+        service.acknowledge(bearer,request,receipt);
+        return receipt;
     }
 }
