@@ -271,3 +271,72 @@ DROP TRIGGER IF EXISTS trg_iig_candidate_handoff_receipt_no_truncate
 CREATE TRIGGER trg_iig_candidate_handoff_receipt_no_truncate
   BEFORE TRUNCATE ON academic_candidate_handoff_receipts
   FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+
+
+-- Phase 8r: independently persisted Academic student + class roster source.
+-- Core remains public write owner. This schema never writes Core's database.
+-- Every source event remains immutable, including DELETE tombstones.
+CREATE TABLE IF NOT EXISTS academic_roster_source_receipts (
+  event_id BIGINT PRIMARY KEY CHECK(event_id>0),
+  entity_type VARCHAR(20) NOT NULL CHECK(entity_type IN ('STUDENT','MEMBERSHIP')),
+  entity_id VARCHAR(50) NOT NULL,
+  event_kind VARCHAR(10) NOT NULL CHECK(event_kind IN ('UPSERT','DELETE')),
+  source_revision BIGINT NOT NULL CHECK(source_revision>=1),
+  payload_hash CHAR(64) NOT NULL CHECK(payload_hash ~ '^[0-9a-f]{64}$'),
+  source_payload JSONB NOT NULL CHECK(jsonb_typeof(source_payload)='object'),
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+CREATE INDEX IF NOT EXISTS academic_roster_receipts_entity
+  ON academic_roster_source_receipts(entity_type,entity_id,event_id DESC)@@
+
+CREATE TABLE IF NOT EXISTS academic_students_shadow (
+  student_id VARCHAR(50) PRIMARY KEY,
+  student_code VARCHAR(30) NOT NULL,
+  full_name VARCHAR(100) NOT NULL,
+  status VARCHAR(20) NOT NULL,
+  event_kind VARCHAR(10) NOT NULL CHECK(event_kind IN ('UPSERT','DELETE')),
+  source_event_id BIGINT NOT NULL CHECK(source_event_id>0),
+  source_revision BIGINT NOT NULL CHECK(source_revision>=1),
+  source_payload JSONB NOT NULL CHECK(jsonb_typeof(source_payload)='object'),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+
+CREATE TABLE IF NOT EXISTS academic_class_memberships_shadow (
+  class_student_id VARCHAR(50) PRIMARY KEY,
+  class_id VARCHAR(50) NOT NULL,
+  student_id VARCHAR(50) NOT NULL,
+  membership_status VARCHAR(20) NOT NULL,
+  event_kind VARCHAR(10) NOT NULL CHECK(event_kind IN ('UPSERT','DELETE')),
+  source_event_id BIGINT NOT NULL CHECK(source_event_id>0),
+  source_revision BIGINT NOT NULL CHECK(source_revision>=1),
+  source_payload JSONB NOT NULL CHECK(jsonb_typeof(source_payload)='object'),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+CREATE INDEX IF NOT EXISTS academic_roster_membership_by_class
+  ON academic_class_memberships_shadow(class_id,student_id,event_kind)@@
+
+CREATE TABLE IF NOT EXISTS academic_roster_history_cursor (
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton=TRUE),
+  last_event_id BIGINT NOT NULL DEFAULT 0 CHECK(last_event_id>=0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+INSERT INTO academic_roster_history_cursor(singleton,last_event_id)
+  VALUES(TRUE,0) ON CONFLICT(singleton) DO NOTHING@@
+
+CREATE OR REPLACE FUNCTION iig_block_roster_receipt_tampering()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'Academic roster source receipts are immutable'
+    USING ERRCODE='55000';
+END;
+$$@@
+DROP TRIGGER IF EXISTS trg_iig_roster_receipts_immutable
+  ON academic_roster_source_receipts@@
+CREATE TRIGGER trg_iig_roster_receipts_immutable
+  BEFORE UPDATE OR DELETE ON academic_roster_source_receipts
+  FOR EACH ROW EXECUTE FUNCTION iig_block_roster_receipt_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_roster_receipts_no_truncate
+  ON academic_roster_source_receipts@@
+CREATE TRIGGER trg_iig_roster_receipts_no_truncate
+  BEFORE TRUNCATE ON academic_roster_source_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_roster_receipt_tampering()@@
