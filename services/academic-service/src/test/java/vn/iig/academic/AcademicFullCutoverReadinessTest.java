@@ -2,6 +2,7 @@ package vn.iig.academic;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import static org.junit.jupiter.api.Assertions.*;
@@ -17,6 +18,11 @@ class AcademicFullCutoverReadinessTest {
     final AcademicFullCutoverReadiness verifier=
         new AcademicFullCutoverReadiness(academic,downstream,nativeSessions);
     final ObjectMapper mapper=new ObjectMapper();
+    @BeforeEach void noNativeRehearsalByDefault() {
+        when(nativeSessions.rehearsalSummary()).thenReturn(
+            new AcademicNativeSessionRepository.RehearsalSummary(0,0,0));
+    }
+
 
     AcademicCrossDomainCutoverReadiness.Evidence academicProof(long generation) {
         return new AcademicCrossDomainCutoverReadiness.Evidence(
