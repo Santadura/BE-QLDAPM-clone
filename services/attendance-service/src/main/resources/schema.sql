@@ -181,3 +181,19 @@ CREATE TABLE IF NOT EXISTS attendance_native_outbox (
 CREATE INDEX IF NOT EXISTS idx_attendance_native_outbox_pending
   ON attendance_native_outbox(created_at,event_id)
   WHERE confirmed_at IS NULL;
+
+
+-- Immutable one-way activation receipt. The next Core writer generation
+-- becomes authoritative only after full frozen Core+Academic history proof.
+-- The native command ledger never accepts a generation without this receipt.
+CREATE TABLE IF NOT EXISTS attendance_native_activations (
+  writer_generation BIGINT PRIMARY KEY CHECK(writer_generation>1),
+  source_rows BIGINT NOT NULL CHECK(source_rows>=0),
+  historical_events BIGINT NOT NULL CHECK(historical_events>=0),
+  source_last_event_id BIGINT NOT NULL CHECK(source_last_event_id>=0),
+  academic_proof_hash CHAR(64) NOT NULL
+    CHECK(academic_proof_hash ~ '^[0-9a-f]{64}$'),
+  activated_by VARCHAR(100) NOT NULL,
+  imported_live_rows BIGINT NOT NULL CHECK(imported_live_rows>=0),
+  activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
