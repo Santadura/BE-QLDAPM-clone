@@ -28,7 +28,7 @@ class AcademicRosterCandidateServiceTest {
     void admin() {
         when(identity.currentPrincipal("Bearer admin")).thenReturn(
             new AcademicCoreClient.Principal("admin","ROLE_ADMIN"));
-        when(readiness.verify()).thenReturn(proof);
+        when(readiness.verifyStaging()).thenReturn(proof);
         when(source.writerFence()).thenReturn(frozen);
         when(journal.stage(any())).thenReturn(
             new AcademicRosterCandidateRepository.Receipt(
