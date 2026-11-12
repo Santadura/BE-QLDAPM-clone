@@ -31,14 +31,14 @@ public class AttendanceNativeLedgerRepository {
     public record Admission(String actorUsername,String actorEmployeeId,
         String classId,String teachingScheduleId,String requestKey,
         String requestHash,String status,String factsToken,
-        long writerGeneration,String coreClaimId,String ownerMode) {}
+        long writerGeneration,String coreClaimId,String previousAttendanceId,
+        String previousStatus,String ownerMode) {}
     public record Pending(String eventId,String actorUsername,String classId,
         String teachingScheduleId,String requestKey,long version,
         String payloadCanonical,String payloadHash) {}
     public record Committed(String eventId,String status,long version,
         boolean referenceConfirmed) {}
-    private record Previous(String id,String classId,long version,
-        String status) {}
+    private record Previous(String id,long version,String status) {}
     private record Command(String eventId,String digest,String factsToken,
         long generation,String state) {}
     private final JdbcTemplate db;
@@ -72,7 +72,13 @@ public class AttendanceNativeLedgerRepository {
             a.requestHash()==null || !a.requestHash().matches("[a-f0-9]{64}") ||
             !AttendanceCommandService.fingerprint(
                 a.classId(),a.teachingScheduleId(),a.status()).equals(a.requestHash()) ||
-            a.writerGeneration()<1 || !"ATTENDANCE".equals(a.ownerMode()))
+            a.writerGeneration()<1 ||
+            (a.previousAttendanceId()==null)!=(a.previousStatus()==null) ||
+            (a.previousAttendanceId()!=null &&
+                !safe(a.previousAttendanceId(),50)) ||
+            (a.previousStatus()!=null &&
+                !Set.of("PRESENT","ABSENT","LATE").contains(a.previousStatus())) ||
+            !"ATTENDANCE".equals(a.ownerMode()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Exact Core-admitted native Attendance writer identity required");
     }
@@ -85,15 +91,30 @@ public class AttendanceNativeLedgerRepository {
     @Transactional
     public Committed stage(Admission a) {
         validate(a);
+        // A never-marked teacher schedule has no Core attendance row to
+        // import. Only an exact Core claim proving an ABSENT baseline may
+        // create an empty native record with a stable generated ID.
+        if(a.previousAttendanceId()==null)
+            db.update(
+                "INSERT INTO attendance_native_teacher_rows "+
+                "(teaching_schedule_id,attendance_id,status,recorded_by,"+
+                "version,recorded_at,updated_at) "+
+                "VALUES(?,?,NULL,NULL,0,NULL,NOW()) "+
+                "ON CONFLICT(teaching_schedule_id) DO NOTHING",
+                a.teachingScheduleId(),UUID.randomUUID().toString());
         List<Previous> nativeRows=db.query(
-            "SELECT attendance_id,class_id,version,status "+
+            "SELECT attendance_id,version,status "+
             "FROM attendance_native_teacher_rows "+
             "WHERE teaching_schedule_id=? FOR UPDATE",
-            (rs,i)->new Previous(rs.getString(1),rs.getString(2),
-                rs.getLong(3),rs.getString(4)),a.teachingScheduleId());
-        if(nativeRows.size()!=1 || !a.classId().equals(nativeRows.get(0).classId()))
+            (rs,i)->new Previous(rs.getString(1),rs.getLong(2),
+                rs.getString(3)),a.teachingScheduleId());
+        if(nativeRows.size()!=1 ||
+            (a.previousAttendanceId()!=null &&
+                !a.previousAttendanceId().equals(nativeRows.get(0).id())) ||
+            !java.util.Objects.equals(
+                a.previousStatus(),nativeRows.get(0).status()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Native Attendance source has not been imported and frozen");
+                "Native Attendance baseline does not match Core's claim");
 
         String random=UUID.randomUUID().toString();
         int inserted=db.update(
@@ -136,11 +157,11 @@ public class AttendanceNativeLedgerRepository {
         Instant now=Instant.now();
         int updated=db.update(
             "UPDATE attendance_native_teacher_rows SET version=?,status=?,"+
-            "recorded_by=?,updated_at=? WHERE teaching_schedule_id=? "+
-            "AND class_id=? AND version=?",
+            "recorded_by=?,recorded_at=COALESCE(recorded_at,?),"+
+            "updated_at=? WHERE teaching_schedule_id=? AND version=?",
             version,a.status(),a.actorEmployeeId(),
-            java.sql.Timestamp.from(now),a.teachingScheduleId(),a.classId(),
-            before.version());
+            java.sql.Timestamp.from(now),java.sql.Timestamp.from(now),
+            a.teachingScheduleId(),before.version());
         if(updated!=1)
             throw new IllegalStateException("Concurrent Attendance native ledger version");
 
@@ -156,6 +177,10 @@ public class AttendanceNativeLedgerRepository {
         body.put("writerGeneration",a.writerGeneration());
         body.put("coreClaimId",a.coreClaimId());
         body.put("attendanceId",before.id());
+        if(a.previousAttendanceId()==null)body.putNull("previousAttendanceId");
+        else body.put("previousAttendanceId",a.previousAttendanceId());
+        if(a.previousStatus()==null)body.putNull("previousStatus");
+        else body.put("previousStatus",a.previousStatus());
         body.put("status",a.status());
         body.put("version",version);
         body.put("updatedAt",now.toString());
