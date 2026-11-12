@@ -27,6 +27,7 @@ cleanup() {
   if [[ "$frozen" == true ]]; then
     compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
       -c "BEGIN;
+       SELECT set_config('iig.attendance_handback_approved','true',true);
        UPDATE academic_session_writer_control SET writer_mode='CORE'
          WHERE singleton=TRUE AND writer_mode='QUIESCED';
        UPDATE teacher_attendance_writer_control SET writer_mode='CORE'
@@ -73,6 +74,19 @@ for attempt in $(seq 1 80); do
 done
 test "$health" = true || fail "Native Academic service did not boot"
 
+# Attendance's preceding crash/handback smoke intentionally recreates Core.
+# Establish the live Admin session BEFORE freezing the four business writers.
+# HTTP 503 while identity/core is still booting is transient; never treat it
+# as a domain rejection from Academic PLAN/RESCHEDULE.
+key="${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}"
+admin="$(curl --retry 24 --retry-delay 2 --retry-connrefused -fsS \
+  -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"123456"}' |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')" ||
+  fail "Admin identity did not become available after Attendance handback"
+test -n "$admin" || fail "No valid Admin token for private Academic rehearsal"
+
 # Core owns all public writes until every independent proof passes. Freeze all
 # FOUR sources together, without enabling any public native mutation route.
 for table in academic_session_writer_control academic_roster_writer_control \
@@ -94,11 +108,6 @@ COMMIT;
 SQL
 frozen=true
 
-key="${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}"
-admin="$(curl -fsS -X POST http://localhost:8080/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"123456"}' |
-  python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
 # All requests bypass the public Gateway and use the current disposable
 # Docker bridge IP. Internal service ports are never published externally.
 container="$(compose ps -q academic-service)"
