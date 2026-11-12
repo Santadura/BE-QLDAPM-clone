@@ -60,9 +60,12 @@ public class AcademicSessionCandidateService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Valid Academic candidate date and times required",ex);
         }
-        if(!to.isAfter(from))
+        // Academic's candidate slot columns use PostgreSQL TIME(0).
+        // Sub-second values would be rounded, making the immutable original
+        // outbox differ from its independently stored typed slot evidence.
+        if(!to.isAfter(from) || from.getNano()!=0 || to.getNano()!=0)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "Academic candidate end time must follow start time");
+                "Academic candidate times must be increasing and second-precise");
 
         var actor=identity.currentPrincipal(bearer);
         if(actor==null || actor.username()==null ||
@@ -145,9 +148,9 @@ public class AcademicSessionCandidateService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Malformed Academic session retry date or time",ex);
         }
-        if(!to.isAfter(from))
+        if(!to.isAfter(from) || from.getNano()!=0 || to.getNano()!=0)
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Academic session retry interval is invalid");
+                "Academic session retry interval or precision is invalid");
 
         var actor=identity.currentPrincipal(bearer);
         if(actor==null || actor.username()==null ||
