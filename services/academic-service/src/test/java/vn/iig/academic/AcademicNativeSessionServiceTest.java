@@ -37,7 +37,7 @@ class AcademicNativeSessionServiceTest {
     @Test void independentPreflightOutageFailsClosedBeforeAnyLocalWrite() {
         when(core.currentPrincipal("Bearer admin")).thenReturn(
             new AcademicCoreClient.Principal("admin","ROLE_ADMIN"));
-        when(readiness.verify()).thenThrow(
+        when(readiness.verifyStaging()).thenThrow(
             new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Downstream Scheduling unreachable"));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(

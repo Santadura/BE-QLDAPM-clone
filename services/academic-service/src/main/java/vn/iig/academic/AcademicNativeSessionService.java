@@ -38,6 +38,10 @@ public class AcademicNativeSessionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Valid Academic class ID required");
         var snapshot=core.planningExport();
+        if(snapshot==null || snapshot.rows()==null || !snapshot.rows().isArray() ||
+            snapshot.revision()<1)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic class snapshot unavailable for native mutation");
         JsonNode found=null;
         for(var row:snapshot.rows()) {
             if(classId.equals(row.path("classId").asText(null))) {
