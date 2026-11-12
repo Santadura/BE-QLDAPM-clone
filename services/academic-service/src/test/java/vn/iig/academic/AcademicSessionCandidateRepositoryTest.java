@@ -68,12 +68,18 @@ class AcademicSessionCandidateRepositoryTest {
         return event.toString();
     }
 
+    private String requestDigest() {
+        String canonical="academic-candidate-v1\nclass-1\nlesson-1\n5\n3\n"+
+            "RESCHEDULE\n2027-02-12\n09:00\n11:00\nPLANNED";
+        return AcademicSessionSourceRepository.sha256(canonical);
+    }
+
     private void storedCandidate(String canonical,String copiedJson,
             String hash) throws Exception {
         ResultSet rs=mock(ResultSet.class);
         when(rs.getString(1)).thenReturn("admin");
         when(rs.getString(2)).thenReturn("key");
-        when(rs.getString(3)).thenReturn("a".repeat(64));
+        when(rs.getString(3)).thenReturn(requestDigest());
         when(rs.getString(4)).thenReturn("class-1");
         when(rs.getString(5)).thenReturn("lesson-1");
         when(rs.getLong(6)).thenReturn(5L);
