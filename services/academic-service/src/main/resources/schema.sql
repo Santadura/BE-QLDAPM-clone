@@ -450,3 +450,29 @@ DROP TRIGGER IF EXISTS trg_iig_roster_candidate_outbox_no_truncate
 CREATE TRIGGER trg_iig_roster_candidate_outbox_no_truncate
   BEFORE TRUNCATE ON academic_roster_candidate_outbox
   FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+-- Phase 8v: preserve the EXACT bytes originally hashed for outbox evidence.
+-- JSONB may reorder object keys; never reconstruct a claimed digest from
+-- JSONB::text. Existing unclaimed rehearsal rows remain but cannot be used
+-- as proof of a Core claim release without a canonical payload.
+ALTER TABLE academic_roster_candidate_outbox
+  ADD COLUMN IF NOT EXISTS payload_canonical TEXT@@
+
+CREATE TABLE IF NOT EXISTS academic_roster_candidate_handoff_receipts (
+  command_id UUID PRIMARY KEY REFERENCES academic_roster_candidate_commands(command_id)
+    ON DELETE RESTRICT,
+  actor_username VARCHAR(100) NOT NULL,
+  request_key VARCHAR(128) NOT NULL,
+  core_outbox_hash CHAR(64) NOT NULL CHECK(core_outbox_hash ~ '^[0-9a-f]{64}$'),
+  released_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(actor_username,request_key)
+)@@
+DROP TRIGGER IF EXISTS trg_iig_roster_handoff_receipt_immutable
+  ON academic_roster_candidate_handoff_receipts@@
+CREATE TRIGGER trg_iig_roster_handoff_receipt_immutable
+  BEFORE UPDATE OR DELETE ON academic_roster_candidate_handoff_receipts
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_roster_handoff_receipt_no_truncate
+  ON academic_roster_candidate_handoff_receipts@@
+CREATE TRIGGER trg_iig_roster_handoff_receipt_no_truncate
+  BEFORE TRUNCATE ON academic_roster_candidate_handoff_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
