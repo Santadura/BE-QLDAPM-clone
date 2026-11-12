@@ -118,4 +118,55 @@ class TeacherAttendanceCommandReceiptServiceTest {
             ()->receipts.mark("class-1","teach-1","request-1",null,new MarkRequest("PRESENT"))).getStatus());
         verifyNoInteractions(db,attendance);
     }
+    private TeacherAttendanceCommandReceiptService.ReceiptQuery q(String hash) {
+        return new TeacherAttendanceCommandReceiptService.ReceiptQuery(
+            "cs001","class-1","teach-1","request-1",hash);
+    }
+
+    @Test void exactCommittedCoreReceiptCanBeRecoveredReadOnly() {
+        String hash="a".repeat(64);
+        when(db.queryForList(startsWith("SELECT request_hash,response_payload::text"),
+            any(Object[].class))).thenReturn(List.of(Map.of(
+                "request_hash",hash,
+                "payload","{\"teachingScheduleId\":\"teach-1\",\"status\":\"PRESENT\"}")));
+        var proof=receipts.committedReceipt(q(hash));
+        assertEquals("cs001",proof.actorUsername());
+        assertEquals("teach-1",proof.response().path("teachingScheduleId").asText());
+        verify(db,never()).update(anyString(),any(Object[].class));
+        verifyNoInteractions(attendance);
+    }
+
+    @Test void uncommittedOrMissingCoreReceiptMustRemainPendingInAttendance() {
+        when(db.queryForList(startsWith("SELECT request_hash,response_payload::text"),
+            any(Object[].class))).thenReturn(List.of());
+        assertEquals(HttpStatus.NOT_FOUND,assertThrows(ApiException.class,
+            ()->receipts.committedReceipt(q("a".repeat(64)))).getStatus());
+        verifyNoInteractions(attendance);
+    }
+
+    @Test void tamperedRequestDigestOrPayloadNeverAuthorizesRemoteCommit() {
+        when(db.queryForList(startsWith("SELECT request_hash,response_payload::text"),
+            any(Object[].class))).thenReturn(List.of(Map.of(
+                "request_hash","b".repeat(64),
+                "payload","{\"teachingScheduleId\":\"teach-1\",\"status\":\"PRESENT\"}")));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(ApiException.class,
+            ()->receipts.committedReceipt(q("a".repeat(64)))).getStatus());
+        reset(db);
+        when(db.queryForList(startsWith("SELECT request_hash,response_payload::text"),
+            any(Object[].class))).thenReturn(List.of(Map.of(
+                "request_hash","a".repeat(64),
+                "payload","{\"teachingScheduleId\":\"wrong\",\"status\":\"PRESENT\"}")));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(ApiException.class,
+            ()->receipts.committedReceipt(q("a".repeat(64)))).getStatus());
+        verifyNoInteractions(attendance);
+    }
+
+    @Test void invalidRecoveryIdentityCannotReadAnyCoreReceipt() {
+        var invalid=new TeacherAttendanceCommandReceiptService.ReceiptQuery(
+            "bad actor","class-1","teach-1","request-1","a".repeat(64));
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(ApiException.class,
+            ()->receipts.committedReceipt(invalid)).getStatus());
+        verifyNoInteractions(db,attendance);
+    }
+
 }
