@@ -10,7 +10,9 @@ import static org.mockito.Mockito.*;
 class AcademicSessionCutoverReadinessTest {
     AcademicSessionSourceClient core=mock(AcademicSessionSourceClient.class);
     AcademicSessionSourceRepository local=mock(AcademicSessionSourceRepository.class);
-    AcademicSessionCutoverReadiness service=new AcademicSessionCutoverReadiness(core,local);
+    AcademicCandidateClaimClient claims=mock(AcademicCandidateClaimClient.class);
+    AcademicSessionCutoverReadiness service=
+        new AcademicSessionCutoverReadiness(core,local,claims);
     static final AcademicSessionSourceClient.WriterFence FROZEN=
         new AcademicSessionSourceClient.WriterFence("QUIESCED",4,"QUIESCED",8,"QUIESCED",9);
     static final AcademicSessionSourceClient.Integrity CLEAN=
@@ -23,6 +25,8 @@ class AcademicSessionCutoverReadinessTest {
             "{\"id\":\"lesson-1\"}","b".repeat(64));
     void setupReady() {
         when(core.writerFence()).thenReturn(FROZEN);
+        when(claims.summary()).thenReturn(
+            new AcademicCandidateClaimClient.Summary(0,0,0));
         when(core.integrity()).thenReturn(CLEAN);
         when(local.historyCursor()).thenReturn(5L);
         when(local.receiptCount()).thenReturn(2L);
@@ -90,5 +94,50 @@ class AcademicSessionCutoverReadinessTest {
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,service::verify).getStatusCode());
         verify(core,never()).history(anyLong(),anyInt());
+    }
+
+    @Test void openCoreClaimBlocksReadinessBeforeAnySourceHistoryScan() {
+        setupReady();
+        when(claims.summary()).thenReturn(
+            new AcademicCandidateClaimClient.Summary(1,0,1));
+        var ex=assertThrows(ResponseStatusException.class,service::verify);
+        assertEquals(HttpStatus.CONFLICT,ex.getStatusCode());
+        assertTrue(ex.getReason().contains("unreleased Core Academic candidate claim"));
+        verifyNoInteractions(local);
+        verify(core,never()).integrity();
+    }
+    @Test void claimAcquiredWhileHistoryIsScannedBlocksReadiness() {
+        setupReady();
+        when(claims.summary()).thenReturn(
+            new AcademicCandidateClaimClient.Summary(0,0,0),
+            new AcademicCandidateClaimClient.Summary(1,0,1));
+        var ex=assertThrows(ResponseStatusException.class,service::verify);
+        assertEquals(HttpStatus.CONFLICT,ex.getStatusCode());
+        verify(core).history(0,100);
+        verify(claims,times(2)).summary();
+    }
+    @Test void releasedClaimAppearingDuringScanIsAlsoRejectedAsRacingEvidence() {
+        setupReady();
+        when(claims.summary()).thenReturn(
+            new AcademicCandidateClaimClient.Summary(0,0,0),
+            new AcademicCandidateClaimClient.Summary(0,1,2));
+        var ex=assertThrows(ResponseStatusException.class,service::verify);
+        assertEquals(HttpStatus.CONFLICT,ex.getStatusCode());
+        assertTrue(ex.getReason().contains("claim ledger"));
+    }
+    @Test void unavailableClaimLedgerNeverBecomesImplicitPermissionToCutOver() {
+        setupReady();
+        when(claims.summary()).thenThrow(
+            new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core claim summary unavailable"));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,service::verify).getStatusCode());
+        verifyNoInteractions(local);
+        verify(core,never()).integrity();
+    }
+    @Test void checksClaimsTwiceEvenAfterPositiveFullHistoryProof() {
+        setupReady();
+        assertEquals(2,service.verify().sourceEvents());
+        verify(claims,times(2)).summary();
     }
 }
