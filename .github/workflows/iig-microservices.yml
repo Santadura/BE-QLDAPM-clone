@@ -147,6 +147,10 @@ jobs:
         run: docker compose -f docker-compose.microservices.yml up --build -d
       - name: Gateway / business / audit outage regression
         run: bash scripts/smoke-microservices.sh
+      - name: Prove Academic native PostgreSQL exclusion and immutable transitions
+        env:
+          IIG_NATIVE_SQL_SMOKE: 'true'
+        run: bash scripts/smoke-academic-native-sql.sh
       - name: Checkout current FE to verify browser compatibility through Gateway
         uses: actions/checkout@v4
         with:

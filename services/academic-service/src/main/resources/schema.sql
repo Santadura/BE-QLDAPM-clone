@@ -612,3 +612,75 @@ DROP TRIGGER IF EXISTS trg_iig_native_session_outbox_no_truncate
 CREATE TRIGGER trg_iig_native_session_outbox_no_truncate
   BEFORE TRUNCATE ON academic_native_session_outbox
   FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+
+
+-- Native Academic business rows are not a Core write shadow. Enforce
+-- exclusion and immutable history at PostgreSQL even if multiple Java
+-- writers or direct SQL race on the same class.
+CREATE EXTENSION IF NOT EXISTS btree_gist@@
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname='academic_native_no_overlapping_planned_lessons'
+      AND conrelid='academic_native_session_rows'::regclass
+  ) THEN
+    ALTER TABLE academic_native_session_rows ADD CONSTRAINT
+      academic_native_no_overlapping_planned_lessons EXCLUDE USING gist (
+        class_id WITH =,
+        (tsrange(session_date+start_time,session_date+end_time,'[)')) WITH &&
+      ) WHERE (status='PLANNED');
+  END IF;
+END;
+$$@@
+
+CREATE OR REPLACE FUNCTION iig_guard_academic_native_lesson()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP IN ('DELETE','TRUNCATE') THEN
+    RAISE EXCEPTION 'Native Academic lesson cannot be deleted'
+      USING ERRCODE='55000';
+  END IF;
+  IF OLD.source_imported OR
+     NEW.class_session_id IS DISTINCT FROM OLD.class_session_id OR
+     NEW.class_id IS DISTINCT FROM OLD.class_id OR
+     NEW.session_date IS DISTINCT FROM OLD.session_date OR
+     NEW.start_time IS DISTINCT FROM OLD.start_time OR
+     NEW.end_time IS DISTINCT FROM OLD.end_time OR
+     NEW.source_imported IS DISTINCT FROM OLD.source_imported OR
+     NEW.created_at IS DISTINCT FROM OLD.created_at OR
+     OLD.status<>'PLANNED' OR NEW.status<>'CANCELLED' OR
+     NEW.version<>OLD.version+1 THEN
+    RAISE EXCEPTION 'Native Academic lessons transition PLANNED to CANCELLED only once'
+      USING ERRCODE='55000';
+  END IF;
+  RETURN NEW;
+END;
+$$@@
+DROP TRIGGER IF EXISTS trg_iig_native_lesson_transition ON academic_native_session_rows@@
+CREATE TRIGGER trg_iig_native_lesson_transition
+  BEFORE UPDATE OR DELETE ON academic_native_session_rows
+  FOR EACH ROW EXECUTE FUNCTION iig_guard_academic_native_lesson()@@
+DROP TRIGGER IF EXISTS trg_iig_native_lesson_no_truncate ON academic_native_session_rows@@
+CREATE TRIGGER trg_iig_native_lesson_no_truncate
+  BEFORE TRUNCATE ON academic_native_session_rows
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_guard_academic_native_lesson()@@
+
+-- Ownership activation and idempotency response are permanent evidence:
+-- only append a new audited disposition during a future real handback.
+DROP TRIGGER IF EXISTS trg_iig_native_command_immutable ON academic_native_session_commands@@
+CREATE TRIGGER trg_iig_native_command_immutable
+  BEFORE UPDATE OR DELETE ON academic_native_session_commands
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_native_command_no_truncate ON academic_native_session_commands@@
+CREATE TRIGGER trg_iig_native_command_no_truncate
+  BEFORE TRUNCATE ON academic_native_session_commands
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_native_activation_immutable ON academic_native_session_activations@@
+CREATE TRIGGER trg_iig_native_activation_immutable
+  BEFORE UPDATE OR DELETE ON academic_native_session_activations
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_native_activation_no_truncate ON academic_native_session_activations@@
+CREATE TRIGGER trg_iig_native_activation_no_truncate
+  BEFORE TRUNCATE ON academic_native_session_activations
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
