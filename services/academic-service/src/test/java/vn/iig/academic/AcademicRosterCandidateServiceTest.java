@@ -12,8 +12,9 @@ class AcademicRosterCandidateServiceTest {
     final AcademicRosterCutoverReadiness readiness=mock(AcademicRosterCutoverReadiness.class);
     final AcademicRosterSourceClient source=mock(AcademicRosterSourceClient.class);
     final AcademicRosterCandidateRepository journal=mock(AcademicRosterCandidateRepository.class);
+    final AcademicRosterClaimClient claims=mock(AcademicRosterClaimClient.class);
     final AcademicRosterCandidateService svc=
-        new AcademicRosterCandidateService(identity,readiness,source,journal);
+        new AcademicRosterCandidateService(identity,readiness,source,journal,claims);
     final AcademicRosterCutoverReadiness.Evidence proof=
         new AcademicRosterCutoverReadiness.Evidence(4,11,15,4,3,7);
     final AcademicRosterSourceClient.WriterFence frozen=
@@ -37,9 +38,12 @@ class AcademicRosterCandidateServiceTest {
         admin();
         var request=request("TARGET","UPSERT",new BigDecimal("7.50"));
         assertEquals("STAGED",svc.stage("Bearer admin",request).state());
-        var ordered=inOrder(identity,readiness,journal,source);
+        var ordered=inOrder(identity,readiness,claims,journal,source);
         ordered.verify(identity).currentPrincipal("Bearer admin");
         ordered.verify(readiness).verify();
+        ordered.verify(claims).acquire(argThat(claim->
+            "TARGET".equals(claim.entityType()) &&
+            claim.sourceEventId()==10 && claim.writerGeneration()==4));
         ordered.verify(journal).stage(argThat(plan->
             "TARGET".equals(plan.entityType()) &&
             plan.proposedValue().compareTo(new BigDecimal("7.50"))==0 &&
@@ -78,7 +82,7 @@ class AcademicRosterCandidateServiceTest {
             ResponseStatusException.class,
             ()->svc.stage("Bearer admin",request("RESULT","UPSERT",new BigDecimal("8.123"))))
             .getStatusCode());
-        verifyNoInteractions(identity,readiness,journal,source);
+        verifyNoInteractions(identity,readiness,journal,source,claims);
     }
     @Test void teacherDeniedBeforeCrossDatabaseRosterHistoryAccess() {
         when(identity.currentPrincipal("Bearer teacher")).thenReturn(
@@ -87,7 +91,7 @@ class AcademicRosterCandidateServiceTest {
             ResponseStatusException.class,
             ()->svc.stage("Bearer teacher",request("RESULT","UPSERT",BigDecimal.ONE)))
             .getStatusCode());
-        verifyNoInteractions(readiness,journal,source);
+        verifyNoInteractions(readiness,journal,source,claims);
     }
     @Test void noFrozenProofCannotJournalIndependentCandidates() {
         admin();
@@ -98,7 +102,7 @@ class AcademicRosterCandidateServiceTest {
             ResponseStatusException.class,
             ()->svc.stage("Bearer admin",request("TARGET","UPSERT",BigDecimal.ONE)))
             .getStatusCode());
-        verifyNoInteractions(journal,source);
+        verifyNoInteractions(journal,source,claims);
     }
     @Test void generationChangedAfterLocalStagingFailsAndRollsBackTransaction() {
         admin();
@@ -109,6 +113,8 @@ class AcademicRosterCandidateServiceTest {
             ()->svc.stage("Bearer admin",request("RESULT","UPSERT",BigDecimal.ONE)))
             .getStatusCode());
         verify(journal).stage(any());
+        verify(claims).acquire(any());
+        verify(claims,never()).release(any());
     }
     @Test void sourceOutageAfterLocalStagingNeverReportsSuccess() {
         admin();
