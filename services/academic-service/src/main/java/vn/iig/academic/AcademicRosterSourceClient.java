@@ -52,6 +52,26 @@ public class AcademicRosterSourceClient {
         }
     }
 
+    public record Integrity(long studentRows,long membershipRows,
+        long newestStudentRows,long newestMembershipRows,long divergentRows) {}
+
+    public Integrity integrity() {
+        try {
+            Integrity result=core.get()
+                .uri("/internal/academic/student-roster/events/integrity")
+                .header("X-Internal-Key",key).retrieve().body(Integrity.class);
+            if(result==null || result.studentRows()<0 ||
+                result.membershipRows()<0 || result.newestStudentRows()<0 ||
+                result.newestMembershipRows()<0 || result.divergentRows()<0)
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Core roster source integrity evidence incomplete");
+            return result;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core roster source integrity unavailable",ex);
+        }
+    }
+
     public Summary summary() {
         try {
             Summary result=core.get()
