@@ -12,7 +12,13 @@ class AcademicCommandServiceTest {
     AcademicCoreClient identity=mock(AcademicCoreClient.class);
     AcademicWriteClient core=mock(AcademicWriteClient.class);
     AcademicCommandInbox inbox=mock(AcademicCommandInbox.class);
-    AcademicCommandService service=new AcademicCommandService(identity,core,inbox);
+    AcademicSessionSourceClient fences=mock(AcademicSessionSourceClient.class);
+    AcademicCommandService service=new AcademicCommandService(identity,core,inbox,fences);
+    AcademicCommandServiceTest() {
+        when(fences.writerFence()).thenReturn(
+            new AcademicSessionSourceClient.WriterFence(
+                "CORE",1,"CORE",1,"CORE",1));
+    }
     JsonNode body=new ObjectMapper().createArrayNode();
     @Test void rejectsWrongRoleBeforeInsertingCommand() {
         when(identity.currentPrincipal("Bearer tc")).thenReturn(
@@ -47,4 +53,41 @@ class AcademicCommandServiceTest {
             ()->service.execute("PLAN","class-1",body,"Bearer admin","key")).getStatusCode());
         verifyNoInteractions(core);
     }
+    @Test void frozenWriterRejectsCoreRequestBeforeCreatingAmbiguousLocalReceipt() {
+        when(identity.currentPrincipal("Bearer admin")).thenReturn(
+            new AcademicCoreClient.Principal("admin","ROLE_ADMIN"));
+        when(fences.writerFence()).thenReturn(
+            new AcademicSessionSourceClient.WriterFence(
+                "QUIESCED",2,"QUIESCED",2,"QUIESCED",2));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.execute("PLAN","class-1",body,"Bearer admin","freeze-key"))
+            .getStatusCode());
+        verifyNoInteractions(inbox,core);
+    }
+    @Test void freezeDuringSchedulingTransitionAlsoBlocksOneShotCommands() {
+        when(identity.currentPrincipal("Bearer admin")).thenReturn(
+            new AcademicCoreClient.Principal("admin","ROLE_ADMIN"));
+        when(fences.writerFence()).thenReturn(
+            new AcademicSessionSourceClient.WriterFence(
+                "CORE",1,"CORE",1,"QUIESCED",2));
+        assertEquals(HttpStatus.CONFLICT,assertThrows(
+            ResponseStatusException.class,
+            ()->service.execute("PLAN","class-1",body,"Bearer admin",null))
+            .getStatusCode());
+        verifyNoInteractions(inbox,core);
+    }
+    @Test void writerFenceOutageCannotLeaveUnconfirmedPendingRequest() {
+        when(identity.currentPrincipal("Bearer admin")).thenReturn(
+            new AcademicCoreClient.Principal("admin","ROLE_ADMIN"));
+        when(fences.writerFence()).thenThrow(
+            new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core writer source offline"));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
+            ResponseStatusException.class,
+            ()->service.execute("PLAN","class-1",body,"Bearer admin","key"))
+            .getStatusCode());
+        verifyNoInteractions(inbox,core);
+    }
+
 }
