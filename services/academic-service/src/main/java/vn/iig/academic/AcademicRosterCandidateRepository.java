@@ -62,13 +62,17 @@ public class AcademicRosterCandidateRepository {
         boolean handoffMatches,boolean dispositionMatches,
         Evidence evidence) {}
     private record LocalRow(String commandId,boolean outbox,boolean handoff,
-        String handoffHash,boolean disposition,String dispositionHash) {}
+        String handoffHash,String handoffActor,String handoffKey,
+        boolean disposition,String dispositionHash,
+        String dispositionActor,String dispositionKey) {}
 
     public LocalInspection inspectCandidate(String actor,String requestKey) {
         var rows=db.query(
             "SELECT c.command_id::text,o.command_id IS NOT NULL,"+
             "h.command_id IS NOT NULL,h.core_outbox_hash,"+
-            "d.command_id IS NOT NULL,d.outbox_hash "+
+            "h.actor_username,h.request_key,"+
+            "d.command_id IS NOT NULL,d.outbox_hash,"+
+            "d.actor_username,d.request_key "+
             "FROM academic_roster_candidate_commands c "+
             "LEFT JOIN academic_roster_candidate_outbox o ON o.command_id=c.command_id "+
             "LEFT JOIN academic_roster_candidate_handoff_receipts h "+
@@ -78,7 +82,9 @@ public class AcademicRosterCandidateRepository {
             "WHERE c.operator_username=? AND c.request_key=?",
             (rs,i)->new LocalRow(rs.getString(1),rs.getBoolean(2),
                 rs.getBoolean(3),rs.getString(4),
-                rs.getBoolean(5),rs.getString(6)),actor,requestKey);
+                rs.getString(5),rs.getString(6),
+                rs.getBoolean(7),rs.getString(8),
+                rs.getString(9),rs.getString(10)),actor,requestKey);
         if(rows.isEmpty())return null;
         if(rows.size()!=1)
             throw conflict("Duplicate Academic roster command identity");
@@ -93,9 +99,13 @@ public class AcademicRosterCandidateRepository {
         return new LocalInspection(row.commandId(),row.outbox(),
             row.handoff(),row.disposition(),
             exact!=null && row.handoff() &&
-                exact.outboxHash().equals(row.handoffHash()),
+                exact.outboxHash().equals(row.handoffHash()) &&
+                actor.equals(row.handoffActor()) &&
+                requestKey.equals(row.handoffKey()),
             exact!=null && row.disposition() &&
-                exact.outboxHash().equals(row.dispositionHash()),exact);
+                exact.outboxHash().equals(row.dispositionHash()) &&
+                actor.equals(row.dispositionActor()) &&
+                requestKey.equals(row.dispositionKey()),exact);
     }
 
     public Evidence committedEvidence(String actor,String key,String commandId) {
