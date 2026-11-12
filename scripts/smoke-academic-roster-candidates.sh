@@ -78,12 +78,12 @@ print(json.dumps({"requestKey":os.environ["REQUEST"],
     WHERE $( [ "$kind" = TARGET ] && echo student_target_id || echo student_result_id )='$id'")"
   response="$(post "$admin_token" "$key" "$body")" ||
     fail "Academic $kind candidate write rehearsal failed"
-  command_id="$(RESPONSE="$response" python3 -c '
+  command_id="$(RESPONSE="$response" TYPE="$kind" REQUEST="$request_key" python3 -c '
 import os,json
 r=json.loads(os.environ["RESPONSE"])
 assert r["state"]=="STAGED" and r["entityType"]==os.environ["TYPE"] and r["requestKey"]==os.environ["REQUEST"]
 print(r["commandId"])
-' TYPE="$kind" REQUEST="$request_key")"
+')" 
   # Entire command+typed proposed payload+outbox commit in one Academic DB.
   test "$(academic_sql "SELECT COUNT(*) FROM academic_roster_candidate_commands
     WHERE command_id='$command_id' AND entity_type='$kind' AND entity_id='$id'
