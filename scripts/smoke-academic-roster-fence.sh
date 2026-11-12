@@ -21,6 +21,18 @@ fail() { echo "Academic roster fence: $*" >&2; exit 1; }
 # regression (the terminal orphan probe has its OWN deliberate frozen state).
 restore_writer() {
   local rc=$?
+  if [ "${session_frozen:-false}" = true ]; then
+    compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 \
+      -c "BEGIN;
+        UPDATE academic_session_writer_control SET writer_mode='CORE'
+          WHERE singleton=TRUE AND writer_mode='QUIESCED';
+        UPDATE teacher_attendance_writer_control SET writer_mode='CORE'
+          WHERE singleton=TRUE AND writer_mode='QUIESCED';
+        UPDATE scheduling_assignment_writer_control SET writer_mode='CORE'
+          WHERE singleton=TRUE AND writer_mode='QUIESCED';
+        COMMIT;" >/dev/null ||
+      echo "WARN: disposable cross-domain writer handback failed" >&2
+  fi
   if [ "${did_freeze:-false}" = true ]; then
     core_sql "UPDATE academic_roster_writer_control
       SET writer_mode='CORE' WHERE singleton=TRUE AND writer_mode='QUIESCED'" \
@@ -148,6 +160,68 @@ assert p["lastEventId"]>=0 and p["distinctEntities"]>=0,p
 # only while the entire Core student/roster write domain is frozen. They
 # never publish authoritative events or mutate the imported projections.
 bash scripts/smoke-academic-roster-candidates.sh
+
+# Cross-service full-cutover preflight is READ ONLY and must not pass while
+# any Scheduling, Attendance or Academic session writer remains CORE.
+# The three extra writers are frozen in one Core SQL transaction and then
+# restored BEFORE handing the roster writer back (and before Teacher smoke).
+full_url="http://academic-service:8099/internal/academic/cutover/full-readiness"
+check_http 409 "$full_url" "$admin_token" "$key"
+check_http 401 "$full_url" "$admin_token" "incorrect-key"
+check_http 403 "$full_url" "$teacher_token" "$key"
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  http://localhost:8080/internal/academic/cutover/full-readiness)" = "404" ||
+  fail "Cross-domain internal proof exposed through public Gateway"
+
+initial_modes="$(core_sql "SELECT a.writer_mode || ':' || t.writer_mode || ':' || s.writer_mode
+  FROM academic_session_writer_control a
+  CROSS JOIN teacher_attendance_writer_control t
+  CROSS JOIN scheduling_assignment_writer_control s
+  WHERE a.singleton=TRUE AND t.singleton=TRUE AND s.singleton=TRUE")"
+test "$initial_modes" = "CORE:CORE:CORE" || {
+  echo "Cross-domain cutover probe needs three Core-owned session writers, got $initial_modes" >&2
+  exit 1
+}
+compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+BEGIN;
+UPDATE scheduling_assignment_writer_control
+  SET writer_mode='QUIESCED' WHERE singleton=TRUE AND writer_mode='CORE';
+UPDATE teacher_attendance_writer_control
+  SET writer_mode='QUIESCED' WHERE singleton=TRUE AND writer_mode='CORE';
+UPDATE academic_session_writer_control
+  SET writer_mode='QUIESCED' WHERE singleton=TRUE AND writer_mode='CORE';
+COMMIT;
+SQL
+session_frozen=true
+full_proof="$(compose exec -T scheduling-postgres wget -qO- \
+  --header "X-Internal-Key: $key" \
+  --header "Authorization: Bearer $admin_token" "$full_url")" ||
+  fail "Full cross-domain Academic cutover proof did not pass after four freezes"
+FULL_PROOF="$full_proof" ROSTER_GENERATION="$frozen_gen" python3 -c '
+import os,json
+p=json.loads(os.environ["FULL_PROOF"])
+assert p["rosterGeneration"]==int(os.environ["ROSTER_GENERATION"])
+assert all(p[k]>=2 for k in ["sessionGeneration","attendanceGeneration","schedulingGeneration"])
+assert p["rosterEvents"]>=0 and p["sessionEvents"]>=0
+assert p["rosterLastEventId"]>=0 and p["sessionLastEventId"]>=0
+assert p["rosterClaimAuditEvents"]>=4
+print("PASS: four stable writer generations and two complete Academic histories")
+'
+# Must not be possible to consider cross-domain cutover ready once ANY
+# one of three related writers has been handed back to Core.
+compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<SQL
+BEGIN;
+UPDATE academic_session_writer_control
+  SET writer_mode='CORE' WHERE singleton=TRUE AND writer_mode='QUIESCED';
+UPDATE teacher_attendance_writer_control
+  SET writer_mode='CORE' WHERE singleton=TRUE AND writer_mode='QUIESCED';
+UPDATE scheduling_assignment_writer_control
+  SET writer_mode='CORE' WHERE singleton=TRUE AND writer_mode='QUIESCED';
+COMMIT;
+SQL
+session_frozen=false
+check_http 409 "$full_url" "$admin_token" "$key"
+echo "PASS: cross-domain cutover is read-only, Admin-only and fails closed after writer handback"
 
 # Hand back, verify admission and return to QUIESCED. A naive proof looking
 # at writerMode alone cannot detect this ABA; only generation 4 is valid.
