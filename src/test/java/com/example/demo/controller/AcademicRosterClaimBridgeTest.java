@@ -32,6 +32,24 @@ class AcademicRosterClaimBridgeTest {
             .getStatusCode());
         verifyNoInteractions(db);
     }
+    @Test void privateCoreRosterInspectionRejectsMissingOrIncorrectKeyBeforeSQL() {
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.inspect(null,"admin","request-1")).getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.inspect("wrong","admin","request-1")).getStatusCode());
+        verifyNoInteractions(db);
+    }
+
+    @Test void privateCoreRosterInspectionRejectsMalformedIdentityBeforeSQL() {
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,
+            ()->bridge.inspect("private","admin","not a valid key"))
+            .getStatusCode());
+        verifyNoInteractions(db);
+    }
+
     @Test void badVersionAndEntityCannotCreateCoreClaim() {
         var invalid=new AcademicRosterClaimBridge.Claim(
             "admin","request-1","a".repeat(64),
