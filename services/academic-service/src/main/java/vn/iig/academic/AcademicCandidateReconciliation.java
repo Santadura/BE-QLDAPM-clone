@@ -43,8 +43,9 @@ public class AcademicCandidateReconciliation {
         var found=local.inspectCandidate(actor,requestKey);
 
         if(found==null)
-            return diagnosis("CORE_ONLY_ORPHAN",actor,requestKey,
-                remote.state(),null,false,false,true);
+            return diagnosis("OPEN".equals(remote.state()) ?
+                    "CORE_ONLY_ORPHAN" : "RELEASED_WITHOUT_ACADEMIC_EVIDENCE",
+                actor,requestKey,remote.state(),null,false,false,true);
 
         var proof=found.evidence();
         boolean atomic=found.slotMatches() && found.outboxMatches() &&
