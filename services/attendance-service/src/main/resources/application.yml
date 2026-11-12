@@ -12,6 +12,8 @@ spring:
       mode: always
       continue-on-error: false
 iig:
+  attendance:
+    command-recovery-enabled: ${ATTENDANCE_COMMAND_RECOVERY_ENABLED:false}
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${ATTENDANCE_INTERNAL_API_KEY:}
