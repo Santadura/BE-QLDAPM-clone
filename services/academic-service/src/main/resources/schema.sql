@@ -340,3 +340,42 @@ DROP TRIGGER IF EXISTS trg_iig_roster_receipts_no_truncate
 CREATE TRIGGER trg_iig_roster_receipts_no_truncate
   BEFORE TRUNCATE ON academic_roster_source_receipts
   FOR EACH STATEMENT EXECUTE FUNCTION iig_block_roster_receipt_tampering()@@
+
+-- Phase 8s: own typed read-only historical targets and results. Existing
+-- Student/Membership receipts remain unchanged and are NEVER rewritten.
+ALTER TABLE academic_roster_source_receipts
+  DROP CONSTRAINT IF EXISTS academic_roster_source_receipts_entity_type_check@@
+ALTER TABLE academic_roster_source_receipts
+  ADD CONSTRAINT academic_roster_source_receipts_entity_type_check
+  CHECK(entity_type IN ('STUDENT','MEMBERSHIP','TARGET','RESULT'))@@
+
+CREATE TABLE IF NOT EXISTS academic_student_targets_shadow (
+  student_target_id VARCHAR(50) PRIMARY KEY,
+  student_id VARCHAR(50) NOT NULL,
+  course_id VARCHAR(50) NOT NULL,
+  target_type VARCHAR(40) NOT NULL,
+  target_value NUMERIC(8,2) NOT NULL CHECK(target_value>=0),
+  event_kind VARCHAR(10) NOT NULL CHECK(event_kind IN ('UPSERT','DELETE')),
+  source_event_id BIGINT NOT NULL CHECK(source_event_id>0),
+  source_revision BIGINT NOT NULL CHECK(source_revision>=1),
+  source_payload JSONB NOT NULL CHECK(jsonb_typeof(source_payload)='object'),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+CREATE INDEX IF NOT EXISTS academic_target_by_student
+  ON academic_student_targets_shadow(student_id,event_kind)@@
+
+CREATE TABLE IF NOT EXISTS academic_student_results_shadow (
+  student_result_id VARCHAR(50) PRIMARY KEY,
+  student_id VARCHAR(50) NOT NULL,
+  class_id VARCHAR(50) NOT NULL,
+  score NUMERIC(5,2) NOT NULL CHECK(score>=0),
+  evaluated_by VARCHAR(50) NOT NULL,
+  evaluated_at TIMESTAMPTZ NOT NULL,
+  event_kind VARCHAR(10) NOT NULL CHECK(event_kind IN ('UPSERT','DELETE')),
+  source_event_id BIGINT NOT NULL CHECK(source_event_id>0),
+  source_revision BIGINT NOT NULL CHECK(source_revision>=1),
+  source_payload JSONB NOT NULL CHECK(jsonb_typeof(source_payload)='object'),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)@@
+CREATE INDEX IF NOT EXISTS academic_result_by_student
+  ON academic_student_results_shadow(student_id,event_kind,evaluated_at DESC)@@
