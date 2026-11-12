@@ -44,17 +44,43 @@ public class TeacherAttendanceLiveFactsService {
 
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Facts current(String classId,String scheduleId) {
-        return compute(classId,scheduleId,false);
+        return compute(classId,scheduleId,false,access.requireRole("CS"));
     }
 
     /** Only a private native admission may use the fenced ATTENDANCE mode. */
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Facts nativeCurrent(String classId,String scheduleId) {
-        return compute(classId,scheduleId,true);
+        return compute(classId,scheduleId,true,access.requireRole("CS"));
     }
 
-    private Facts compute(String classId,String scheduleId,boolean nativeWriter) {
-        var actor=access.requireRole("CS");
+    /**
+     * Core's private projection consumer has no end-user bearer after a
+     * network timeout. The earlier actor-bound immutable Core claim is its
+     * authority, but current CS account and exact support still MUST agree.
+     * A committed duplicate receipt is handled before reaching this method.
+     */
+    @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
+    public Facts nativeForClaim(String classId,String scheduleId,
+            String actorUsername,String actorEmployeeId) {
+        if(actorUsername==null || actorEmployeeId==null ||
+            !actorUsername.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,99}") ||
+            !actorEmployeeId.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}"))
+            throw new ApiException(HttpStatus.BAD_REQUEST,
+                "Exact native Attendance claim identity required");
+        Long active=db.queryForObject(
+            "SELECT COUNT(*) FROM users u JOIN employees e "+
+            "ON e.username=u.username WHERE u.username=? AND e.employee_id=? "+
+            "AND u.status='ACTIVE' AND e.status='ACTIVE' AND u.role_id='CS'",
+            Long.class,actorUsername,actorEmployeeId);
+        if(!Long.valueOf(1).equals(active))
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                "Native Attendance reference CS role has been revoked");
+        return compute(classId,scheduleId,true,
+            new SchedulingAccess.StaffIdentity(actorEmployeeId,actorUsername,"CS"));
+    }
+
+    private Facts compute(String classId,String scheduleId,boolean nativeWriter,
+            SchedulingAccess.StaffIdentity actor) {
         if(classId==null || classId.isBlank() || classId.length()>50 ||
                 scheduleId==null || scheduleId.isBlank() || scheduleId.length()>50)
             throw new ApiException(HttpStatus.BAD_REQUEST,
