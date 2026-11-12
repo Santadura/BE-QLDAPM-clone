@@ -159,4 +159,59 @@ public class TeacherAttendanceNativeClaimController {
                 "Native Attendance idempotency key reused with changed proof");
         return claim;
     }
+    /**
+     * Core claim may commit and the Attendance JVM may crash BEFORE its
+     * first local transaction. This bounded private cursor is the only
+     * authorized source from which a worker may reconstruct that exact
+     * committed intent. Every candidate is rechecked against the CURRENT
+     * employee role and original Academic/CS lesson generation: stale or
+     * revoked proofs remain OPEN for operator intervention, never guessed.
+     *
+     * All returned fields are immutable and the endpoint never modifies a
+     * Core domain row or alters claim state.
+     */
+    @GetMapping("/recoverable")
+    @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
+    public List<Claim> recoverable(
+            @RequestHeader(value="X-Internal-Key",required=false) String key,
+            @RequestParam(defaultValue="25") int limit) {
+        authorize(key);
+        if(limit<1 || limit>50)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Core native claim scan must be bounded to 1..50");
+        var raw=db.query(
+            "SELECT c.claim_id::text,c.actor_username,c.actor_employee_id,"+
+            "c.class_id,c.teaching_schedule_id,c.request_key,c.request_hash,"+
+            "c.attendance_status,c.facts_token,c.writer_generation,"+
+            "c.previous_attendance_id,c.previous_status,c.state "+
+            "FROM teacher_attendance_native_claims c "+
+            "JOIN teacher_attendance_writer_control w ON w.singleton=TRUE "+
+            "JOIN scheduling_assignment_writer_control s ON s.singleton=TRUE "+
+            "JOIN academic_session_writer_control a ON a.singleton=TRUE "+
+            "WHERE c.state='OPEN' AND w.writer_mode='ATTENDANCE' "+
+            "AND c.writer_generation=w.generation "+
+            "AND s.writer_mode='QUIESCED' AND a.writer_mode='QUIESCED' "+
+            "ORDER BY c.created_at,c.claim_id LIMIT ?",
+            (rs,i)->new Claim(rs.getString(1),rs.getString(2),rs.getString(3),
+                rs.getString(4),rs.getString(5),rs.getString(6),
+                rs.getString(7),rs.getString(8),rs.getString(9),
+                rs.getLong(10),rs.getString(11),rs.getString(12),
+                "ATTENDANCE",rs.getString(13)),limit);
+        var admissible=new java.util.ArrayList<Claim>();
+        for(var candidate:raw) {
+            try {
+                var current=facts.nativeForClaim(candidate.classId(),
+                    candidate.teachingScheduleId(),candidate.actorUsername(),
+                    candidate.actorEmployeeId());
+                if(candidate.factsToken().equals(current.token()) &&
+                   candidate.writerGeneration()==current.attendanceGeneration())
+                    admissible.add(candidate);
+            } catch(com.example.demo.exception.ApiException ex) {
+                // Revoked actor, altered schedule or missing support => remain
+                // in Core OPEN; do not tell the worker to make a business write.
+            }
+        }
+        return List.copyOf(admissible);
+    }
+
 }
