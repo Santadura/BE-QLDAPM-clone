@@ -12,6 +12,7 @@ COMPOSE=(docker compose -f docker-compose.microservices.yml)
 BASE="http://localhost:8080"
 key="${ATTENDANCE_INTERNAL_API_KEY:-local-dev-attendance-key-change-before-deployment}"
 academic_key="${ACADEMIC_INTERNAL_API_KEY:-local-dev-academic-key-change-before-deployment}"
+scheduling_key="${SCHEDULING_INTERNAL_API_KEY:-local-dev-scheduling-key-change-before-deployment}"
 class_id="class-0001"
 schedule_id="teaching-001"
 claim_key="ci-native-orphan-${GITHUB_RUN_ID}"
@@ -33,6 +34,14 @@ private_post() {
 health() {
   "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- "$1" 2>/dev/null | grep -q '"UP"'
 }
+core_ready() {
+  # Core has no spring-boot-starter-actuator. Reuse its already-tested
+  # private Scheduling writer-state endpoint rather than a nonexistent 404.
+  "${COMPOSE[@]}" exec -T scheduling-postgres wget -qO- \
+    --header "X-Internal-Key: $scheduling_key" \
+    http://backend:8081/internal/scheduling/assignments/writer-state \
+    >/dev/null 2>&1
+}
 login() {
   curl -fsS -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' -d "$1" |
     python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])'
@@ -53,6 +62,10 @@ SQL
 cleanup() {
   local result=$?
   trap - EXIT
+  if [ "$result" -ne 0 ]; then
+    echo "FAIL: preserving original Core/Attendance container logs until CI destroys disposable volumes" >&2
+    exit "$result"
+  fi
   if [ "${started:-false}" = true ]; then
     "${COMPOSE[@]}" exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 >/dev/null <<'SQL' || true
 BEGIN;
@@ -100,7 +113,7 @@ SQL
 ATTENDANCE_NATIVE_REFERENCE_ENABLED=true "${COMPOSE[@]}" up -d --no-deps --force-recreate backend >/dev/null
 ATTENDANCE_NATIVE_ADMISSION_ENABLED=true ATTENDANCE_NATIVE_WRITER_ENABLED=false ATTENDANCE_NATIVE_RECOVERY_ENABLED=false "${COMPOSE[@]}" up -d --no-deps --force-recreate attendance-service >/dev/null
 for i in $(seq 1 90); do
-  if health http://backend:8081/actuator/health && health http://attendance-service:8100/actuator/health; then break; fi
+  if core_ready && health http://attendance-service:8100/actuator/health; then break; fi
   if [ "$i" = 90 ]; then FAIL "Native-ready Core/Attendance did not become healthy"; fi
   sleep 2
 done
