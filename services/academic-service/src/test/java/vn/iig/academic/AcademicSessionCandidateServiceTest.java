@@ -22,7 +22,7 @@ class AcademicSessionCandidateServiceTest {
     void allow() {
         when(identity.currentPrincipal("Bearer admin")).thenReturn(
             new AcademicCoreClient.Principal("admin","ROLE_ADMIN"));
-        when(readiness.verify()).thenReturn(
+        when(readiness.verifyStaging()).thenReturn(
             new AcademicSessionCutoverReadiness.Evidence(5,5,2,2,4,5,6));
         when(core.writerFence()).thenReturn(
             new AcademicSessionSourceClient.WriterFence(
@@ -36,7 +36,7 @@ class AcademicSessionCandidateServiceTest {
             p.academicGeneration()==4 && p.attendanceGeneration()==5 &&
             p.schedulingGeneration()==6));
         verify(identity).sessionRevision("class-1","Bearer admin");
-        verify(readiness).verify();
+        verify(readiness).verifyStaging();
         var order=inOrder(claims,repo);
         order.verify(claims).acquire(any());
         order.verify(repo).stage(any());
@@ -52,7 +52,7 @@ class AcademicSessionCandidateServiceTest {
     }
     @Test void incompleteHistoryNeverStages() {
         allow();
-        when(readiness.verify()).thenThrow(
+        when(readiness.verifyStaging()).thenThrow(
             new ResponseStatusException(HttpStatus.CONFLICT,"History incomplete"));
         assertEquals(HttpStatus.CONFLICT,assertThrows(
             ResponseStatusException.class,
