@@ -44,6 +44,14 @@ spring:
           predicates:
             - Path=/api/students
             - Method=GET
+        # Student detail GET remains Core-ACL authorized, while two separately
+        # feature-gated Admin fields can read Academic's verified TARGET/RESULT
+        # projections. Teacher and Core writes preserve legacy behavior.
+        - id: academic-student-detail-read
+          uri: ${ACADEMIC_SERVICE_URI:http://localhost:8099}
+          predicates:
+            - Path=/api/students/*
+            - Method=GET
         # Academic's isolated PostgreSQL records the read result on every
         # authorized request. Core still owns lesson mutations and ACLs until
         # event-based Academic ownership is fully verified.
