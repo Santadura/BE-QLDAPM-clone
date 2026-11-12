@@ -180,4 +180,20 @@ class AssignmentDomainOutboxRepositoryTest {
                 .getStatusCode());
         verifyNoInteractions(db);
     }
+    @Test void recoveryQueueSelectsOnlyExhaustedCommandsAndNoDeliveredEvent() {
+        when(db.query(contains("inbox.state='COMPENSATING'"),
+            any(RowMapper.class),eq(25))).thenReturn(List.of());
+        assertEquals(List.of(),outbox.awaitingVerifiedRecovery(25));
+        verify(db).query(allOf(contains("o.delivered_at IS NULL"),
+            contains("JOIN scheduling_assignment_command_inbox inbox")),
+            any(RowMapper.class),eq(25));
+    }
+
+    @Test void recoveryQueueCannotScanUnboundedSourceOrWriteRows() {
+        assertEquals(HttpStatus.BAD_REQUEST,assertThrows(
+            ResponseStatusException.class,
+            ()->outbox.awaitingVerifiedRecovery(51)).getStatusCode());
+        verifyNoInteractions(db);
+    }
+
 }
