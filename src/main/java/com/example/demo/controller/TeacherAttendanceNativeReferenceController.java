@@ -136,6 +136,9 @@ public class TeacherAttendanceNativeReferenceController {
             !claimId.matches("[0-9a-fA-F-]{36}") ||
             !schedule.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
             !classId.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
+            !actor.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,99}") ||
+            !employeeId.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
+            !attendanceId.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,49}") ||
             !Set.of("PRESENT","ABSENT","LATE").contains(status) ||
             !requestHash.matches("[0-9a-f]{64}") ||
             !token.matches("[0-9a-f]{64}") ||
@@ -160,8 +163,7 @@ public class TeacherAttendanceNativeReferenceController {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "No Core-admitted native Attendance claim");
         Claim c=claims.get(0);
-        if(!event.equalsIgnoreCase(event) || // UUID case-insensitive envelope
-            !actor.equals(c.actor()) || !employeeId.equals(c.employeeId()) ||
+        if(!actor.equals(c.actor()) || !employeeId.equals(c.employeeId()) ||
             !classId.equals(c.classId()) || !schedule.equals(c.scheduleId()) ||
             !requestKey.equals(c.requestKey()) || !status.equals(c.status()) ||
             !requestHash.equals(c.requestHash()) || !token.equals(c.factsToken()) ||
