@@ -112,7 +112,10 @@ class AttendanceNativeCommandServiceTest {
         assertEquals(HttpStatus.CONFLICT,assertThrows(ResponseStatusException.class,
             ()->service.mark("class-1","teach-1","Bearer cs","PRESENT","same-key"))
             .getStatusCode());
-        verifyNoInteractions(ledger);
+        verify(ledger).completedForKey("cs001","class-1","teach-1",
+            "same-key",hash);
+        verify(ledger,never()).stage(any());
+        verify(ledger,never()).confirm(any(),any());
     }
     @Test void completedSameKeyReplayReturnsOriginalCoreResponseWithoutNewClaim()
             throws Exception {
