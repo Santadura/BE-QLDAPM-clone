@@ -1298,6 +1298,15 @@ tc_rank_options="$(curl -fsS -H "Authorization: Bearer ${tc_token}" "${BASE}/api
 TC_RANK_OPTIONS="$tc_rank_options" python3 -c 'import os,json; rows=json.loads(os.environ["TC_RANK_OPTIONS"]); assert isinstance(rows,list) and all(r["role"]=="TEACHER" for r in rows),rows'
 teacher_rank_denied="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${teacher_again}" "${BASE}/api/employee-management/salary-ranks")"
 test "$teacher_rank_denied" = 403 || { echo "Teacher accessed managerial HR rank options"; exit 1; }
+# Profile salary preserves FE contract but rank name/amount comes from the HR-owned rank table.
+profile_salary="$(curl -fsS -H "Authorization: Bearer ${teacher_again}" "${BASE}/api/profile/salary")"
+PROFILE_SALARY="$profile_salary" python3 -c 'import os,json; row=json.loads(os.environ["PROFILE_SALARY"]); assert all(k in row for k in ("salaryRankId","salaryRank","amount","reviewedDate")),row'
+salary_current_id="$(PROFILE_SALARY="$profile_salary" python3 -c 'import os,json; print(json.loads(os.environ["PROFILE_SALARY"]).get("salaryRankId") or "")')"
+if test -n "$salary_current_id"; then
+  payroll_rank_amount="$("${COMPOSE[@]}" exec -T hr-postgres psql -U iig_hr -d iig_hr -tAc "SELECT amount FROM hr_salary_ranks WHERE salary_rank_id='${salary_current_id}'" | tr -d '[:space:]')"
+  PROFILE_SALARY="$profile_salary" HR_AMOUNT="$payroll_rank_amount" python3 -c 'import os,json,decimal; data=json.loads(os.environ["PROFILE_SALARY"]); assert decimal.Decimal(str(data["amount"]))==decimal.Decimal(os.environ["HR_AMOUNT"]),data'
+fi
+echo "PASS: HR-owned profile salary amount agrees with independent HR PostgreSQL"
 echo "PASS: private live Identity contract, HR self-certificate ownership and scoped rank options"
 # The two newer main-branch payroll/scheduling commits must remain functional
 # after the Microservices stack synchronizes. Payroll ledger is still in Core
