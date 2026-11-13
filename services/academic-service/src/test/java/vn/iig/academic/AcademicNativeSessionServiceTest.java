@@ -47,7 +47,10 @@ class AcademicNativeSessionServiceTest {
             ()->service.execute("PLAN","class-1",
                 new ObjectMapper().createArrayNode(),"Bearer admin","key-1"))
             .getStatusCode());
-        verifyNoInteractions(ledger);
+        verify(ledger).commandDigest(eq("PLAN"),eq("class-1"),any());
+        verify(ledger,never()).execute(anyString(),anyString(),anyString(),
+            anyString(),any(),anyLong(),anyLong());
+        verifyNoInteractions(claims);
     }
 
     private final ObjectMapper mapper=new ObjectMapper();
@@ -104,12 +107,12 @@ class AcademicNativeSessionServiceTest {
             throws Exception {
         var payload=nativeReady();
         var saved=mapper.createArrayNode();
-        when(claims.acquire(any())).thenAnswer(call-> {
+        doAnswer(call-> {
             AcademicNativeCommandClaimClient.Claim c=call.getArgument(0);
             return new AcademicNativeCommandClaimClient.Receipt(
                 "RELEASED",c.actorUsername(),c.classId(),c.operation(),
                 c.requestKey(),EVENT,OUTBOX);
-        });
+        }).when(claims).acquire(any());
         when(ledger.committedEvidence("admin","class-1","PLAN","key-1",HASH))
             .thenReturn(new AcademicNativeSessionRepository.CommittedEvidence(
                 HASH,EVENT,OUTBOX,saved));
@@ -122,8 +125,9 @@ class AcademicNativeSessionServiceTest {
     @Test void lostCoreAcquireAckNeverStartsIndependentAcademicMutation()
             throws Exception {
         var payload=nativeReady();
-        when(claims.acquire(any())).thenThrow(new ResponseStatusException(
-            HttpStatus.SERVICE_UNAVAILABLE,"Claim network reply uncertain"));
+        doThrow(new ResponseStatusException(
+            HttpStatus.SERVICE_UNAVAILABLE,"Claim network reply uncertain"))
+            .when(claims).acquire(any());
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE,assertThrows(
             ResponseStatusException.class,()->service.execute("PLAN",
                 "class-1",payload,"Bearer admin","key-1")).getStatusCode());
