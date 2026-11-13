@@ -103,6 +103,47 @@ public class HrCoreClient {
         return identity.currentRole(bearer);
     }
 
+
+    public record SelfSalaryAssignment(String salaryRankId,java.time.LocalDate reviewedDate) {}
+
+    /**
+     * Rank ASSIGNMENT still belongs to Core employee lifecycle.
+     * Only this assignment reference comes from Core; HR supplies the
+     * authoritative rank name and amount from its independent PostgreSQL.
+     */
+    @SuppressWarnings("unchecked")
+    public SelfSalaryAssignment currentSalaryAssignment(String bearer) {
+        if(bearer==null || !bearer.startsWith("Bearer ") || bearer.length()<16)
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                "Current salary bearer required");
+        try {
+            Map<String,Object> source=client.get().uri("/api/profile/salary")
+                .header("Authorization",bearer).retrieve().body(Map.class);
+            if(source==null || !source.containsKey("salaryRankId") ||
+                    !source.containsKey("reviewedDate"))
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Current employee salary assignment incomplete");
+            Object rank=source.get("salaryRankId");
+            Object reviewed=source.get("reviewedDate");
+            java.time.LocalDate date=reviewed instanceof String value && !value.isBlank()
+                ? java.time.LocalDate.parse(value) : null;
+            return new SelfSalaryAssignment(
+                rank instanceof String id && !id.isBlank()?id:null,date);
+        } catch(HttpClientErrorException ex) {
+            if(ex.getStatusCode().value()==401)
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                    "Current salary session invalid");
+            if(ex.getStatusCode().value()==403)
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Current salary forbidden");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Current salary assignment unavailable");
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Current salary assignment unavailable");
+        }
+    }
+
     /**
      * An authenticated employee can only resolve their own current profile.
      * Core still owns employee identity until the HR lifecycle cutover.
