@@ -684,3 +684,32 @@ DROP TRIGGER IF EXISTS trg_iig_native_activation_no_truncate ON academic_native_
 CREATE TRIGGER trg_iig_native_activation_no_truncate
   BEFORE TRUNCATE ON academic_native_session_activations
   FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+
+
+-- The Core claim is released only AFTER the independent Academic business
+-- journal has committed and its exact original event/hash was verified.
+-- This separate, append-only local receipt marks an ambiguous HTTP handback
+-- as completed. It is never a public Academic domain event.
+CREATE TABLE IF NOT EXISTS academic_native_claim_handoffs (
+  actor_username VARCHAR(100) NOT NULL,
+  class_id VARCHAR(50) NOT NULL,
+  operation VARCHAR(20) NOT NULL,
+  request_key VARCHAR(128) NOT NULL,
+  event_id UUID NOT NULL UNIQUE,
+  event_hash CHAR(64) NOT NULL CHECK(event_hash ~ '^[0-9a-f]{64}$'),
+  confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(actor_username,class_id,operation,request_key),
+  FOREIGN KEY(actor_username,class_id,operation,request_key)
+    REFERENCES academic_native_session_commands(actor_username,class_id,operation,request_key)
+)@@
+
+DROP TRIGGER IF EXISTS trg_iig_native_handoff_immutable
+  ON academic_native_claim_handoffs@@
+CREATE TRIGGER trg_iig_native_handoff_immutable
+  BEFORE UPDATE OR DELETE ON academic_native_claim_handoffs
+  FOR EACH ROW EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
+DROP TRIGGER IF EXISTS trg_iig_native_handoff_no_truncate
+  ON academic_native_claim_handoffs@@
+CREATE TRIGGER trg_iig_native_handoff_no_truncate
+  BEFORE TRUNCATE ON academic_native_claim_handoffs
+  FOR EACH STATEMENT EXECUTE FUNCTION iig_block_academic_candidate_tampering()@@
