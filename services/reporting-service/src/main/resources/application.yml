@@ -12,6 +12,9 @@ spring:
       mode: always
       continue-on-error: false
 iig:
+  identity:
+    url: ${IDENTITY_SERVICE_URL:http://localhost:8094}
+    internal-key: ${IDENTITY_INTERNAL_API_KEY}
   core:
     url: ${CORE_INTERNAL_URL:http://localhost:8081}
     internal-key: ${REPORTING_INTERNAL_API_KEY}

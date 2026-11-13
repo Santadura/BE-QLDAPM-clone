@@ -1,5 +1,7 @@
 package vn.iig.identity;
 
+import java.util.Map;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -48,6 +50,39 @@ public class IdentityCoreClient {
         } catch (RestClientException ex) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Identity sync unavailable");
         }
+    }
+
+    public record Principal(String username,String role) {}
+
+    /** Current authority remains Core until account writers are cut over. */
+    public Principal currentPrincipal(String bearer) {
+        if(bearer==null || !bearer.startsWith("Bearer ") || bearer.length()<16)
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Bearer token required");
+        final Map<?,?> account;
+        try {
+            account=client.get().uri("/api/me").header("Authorization",bearer)
+                .retrieve().body(Map.class);
+        } catch(HttpClientErrorException ex) {
+            if(ex.getStatusCode().value()==401 || ex.getStatusCode().value()==403)
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                    "Current identity session revoked");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core identity authority unavailable");
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core identity authority unavailable");
+        }
+        if(account==null || !(account.get("username") instanceof String username)
+                || username.isBlank() || !(account.get("authorities") instanceof List<?> roles))
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Invalid active identity");
+        String role=roles.stream().filter(x->x instanceof Map<?,?>)
+            .map(x->((Map<?,?>)x).get("authority"))
+            .filter(x->x instanceof String)
+            .map(x->(String)x).filter(x->x.startsWith("ROLE_") && x.length()>5)
+            .findFirst().orElse(null);
+        if(role==null)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Current role unavailable");
+        return new Principal(username,role);
     }
 
     public void revokeInCore(String authorization) {

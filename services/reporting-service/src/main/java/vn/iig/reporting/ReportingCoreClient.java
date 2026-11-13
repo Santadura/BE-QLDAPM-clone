@@ -20,13 +20,16 @@ import org.springframework.web.server.ResponseStatusException;
 public class ReportingCoreClient {
     private final RestClient client;
     private final String internalKey;
+    private final ReportingIdentityClient identity;
 
     public ReportingCoreClient(@Value("${iig.core.url}") String coreUrl,
-                               @Value("${iig.core.internal-key}") String internalKey) {
+                               @Value("${iig.core.internal-key}") String internalKey,
+                               ReportingIdentityClient identity) {
         if (internalKey == null || internalKey.isBlank()) {
             throw new IllegalArgumentException("REPORTING_INTERNAL_API_KEY is required");
         }
         this.internalKey = internalKey;
+        this.identity=identity;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2500);
         factory.setReadTimeout(5000);
@@ -36,36 +39,7 @@ public class ReportingCoreClient {
     public record Principal(String username, String role) {}
 
     public Principal currentPrincipal(String bearerToken) {
-        if (bearerToken == null || !bearerToken.startsWith("Bearer ")) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bearer token required");
-        }
-        final Map<?,?> account;
-        try {
-            account = client.get().uri("/api/me")
-                .header("Authorization", bearerToken)
-                .retrieve().body(Map.class);
-        } catch (HttpClientErrorException ex) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid session");
-        } catch (RestClientException ex) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Identity validation unavailable");
-        }
-        if (account == null || !(account.get("username") instanceof String username)
-                || username.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid session");
-        }
-        Object roles = account.get("authorities");
-        if (!(roles instanceof List<?> authorities)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Role not available");
-        }
-        String currentRole = authorities.stream()
-            .filter(item -> item instanceof Map<?, ?>)
-            .map(item -> String.valueOf(((Map<?, ?>)item).get("authority")))
-            .filter(item -> item.startsWith("ROLE_"))
-            .findFirst().orElse(null);
-        if (currentRole == null) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Role not available");
-        }
-        return new Principal(username, currentRole);
+        return identity.currentPrincipal(bearerToken);
     }
 
     public void requireAdmin(String bearerToken) {
