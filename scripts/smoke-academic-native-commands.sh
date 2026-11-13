@@ -139,9 +139,49 @@ test "$caught" = true || fail "Core/Academic immutable timetable history diverge
 
 baseline="$(core_sql "SELECT COUNT(*) FROM class_sessions WHERE class_id='$class_id'")"
 source_outbox="$(core_sql "SELECT COUNT(*) FROM academic_session_source_outbox")"
-activate="$(curl -fsS -X POST "$private/activate/$class_id" \
-  -H "X-Internal-Key: $key" -H "Authorization: Bearer $admin")" ||
-  fail "Core-frozen native Academic activation was rejected"
+# A preceding Attendance fault-injection test restarts Core and its
+# downstream services. A 503 here means unavailable independent proof, NOT a
+# rejected native business command. Retry only transient 503/502/504, never
+# bypass a 409 readiness conflict or authentication failure. Activation is
+# exact-evidence idempotent, so a lost response can be retried safely.
+activation_body="/tmp/iig-academic-native-activation-${GITHUB_RUN_ID}.json"
+activate=""
+for attempt in $(seq 1 45); do
+  status="$(curl --connect-timeout 3 --max-time 30 -sS -o "$activation_body" \
+    -w '%{http_code}' -X POST "$private/activate/$class_id" \
+    -H "X-Internal-Key: $key" -H "Authorization: Bearer $admin")" || status="000"
+  if [[ "$status" == 202 ]]; then
+    activate="$(cat "$activation_body")"
+    break
+  fi
+  case "$status" in
+    000|502|503|504)
+      echo "Academic native frozen activation deferred: dependent proof HTTP $status (attempt $attempt/45)" >&2
+      sleep 3
+      ;;
+    *)
+      echo "Academic native activation rejected with HTTP $status: $(head -c 600 "$activation_body")" >&2
+      fail "Native Academic activation rejected by immutable cutover or ACL contract"
+      ;;
+  esac
+done
+if [[ -z "$activate" ]]; then
+  echo "Academic native activation remained unavailable; last HTTP $status" >&2
+  if [[ -s "$activation_body" ]]; then head -c 1200 "$activation_body" >&2; echo >&2; fi
+  # Probe individual READ-ONLY independent receipts; these are diagnostics,
+  # never substitutes for the strict cross-service gate above.
+  for target in \
+    "attendance-service:8100/internal/attendance/verify/frozen" \
+    "scheduling-service:8098/internal/scheduling/assignments/verify" \
+    "payroll-service:8110/internal/payroll/attendance-reference/verify"; do
+    host="${target%%/*}"
+    endpoint="/${target#*/}"
+    status_probe="$(compose exec -T scheduling-postgres wget -qO- \
+      "http://$host$endpoint" 2>/dev/null | head -c 250 || true)"
+    echo "Academic native dependency diagnostic: $host => ${status_probe:-unavailable}" >&2
+  done
+  fail "Timed out awaiting full independent frozen Academic/Attendance/Scheduling/Payroll proof"
+fi
 # Replay exact original source/generation proof after a simulated lost ACK.
 activation_replay="$(curl -fsS -X POST "$private/activate/$class_id" \
   -H "X-Internal-Key: $key" -H "Authorization: Bearer $admin")" ||
