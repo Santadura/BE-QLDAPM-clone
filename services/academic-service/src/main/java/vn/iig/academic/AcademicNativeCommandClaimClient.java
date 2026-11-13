@@ -18,6 +18,8 @@ public class AcademicNativeCommandClaimClient {
     public record Release(Claim claim,String eventId,String outboxHash) {}
     public record Receipt(String state,String actorUsername,String classId,
         String operation,String requestKey,String eventId,String outboxHash) {}
+    public record Inspection(Claim claim,String state,
+                             String eventId,String outboxHash) {}
     private final RestClient core;
     private final String key;
 
@@ -68,6 +70,34 @@ public class AcademicNativeCommandClaimClient {
                 "Invalid Core native command claim state");
         return r;
     }
+    /**
+     * Live Core receipt is the ONLY acceptable source for orphan recovery.
+     * An unrecognized network response leaves the original claim OPEN.
+     */
+    public Inspection inspect(String actor,String operation,String requestKey) {
+        try {
+            Inspection original=core.get().uri(uri->uri
+                .path("/internal/academic/native-command-claims/inspect")
+                .queryParam("actor",actor)
+                .queryParam("operation",operation)
+                .queryParam("requestKey",requestKey).build())
+                .header("X-Internal-Key",key)
+                .retrieve().body(Inspection.class);
+            if(original==null || original.claim()==null ||
+                original.state()==null ||
+                !java.util.Set.of("OPEN","RELEASED").contains(original.state()) ||
+                !actor.equals(original.claim().actorUsername()) ||
+                !operation.equals(original.claim().operation()) ||
+                !requestKey.equals(original.claim().requestKey()))
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Core native claim inspection returned incomplete original evidence");
+            return original;
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Core native claim inspection unavailable; do not infer rollback",ex);
+        }
+    }
+
     public Receipt release(Release proof) {
         if(proof==null || proof.claim()==null || proof.eventId()==null ||
             proof.outboxHash()==null)
