@@ -21,6 +21,7 @@ fail() { echo "Academic native E2E: $*" >&2; exit 1; }
 class_id=""
 prior_status=""
 frozen=false
+core_claims_enabled=false
 cleanup() {
   local rc=$?
   trap - EXIT
@@ -46,6 +47,11 @@ cleanup() {
     ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true \
     compose up -d --no-deps --force-recreate academic-service >/dev/null ||
     echo "WARNING: disposable Academic service restore failed" >&2
+  if [[ "$core_claims_enabled" == true ]]; then
+    ACADEMIC_NATIVE_COMMAND_CLAIMS_ENABLED=false \
+      compose up -d --no-deps --force-recreate backend >/dev/null ||
+      echo "WARNING: disposable Core native claim controller restore failed" >&2
+  fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -59,6 +65,12 @@ prior_status="$(core_sql "SELECT status FROM classes WHERE class_id='$class_id'"
 test "$prior_status" = DRAFT ||
   fail "The disposable Academic class was not in its original DRAFT state"
 core_sql "UPDATE classes SET status='RUNNING' WHERE class_id='$class_id'" >/dev/null
+# Enable ONLY the private class-scoped Core claim admission for this
+# disposable Academic rehearsal. The Core SQL trigger itself is permanent.
+ACADEMIC_NATIVE_COMMAND_CLAIMS_ENABLED=true \
+  compose up -d --no-deps --force-recreate backend >/dev/null
+core_claims_enabled=true
+
 # The private rehearsal controller is explicitly disabled outside this smoke.
 ACADEMIC_NATIVE_REHEARSAL_ENABLED=true \
   ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true \
@@ -263,5 +275,58 @@ test "$(core_sql "SELECT COUNT(*) FROM class_sessions WHERE class_id='$class_id'
   fail "Rehearsal incorrectly wrote to Core session table"
 test "$(core_sql "SELECT COUNT(*) FROM academic_session_source_outbox")" = "$source_outbox" ||
   fail "Rehearsal incorrectly forged a Core committed source event"
+
+# Every native operation must leave an EXACT Core RELEASED receipt, not a
+# stale OPEN claim after a successful independent Academic DB commit.
+test "$(core_sql "SELECT COUNT(*) FROM academic_native_command_claims
+  WHERE class_id='$class_id' AND state='RELEASED'")" = 2 ||
+  fail "Two native Academic commands did not acquire/release Core handback claims"
+test "$(core_sql "SELECT COUNT(*) FROM academic_native_command_claims
+  WHERE class_id='$class_id' AND state='OPEN'")" = 0 ||
+  fail "An unresolved native Academic claim would block Core handback"
+test "$(core_sql "SELECT COUNT(*) FROM academic_native_command_claim_audit
+  WHERE class_id='$class_id'")" = 4 ||
+  fail "Core native Academic claim audit did not record exact acquire/release pairs"
+
+# A simulated crash *after Core claim admission but before Academic commit*
+# must block BOTH SQL handbacks. Keep the claim inside an explicit Core SQL
+# transaction and roll the fixture back; no compensating guess is permitted.
+compose exec -T postgres psql -U postgres -d qlapm_db -v ON_ERROR_STOP=1 <<SQL
+BEGIN;
+INSERT INTO academic_native_command_claims
+  (actor_username,class_id,operation,request_key,request_hash,
+   session_generation,roster_generation,attendance_generation,
+   scheduling_generation)
+SELECT 'admin','$class_id','PLAN','ci-crash-claim-$GITHUB_RUN_ID',
+  repeat('f',64),a.generation,r.generation,t.generation,s.writer_generation
+FROM academic_session_writer_control a,
+     academic_roster_writer_control r,
+     teacher_attendance_writer_control t,
+     scheduling_assignment_writer_control s
+WHERE a.singleton AND r.singleton AND t.singleton AND s.singleton;
+DO \$\$
+BEGIN
+  BEGIN
+    UPDATE academic_session_writer_control SET writer_mode='CORE'
+      WHERE singleton=TRUE AND writer_mode='QUIESCED';
+    RAISE EXCEPTION 'Core timetable handback incorrectly ignored OPEN native claim';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    IF POSITION('Unreleased Academic' IN SQLERRM)=0 THEN RAISE; END IF;
+  END;
+  BEGIN
+    UPDATE academic_roster_writer_control SET writer_mode='CORE'
+      WHERE singleton=TRUE AND writer_mode='QUIESCED';
+    RAISE EXCEPTION 'Core roster handback incorrectly ignored OPEN native claim';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    IF POSITION('Unreleased native Academic' IN SQLERRM)=0 THEN RAISE; END IF;
+  END;
+END;
+\$\$;
+ROLLBACK;
+SQL
+test "$(core_sql "SELECT COUNT(*) FROM academic_native_command_claims
+  WHERE state='OPEN'")" = 0 ||
+  fail "Core retained a simulated disposable crash claim after rollback"
+echo "PASS: Core native Academic claim admission/release, SQL handback exclusion and crash-before-local recovery barrier"
 
 echo "PASS: Frozen Core writer, native Academic PLAN/RESCHEDULE, exact-key replay, independently committed PG rows/outbox, unchanged Core, private-only API"
