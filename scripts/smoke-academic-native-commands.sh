@@ -44,6 +44,7 @@ cleanup() {
       >/dev/null || echo "WARNING: disposable Core class status restore failed" >&2
   fi
   ACADEMIC_NATIVE_REHEARSAL_ENABLED=false \
+    ACADEMIC_NATIVE_CLAIM_RECOVERY_ENABLED=false \
     ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true \
     compose up -d --no-deps --force-recreate academic-service >/dev/null ||
     echo "WARNING: disposable Academic service restore failed" >&2
@@ -73,6 +74,7 @@ core_claims_enabled=true
 
 # The private rehearsal controller is explicitly disabled outside this smoke.
 ACADEMIC_NATIVE_REHEARSAL_ENABLED=true \
+  ACADEMIC_NATIVE_CLAIM_RECOVERY_ENABLED=true \
   ACADEMIC_ROSTER_SOURCE_RELAY_ENABLED=true \
   ACADEMIC_SESSION_SOURCE_RELAY_ENABLED=true \
   compose up -d --no-deps --force-recreate academic-service
@@ -287,6 +289,13 @@ test "$(core_sql "SELECT COUNT(*) FROM academic_native_command_claims
 test "$(core_sql "SELECT COUNT(*) FROM academic_native_command_claim_audit
   WHERE class_id='$class_id'")" = 4 ||
   fail "Core native Academic claim audit did not record exact acquire/release pairs"
+
+test "$(academic_sql "SELECT COUNT(*) FROM academic_native_claim_handoffs
+  WHERE class_id='$class_id'")" = 2 ||
+  fail "Academic did not durably store two exact Core native handoff receipts"
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "http://localhost:8080/internal/academic/native-command-claims/summary")" = 404 ||
+  fail "Core native claim inspection leaked through public Gateway"
 
 # A simulated crash *after Core claim admission but before Academic commit*
 # must block BOTH SQL handbacks. Keep the claim inside an explicit Core SQL
