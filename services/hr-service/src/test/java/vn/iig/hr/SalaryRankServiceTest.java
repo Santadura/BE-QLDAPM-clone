@@ -60,4 +60,17 @@ class SalaryRankServiceTest {
         service.synchronize();
         verify(repository,never()).acknowledge(anyString(),anyLong());
     }
+
+    @Test void managerRankOptionsMatchOriginalFieldsAndCurrentRoleScope() {
+        when(core.currentRole("Bearer tc")).thenReturn("TC");
+        when(repository.imported()).thenReturn(true);
+        when(repository.all()).thenReturn(List.of(teacherRank,csRank));
+        var options=service.managerOptions("Bearer tc");
+        assertEquals(1,options.size());
+        assertEquals("rank-1",options.get(0).get("salaryRankId"));
+        assertEquals("TEACHER",options.get(0).get("role"));
+        assertEquals(new BigDecimal("200000"),options.get(0).get("amount"));
+        assertFalse(options.get(0).containsKey("id"));
+        assertFalse(options.get(0).containsKey("roleId"));
+    }
 }

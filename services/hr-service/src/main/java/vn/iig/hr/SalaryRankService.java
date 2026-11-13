@@ -52,6 +52,21 @@ public class SalaryRankService {
             .map(RankState::publicView).toList();
     }
 
+    /** Existing employee-management rank options backed only by HR writes. */
+    public List<java.util.Map<String,Object>> managerOptions(String bearer) {
+        return list(bearer,null).stream()
+            .filter(row->"ACTIVE".equals(row.status()))
+            .map(row->{
+                java.util.Map<String,Object> result=new java.util.LinkedHashMap<>();
+                result.put("salaryRankId",row.id());
+                result.put("role",row.roleId());
+                result.put("rank",row.rank());
+                result.put("amount",row.amount());
+                result.put("status",row.status());
+                return result;
+            }).toList();
+    }
+
     public RankView create(RankRequest request,String authorization) {
         requireAdmin(authorization);
         ready();
