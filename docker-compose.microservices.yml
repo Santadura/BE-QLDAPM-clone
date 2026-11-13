@@ -245,6 +245,8 @@ services:
       HR_DB_PASSWORD: ${HR_DB_PASSWORD:-local-dev-hr-password}
       HR_INTERNAL_API_KEY: ${HR_INTERNAL_API_KEY:-local-dev-hr-key-change-before-deployment}
       CORE_INTERNAL_URL: http://backend:8081
+      IDENTITY_SERVICE_URL: http://identity-service:8094
+      IDENTITY_INTERNAL_API_KEY: ${IDENTITY_INTERNAL_API_KEY:-local-dev-identity-key-change-before-deployment}
     expose:
       - "8096"
     depends_on:
@@ -280,6 +282,8 @@ services:
       ATTENDANCE_SERVICE_URL: http://attendance-service:8100
       PAYROLL_ATTENDANCE_REFERENCE_RELAY_ENABLED: "true"
       CORE_INTERNAL_URL: http://backend:8081
+      IDENTITY_SERVICE_URL: http://identity-service:8094
+      IDENTITY_INTERNAL_API_KEY: ${IDENTITY_INTERNAL_API_KEY:-local-dev-identity-key-change-before-deployment}
     expose:
       - "8097"
     depends_on:
