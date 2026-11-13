@@ -115,6 +115,19 @@ spring:
           predicates:
             - Path=/api/employee-management/*/salaries
             - Method=GET
+        # Management rank options are an HR-owned read, not Core's FK copy.
+        - id: hr-employee-manager-rank-options
+          uri: ${HR_SERVICE_URI:http://localhost:8096}
+          predicates:
+            - Path=/api/employee-management/salary-ranks
+            - Method=GET
+        # Own self profile certificates in HR, using current Core-backed
+        # profile authorization until the employee lifecycle cutover.
+        - id: hr-self-profile-certificates
+          uri: ${HR_SERVICE_URI:http://localhost:8096}
+          predicates:
+            - Path=/api/profile/certificates
+            - Method=GET
         # Only certificate read/write API is migrated to HR at this stage.
         - id: hr-certificates
           uri: ${HR_SERVICE_URI:http://localhost:8096}
