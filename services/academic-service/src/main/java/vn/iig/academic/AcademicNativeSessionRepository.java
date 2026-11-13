@@ -403,7 +403,7 @@ public class AcademicNativeSessionRepository {
             "AND o.operation=c.operation AND o.request_key=c.request_key "+
             "AND o.writer_generation=c.writer_generation "+
             "WHERE c.actor_username=? AND c.class_id=? "+
-            "AND c.operation=? AND c.request_key=? FOR SHARE OF c,o",
+            "AND c.operation=? AND c.request_key=?",
             (rs,i)->new ProofRow(rs.getString(1),rs.getString(2),
                 rs.getString(3),rs.getString(4),rs.getString(5),
                 rs.getLong(6)),actor,classId,operation,key);
