@@ -369,6 +369,77 @@ public class AcademicNativeSessionRepository {
         return new RehearsalSummary(activations,commands,events);
     }
 
+    /** Same canonical digest shared by Core claim and Academic command. */
+    public String commandDigest(String operation,String classId,JsonNode body) {
+        if(body==null || classId==null ||
+            !Set.of("PLAN","RESCHEDULE").contains(operation))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Valid native Academic operation, class and body required");
+        return fingerprint(operation,classId,body);
+    }
+
+    public record CommittedEvidence(String requestHash,String eventId,
+                                    String eventHash,JsonNode response) {}
+    private record ProofRow(String commandHash,String resultJson,String eventId,
+                            String eventHash,String eventCanonical,long generation) {}
+
+    /**
+     * Read ONLY an already committed independent transaction. Core may
+     * release its OPEN claim only with this original event UUID and exact
+     * immutable payload hash. A missing/mismatched outbox fails closed.
+     */
+    @Transactional(readOnly=true)
+    public CommittedEvidence committedEvidence(String actor,String classId,
+            String operation,String key,String requestHash) {
+        requireIdentity(actor,classId,key);
+        if(requestHash==null || !requestHash.matches("[0-9a-f]{64}"))
+            throw new IllegalArgumentException("Exact Academic request hash required");
+        List<ProofRow> records=db.query(
+            "SELECT c.request_hash,c.response_json::text,o.event_id::text,"+
+            "o.payload_hash,o.payload_canonical,c.writer_generation "+
+            "FROM academic_native_session_commands c "+
+            "JOIN academic_native_session_outbox o "+
+            "ON o.actor_username=c.actor_username AND o.class_id=c.class_id "+
+            "AND o.operation=c.operation AND o.request_key=c.request_key "+
+            "AND o.writer_generation=c.writer_generation "+
+            "WHERE c.actor_username=? AND c.class_id=? "+
+            "AND c.operation=? AND c.request_key=? FOR SHARE OF c,o",
+            (rs,i)->new ProofRow(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getString(4),rs.getString(5),
+                rs.getLong(6)),actor,classId,operation,key);
+        if(records.size()!=1)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Original Academic command and outbox were not atomically committed");
+        ProofRow row=records.get(0);
+        if(!requestHash.equals(row.commandHash()) || row.eventId()==null ||
+            row.eventCanonical()==null || row.eventHash()==null ||
+            row.generation()<1 || !row.eventHash().equals(
+                AcademicSessionSourceRepository.sha256(row.eventCanonical())))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic native original request/event digest changed");
+        try {
+            JsonNode event=json.readTree(row.eventCanonical());
+            JsonNode response=json.readTree(row.resultJson());
+            if(event==null || !event.isObject() || response==null ||
+                !response.isArray() ||
+                !row.eventId().equals(event.path("eventId").asText()) ||
+                !actor.equals(event.path("actor").asText()) ||
+                !classId.equals(event.path("classId").asText()) ||
+                !operation.equals(event.path("operation").asText()) ||
+                !key.equals(event.path("requestKey").asText()) ||
+                !requestHash.equals(event.path("requestHash").asText()) ||
+                row.generation()!=event.path("writerGeneration").asLong(-1) ||
+                !response.equals(event.path("after")))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Academic original outbox payload and command outcome disagree");
+            return new CommittedEvidence(requestHash,row.eventId(),
+                row.eventHash(),response);
+        } catch(JsonProcessingException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Academic committed native evidence cannot be decoded",ex);
+        }
+    }
+
     /** Atomic domain rows, replay receipt and undeliverable rehearsal outbox. */
     @Transactional
     public JsonNode execute(String actor,String classId,String operation,
