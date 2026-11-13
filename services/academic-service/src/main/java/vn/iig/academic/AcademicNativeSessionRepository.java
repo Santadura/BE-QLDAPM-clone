@@ -440,6 +440,67 @@ public class AcademicNativeSessionRepository {
         }
     }
 
+    public record PendingHandoff(String actor,String classId,String operation,
+            String requestKey,String requestHash,String eventId,
+            String eventHash,long sessionGeneration,long rosterGeneration) {}
+
+    /**
+     * Locate committed native events that still lack a durable local record
+     * of the EXACT Core release. It is unsafe to infer remote failure from
+     * this absence; recovery must inspect Core's actual claim state.
+     */
+    public List<PendingHandoff> pendingClaimHandoffs(int limit) {
+        if(limit<1 || limit>50)
+            throw new IllegalArgumentException("Bounded native claim scan required");
+        return db.query(
+            "SELECT o.actor_username,o.class_id,o.operation,o.request_key,"+
+            "c.request_hash,o.event_id::text,o.payload_hash,"+
+            "o.writer_generation,a.roster_generation "+
+            "FROM academic_native_session_outbox o "+
+            "JOIN academic_native_session_commands c ON "+
+            "c.actor_username=o.actor_username AND c.class_id=o.class_id "+
+            "AND c.operation=o.operation AND c.request_key=o.request_key "+
+            "JOIN academic_native_session_activations a ON a.class_id=o.class_id "+
+            "LEFT JOIN academic_native_claim_handoffs h ON h.event_id=o.event_id "+
+            "WHERE h.event_id IS NULL ORDER BY o.created_at,o.event_id LIMIT ?",
+            (rs,i)->new PendingHandoff(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getString(4),rs.getString(5),
+                rs.getString(6),rs.getString(7),rs.getLong(8),
+                rs.getLong(9)),limit);
+    }
+
+    /**
+     * Called ONLY after Core's durable RELEASED receipt for the original
+     * event. A lost local acknowledgement is safely idempotent: the
+     * immutable insert conflicts unless the prior event/hash is identical.
+     */
+    @Transactional
+    public void recordClaimHandoff(PendingHandoff pending) {
+        if(pending==null)
+            throw new IllegalArgumentException("Original native handoff required");
+        var source=committedEvidence(pending.actor(),pending.classId(),
+            pending.operation(),pending.requestKey(),pending.requestHash());
+        if(!pending.eventId().equals(source.eventId()) ||
+            !pending.eventHash().equals(source.eventHash()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Core claim handoff does not match original local event");
+        db.update(
+            "INSERT INTO academic_native_claim_handoffs "+
+            "(actor_username,class_id,operation,request_key,event_id,event_hash) "+
+            "VALUES(?,?,?,?,CAST(? AS UUID),?) ON CONFLICT DO NOTHING",
+            pending.actor(),pending.classId(),pending.operation(),
+            pending.requestKey(),pending.eventId(),pending.eventHash());
+        Long matches=db.queryForObject(
+            "SELECT COUNT(*) FROM academic_native_claim_handoffs "+
+            "WHERE actor_username=? AND class_id=? AND operation=? "+
+            "AND request_key=? AND event_id=CAST(? AS UUID) AND event_hash=?",
+            Long.class,pending.actor(),pending.classId(),pending.operation(),
+            pending.requestKey(),pending.eventId(),pending.eventHash());
+        if(!Long.valueOf(1).equals(matches))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic native local Core handoff receipt changed on replay");
+    }
+
     /** Atomic domain rows, replay receipt and undeliverable rehearsal outbox. */
     @Transactional
     public JsonNode execute(String actor,String classId,String operation,
