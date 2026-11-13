@@ -1285,6 +1285,20 @@ tc_role_denied="$(curl -sS -o /dev/null -w '%{http_code}' \
 test "$tc_role_denied" = "403"
 echo "PASS: HR salary ranks enforce Admin/TC/CM role boundaries"
 
+# Identity is now the private live role/session contract for HR, Payroll and Reporting.
+private_identity_principal="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/identity/principal")"
+test "$private_identity_principal" = 404 || { echo "Private Identity principal leaked through Gateway"; exit 1; }
+# FE self-certificate reads must use HR's own PostgreSQL after a live Core profile check.
+self_certificates="$(curl -fsS -H "Authorization: Bearer ${teacher_again}" "${BASE}/api/profile/certificates")"
+SELF_CERTS="$self_certificates" CERTIFICATE_ID="$certificate_id" python3 -c 'import os,json; rows=json.loads(os.environ["SELF_CERTS"]); assert isinstance(rows,list) and any(r.get("certificateId")==os.environ["CERTIFICATE_ID"] and r.get("score")==8.5 for r in rows),rows'
+# The manager salary-rank options now come from authoritative HR, preserving old field names.
+manager_rank_options="$(curl -fsS -H "Authorization: Bearer ${TOKEN}" "${BASE}/api/employee-management/salary-ranks")"
+RANK_OPTIONS="$manager_rank_options" RANK_ID="$new_rank_id" python3 -c 'import os,json; rows=json.loads(os.environ["RANK_OPTIONS"]); assert isinstance(rows,list) and any(r.get("salaryRankId")==os.environ["RANK_ID"] and r.get("role")=="TEACHER" and r.get("amount")==185000 for r in rows),rows'
+tc_rank_options="$(curl -fsS -H "Authorization: Bearer ${tc_token}" "${BASE}/api/employee-management/salary-ranks")"
+TC_RANK_OPTIONS="$tc_rank_options" python3 -c 'import os,json; rows=json.loads(os.environ["TC_RANK_OPTIONS"]); assert isinstance(rows,list) and all(r["role"]=="TEACHER" for r in rows),rows'
+teacher_rank_denied="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${teacher_again}" "${BASE}/api/employee-management/salary-ranks")"
+test "$teacher_rank_denied" = 403 || { echo "Teacher accessed managerial HR rank options"; exit 1; }
+echo "PASS: private live Identity contract, HR self-certificate ownership and scoped rank options"
 # The two newer main-branch payroll/scheduling commits must remain functional
 # after the Microservices stack synchronizes. Payroll ledger is still in Core
 # during this transitional stage and must not be presented as extracted.
