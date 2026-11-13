@@ -1308,6 +1308,14 @@ test "$historical_count" -ge 2 || { echo "Historical salaries were not imported"
 detail="$(curl -fsS "${BASE}/api/payroll/teacher-001/2026-10" \
   -H "Authorization: Bearer ${TOKEN}")"
 printf '%s' "$detail" | python3 -c 'import sys,json; x=json.load(sys.stdin); assert x["employeeId"]=="teacher-001" and isinstance(x["items"],list)'
+# The HR employee salary list must now read Payroll-owned PostgreSQL.
+salary_history_json="$(curl -fsS -H "Authorization: Bearer ${TOKEN}" "${BASE}/api/employee-management/teacher-001/salaries")"
+SALARY_HISTORY="$salary_history_json" python3 -c 'import os,json; rows=json.loads(os.environ["SALARY_HISTORY"]); assert isinstance(rows,list) and any(r.get("source")=="EMPLOYEE" and r.get("period")=="2026-10" and r.get("status")=="CALCULATED" and "totalHours" in r and "detailRate" in r and "detailAmount" in r for r in rows),rows'
+employee_salary_denied="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${teacher_again}" "${BASE}/api/employee-management/teacher-001/salaries")"
+test "$employee_salary_denied" = 403 || { echo "HR employee salary ACL bypass: $employee_salary_denied"; exit 1; }
+internal_salary_acl="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}/internal/payroll/employee-management-access/teacher-001")"
+test "$internal_salary_acl" = 404 || { echo "Private Payroll/Core HR ACL exposed"; exit 1; }
+echo "PASS: employee salary list now uses independent Payroll DB, current HR scope and FE response fields"
 # The earlier Attendance suite deliberately deleted teaching-001 to verify
 # tombstones. Create a NEW isolated payable lesson evidence fixture for this
 # section, then remove it afterward so later regression state is unchanged.
