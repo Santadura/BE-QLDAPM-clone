@@ -19,12 +19,15 @@ import vn.iig.payroll.PayrollContracts.*;
 public class PayrollCoreClient {
     private final RestClient client;
     private final String internalKey;
+    private final PayrollIdentityClient identity;
 
     public PayrollCoreClient(@Value("${iig.core.url}") String coreUrl,
-                             @Value("${iig.core.internal-key}") String key) {
+                             @Value("${iig.core.internal-key}") String key,
+                             PayrollIdentityClient identity) {
         if(key==null || key.isBlank())
             throw new IllegalArgumentException("PAYROLL_INTERNAL_API_KEY required");
         this.internalKey=key;
+        this.identity=identity;
         SimpleClientHttpRequestFactory factory=new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2500);
         factory.setReadTimeout(8000);
@@ -34,12 +37,15 @@ public class PayrollCoreClient {
     public Actor actor(String bearer) {
         if(bearer==null || !bearer.startsWith("Bearer ") || bearer.length()<16)
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Bearer token required");
+        PayrollIdentityClient.Principal live=identity.currentPrincipal(bearer);
         try {
             Actor result=client.get().uri("/internal/payroll/actor")
                 .header("Authorization",bearer)
                 .header("X-Internal-Key",internalKey)
                 .retrieve().body(Actor.class);
-            if(result==null || result.username()==null || result.role()==null)
+            if(result==null || result.username()==null || result.role()==null ||
+                !result.username().equals(live.username()) ||
+                !("ROLE_"+result.role()).equals(live.role()))
                 throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Invalid active session");
             return result;
         } catch(HttpClientErrorException ex) {
