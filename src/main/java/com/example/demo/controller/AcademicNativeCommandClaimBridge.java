@@ -151,6 +151,48 @@ public class AcademicNativeCommandClaimBridge {
         return reply(exact(request.claim(),rows(request.claim())));
     }
 
+    public record Inspection(Claim claim,String state,
+                             String eventId,String outboxHash) {}
+
+    /**
+     * Read the original frozen claim, including ALL four writer epochs.
+     * Academic recovery must never invent a claim from local orphan data.
+     */
+    @GetMapping("/inspect")
+    @Transactional(readOnly=true)
+    public Inspection inspect(
+            @RequestHeader(value="X-Internal-Key",required=false) String provided,
+            @RequestParam String actor,@RequestParam String operation,
+            @RequestParam String requestKey) {
+        authenticate(provided);
+        if(actor==null ||
+            !actor.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,99}") ||
+            operation==null || !Set.of("PLAN","RESCHEDULE").contains(operation) ||
+            requestKey==null ||
+            !requestKey.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Exact native Academic actor, operation and key required");
+        List<Inspection> found=db.query(
+            "SELECT actor_username,class_id,operation,request_key,request_hash,"+
+            "session_generation,roster_generation,attendance_generation,"+
+            "scheduling_generation,state,event_id::text,outbox_hash "+
+            "FROM academic_native_command_claims WHERE actor_username=? "+
+            "AND operation=? AND request_key=?",
+            (rs,i)->new Inspection(new Claim(rs.getString(1),rs.getString(2),
+                rs.getString(3),rs.getString(4),rs.getString(5),
+                rs.getLong(6),rs.getLong(7),rs.getLong(8),rs.getLong(9)),
+                rs.getString(10),rs.getString(11),rs.getString(12)),
+            actor,operation,requestKey);
+        if(found.size()!=1)
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "No exact frozen Core native Academic command claim");
+        validate(found.get(0).claim());
+        if(!Set.of("OPEN","RELEASED").contains(found.get(0).state()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Core native claim has an unknown state");
+        return found.get(0);
+    }
+
     @GetMapping("/summary")
     @Transactional(readOnly=true)
     public Summary summary(
