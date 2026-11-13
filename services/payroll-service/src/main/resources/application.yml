@@ -14,7 +14,7 @@ spring:
 iig:
   identity:
     url: ${IDENTITY_SERVICE_URL:http://localhost:8094}
-    internal-key: ${IDENTITY_INTERNAL_API_KEY}
+    internal-key: ${IDENTITY_PRINCIPAL_INTERNAL_API_KEY}
   attendance:
     url: ${ATTENDANCE_SERVICE_URL:http://localhost:8100}
     reference-relay-enabled: ${PAYROLL_ATTENDANCE_REFERENCE_RELAY_ENABLED:false}

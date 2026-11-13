@@ -14,7 +14,7 @@ public class IdentityPrincipalController {
     private final IdentityCoreClient core;
     private final byte[] key;
     public IdentityPrincipalController(IdentityCoreClient core,
-            @Value("${iig.core.internal-key}") String secret) {
+            @Value("${iig.identity.principal-internal-key}") String secret) {
         if(secret==null || secret.isBlank())
             throw new IllegalArgumentException("Private Identity principal key required");
         this.core=core;
