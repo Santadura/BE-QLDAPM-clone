@@ -133,6 +133,13 @@ public class AcademicNativeSessionService {
                 "Academic frozen source changed after commit; Core claim stays OPEN");
         claims.release(new AcademicNativeCommandClaimClient.Release(
             claim,original.eventId(),original.eventHash()));
+        // A separate local receipt records Core's exact RELEASED evidence.
+        // A crash at this edge is repaired by AcademicNativeClaimHandoffRecovery.
+        nativeSessions.recordClaimHandoff(
+            new AcademicNativeSessionRepository.PendingHandoff(
+                actor,classId,operation,key,digest,original.eventId(),
+                original.eventHash(),before.sessionGeneration(),
+                before.rosterGeneration()));
         return original.response();
     }
 }
