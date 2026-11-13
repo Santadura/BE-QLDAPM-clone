@@ -81,4 +81,47 @@ class PayrollServiceTest {
         assertThrows(ResponseStatusException.class,()->service.list("admin","2026-10",null));
         verify(db,never()).byPeriod(anyString());
     }
+
+    @Test void employeeSalaryHistoryRequiresLiveHrScopeAndLocalLedger() {
+        when(db.imported()).thenReturn(true);
+        when(db.salaryDetailsImported()).thenReturn(true);
+        var rows=List.<java.util.Map<String,Object>>of(
+            java.util.Map.of("period","2026-10","source","EMPLOYEE"));
+        when(db.employeeSalaryHistory("teacher-001")).thenReturn(rows);
+        assertSame(rows,service.employeeSalaryHistory("token","teacher-001"));
+        var ordered=inOrder(core,db);
+        ordered.verify(core).requireEmployeeManagementAccess("token","teacher-001");
+        ordered.verify(db).imported();
+        ordered.verify(db).salaryDetailsImported();
+        ordered.verify(db).employeeSalaryHistory("teacher-001");
+        verify(core,never()).historical();
+    }
+
+    @Test void revokedEmployeeScopeCannotReadPayrollRows() {
+        doThrow(new ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,
+            "Manager scope revoked")).when(core)
+            .requireEmployeeManagementAccess("token","teacher-001");
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN,
+            assertThrows(ResponseStatusException.class,
+                ()->service.employeeSalaryHistory("token","teacher-001")).getStatusCode());
+        verifyNoInteractions(db);
+    }
+
+    @Test void missingLegacySalaryDetailBackfillBlocksNewEmployeeRoute() {
+        when(db.imported()).thenReturn(true);
+        when(db.salaryDetailsImported()).thenReturn(false);
+        assertEquals(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+            assertThrows(ResponseStatusException.class,
+                ()->service.employeeSalaryHistory("token","teacher-001")).getStatusCode());
+        verify(db,never()).employeeSalaryHistory(anyString());
+    }
+
+    @Test void existingPayrollDatabaseReimportsSalaryDetailsWithoutRewritingLedger() {
+        when(db.imported()).thenReturn(true);
+        when(db.salaryDetailsImported()).thenReturn(false);
+        when(core.historical()).thenReturn(List.of());
+        service.bootstrap();
+        verify(db).backfillSalaryDetails(List.of());
+        verify(db,never()).importHistorical(any());
+    }
 }
