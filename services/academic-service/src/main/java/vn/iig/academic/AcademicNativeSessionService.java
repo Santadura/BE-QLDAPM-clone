@@ -18,11 +18,14 @@ public class AcademicNativeSessionService {
     private final AcademicCoreClient core;
     private final AcademicFullCutoverReadiness readiness;
     private final AcademicNativeSessionRepository nativeSessions;
+    private final AcademicNativeCommandClaimClient claims;
 
     public AcademicNativeSessionService(AcademicCoreClient core,
             AcademicFullCutoverReadiness readiness,
-            AcademicNativeSessionRepository nativeSessions) {
+            AcademicNativeSessionRepository nativeSessions,
+            AcademicNativeCommandClaimClient claims) {
         this.core=core;this.readiness=readiness;this.nativeSessions=nativeSessions;
+        this.claims=claims;
     }
     private record ClassFacts(String status,LocalDate start,LocalDate end,long revision) {}
     private String admin(String bearer) {
@@ -81,20 +84,55 @@ public class AcademicNativeSessionService {
         return rows;
     }
 
-    @Transactional
+    /**
+     * Core acquires an OPEN claim before the independent Academic PostgreSQL
+     * transaction. Only the exact committed immutable outbox permits its
+     * subsequent RELEASE. A lost HTTP response must strand OPEN, blocking
+     * Core's timetable and roster handback until verified recovery.
+     *
+     * Do NOT annotate this orchestration with @Transactional: release must
+     * happen AFTER nativeSessions.execute has committed in a separate local
+     * Academic transaction, not before the Spring proxy commits.
+     */
     public JsonNode execute(String operation,String classId,JsonNode body,
             String bearer,String key) {
         String actor=admin(bearer);
         if(key==null || !key.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Academic native command requires an Idempotency-Key");
+        String digest=nativeSessions.commandDigest(operation,classId,body);
         var before=readiness.verifyStaging();
         var classFacts=facts(classId);
-        var result=nativeSessions.execute(actor,classId,operation,key,body,
+        var claim=new AcademicNativeCommandClaimClient.Claim(
+            actor,classId,operation,key,digest,before.sessionGeneration(),
+            before.rosterGeneration(),before.attendanceGeneration(),
+            before.schedulingGeneration());
+        var receipt=claims.acquire(claim);
+        // A terminal Core claim permits only an exact immutable replay.
+        if("RELEASED".equals(receipt.state())) {
+            var original=nativeSessions.committedEvidence(
+                actor,classId,operation,key,digest);
+            if(receipt.eventId()==null ||
+                !original.eventId().equalsIgnoreCase(receipt.eventId()) ||
+                !original.eventHash().equals(receipt.outboxHash()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Released native Core claim differs from original Academic event");
+            return original.response();
+        }
+        // Native repository commits rows + receipt + outbox atomically.
+        JsonNode result=nativeSessions.execute(actor,classId,operation,key,body,
             before.sessionGeneration(),before.rosterGeneration());
-        if(!before.equals(readiness.verifyStaging()) || !classFacts.equals(facts(classId)))
+        var original=nativeSessions.committedEvidence(
+            actor,classId,operation,key,digest);
+        if(!result.equals(original.response()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Academic snapshot/fence changed during native mutation; rolling back");
-        return result;
+                "Academic response changed after independent local commit");
+        if(!before.equals(readiness.verifyStaging()) ||
+            !classFacts.equals(facts(classId)))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Academic frozen source changed after commit; Core claim stays OPEN");
+        claims.release(new AcademicNativeCommandClaimClient.Release(
+            claim,original.eventId(),original.eventHash()));
+        return original.response();
     }
 }
