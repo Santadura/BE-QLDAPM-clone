@@ -170,6 +170,7 @@ services:
       IDENTITY_DB_USERNAME: iig_identity
       IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:-local-dev-identity-password}
       IDENTITY_INTERNAL_API_KEY: ${IDENTITY_INTERNAL_API_KEY:-local-dev-identity-key-change-before-deployment}
+      IDENTITY_PRINCIPAL_INTERNAL_API_KEY: ${IDENTITY_PRINCIPAL_INTERNAL_API_KEY:-local-dev-principal-verify-key-change-before-deployment}
       JWT_SECRET: ${JWT_SECRET:-change-this-to-a-long-random-secret-key-at-least-256-bits-please}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
       CORE_INTERNAL_URL: http://backend:8081
@@ -211,7 +212,7 @@ services:
       DASHBOARD_MAX_AGE_SECONDS: ${DASHBOARD_MAX_AGE_SECONDS:-10}
       CORE_INTERNAL_URL: http://backend:8081
       IDENTITY_SERVICE_URL: http://identity-service:8094
-      IDENTITY_INTERNAL_API_KEY: ${IDENTITY_INTERNAL_API_KEY:-local-dev-identity-key-change-before-deployment}
+      IDENTITY_PRINCIPAL_INTERNAL_API_KEY: ${IDENTITY_PRINCIPAL_INTERNAL_API_KEY:-local-dev-principal-verify-key-change-before-deployment}
     expose:
       - "8095"
     depends_on:
@@ -246,7 +247,7 @@ services:
       HR_INTERNAL_API_KEY: ${HR_INTERNAL_API_KEY:-local-dev-hr-key-change-before-deployment}
       CORE_INTERNAL_URL: http://backend:8081
       IDENTITY_SERVICE_URL: http://identity-service:8094
-      IDENTITY_INTERNAL_API_KEY: ${IDENTITY_INTERNAL_API_KEY:-local-dev-identity-key-change-before-deployment}
+      IDENTITY_PRINCIPAL_INTERNAL_API_KEY: ${IDENTITY_PRINCIPAL_INTERNAL_API_KEY:-local-dev-principal-verify-key-change-before-deployment}
     expose:
       - "8096"
     depends_on:
@@ -283,7 +284,7 @@ services:
       PAYROLL_ATTENDANCE_REFERENCE_RELAY_ENABLED: "true"
       CORE_INTERNAL_URL: http://backend:8081
       IDENTITY_SERVICE_URL: http://identity-service:8094
-      IDENTITY_INTERNAL_API_KEY: ${IDENTITY_INTERNAL_API_KEY:-local-dev-identity-key-change-before-deployment}
+      IDENTITY_PRINCIPAL_INTERNAL_API_KEY: ${IDENTITY_PRINCIPAL_INTERNAL_API_KEY:-local-dev-principal-verify-key-change-before-deployment}
     expose:
       - "8097"
     depends_on:
