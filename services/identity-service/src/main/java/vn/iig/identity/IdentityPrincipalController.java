@@ -14,9 +14,17 @@ public class IdentityPrincipalController {
     private final IdentityCoreClient core;
     private final byte[] key;
     public IdentityPrincipalController(IdentityCoreClient core,
-            @Value("${iig.identity.principal-internal-key}") String secret) {
+            @Value("${iig.identity.principal-internal-key}") String secret,
+            @Value("${iig.core.internal-key}") String credentialExportKey) {
         if(secret==null || secret.isBlank())
             throw new IllegalArgumentException("Private Identity principal key required");
+        // Services holding principal-only keys must never be able to fetch
+        // BCrypt password hashes from the Core credential export bridge.
+        if(credentialExportKey==null || credentialExportKey.isBlank() ||
+                MessageDigest.isEqual(secret.getBytes(StandardCharsets.UTF_8),
+                    credentialExportKey.getBytes(StandardCharsets.UTF_8)))
+            throw new IllegalArgumentException(
+                "Identity principal key must differ from credential export key");
         this.core=core;
         this.key=secret.getBytes(StandardCharsets.UTF_8);
     }

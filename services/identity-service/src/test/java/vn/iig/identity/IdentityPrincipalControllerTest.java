@@ -9,11 +9,16 @@ import static org.mockito.Mockito.*;
 class IdentityPrincipalControllerTest {
     private final IdentityCoreClient core=mock(IdentityCoreClient.class);
     private final IdentityPrincipalController endpoint=
-        new IdentityPrincipalController(core,"private-key");
+        new IdentityPrincipalController(core,"private-key","different-credential-key");
 
     @Test void forgedInternalKeyCannotReadLiveUser() {
         assertEquals(HttpStatus.UNAUTHORIZED,assertThrows(ResponseStatusException.class,
             ()->endpoint.current("wrong","Bearer live")).getStatusCode());
+        verifyNoInteractions(core);
+    }
+    @Test void rejectsPrincipalSecretEqualToCredentialExportSecret() {
+        assertThrows(IllegalArgumentException.class,()->
+            new IdentityPrincipalController(core,"reused-secret","reused-secret"));
         verifyNoInteractions(core);
     }
     @Test void returnsOnlyCurrentlyValidatedRole() {
