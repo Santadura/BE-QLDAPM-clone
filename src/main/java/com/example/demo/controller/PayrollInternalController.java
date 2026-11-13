@@ -43,7 +43,8 @@ public class PayrollInternalController {
     public record HistoricPayroll(String id,String employeeId,String employeeName,String employeeCode,
                                   String roleId,String period,String source,int totalSessions,
                                   BigDecimal totalHours,BigDecimal rate,BigDecimal totalAmount,
-                                  String status,Instant calculatedAt,List<HistoricItem> items) {}
+                                  String status,Instant calculatedAt,List<HistoricItem> items,
+                                  BigDecimal detailRate,BigDecimal detailAmount) {}
 
     private final JdbcTemplate db;
     private final byte[] secret;
@@ -176,12 +177,20 @@ public class PayrollInternalController {
                         entry.getObject(3,LocalDate.class),entry.getString(4),
                         entry.getString(4),entry.getBigDecimal(5),entry.getBigDecimal(6),
                         entry.getBigDecimal(7)),source,id);
+                List<BigDecimal[]> detail="EMPLOYEE".equals(source)?
+                    db.query("SELECT salary_per_hours,total_salary "+
+                        "FROM employee_salary_details WHERE employee_salary_id=? LIMIT 1",
+                        (detailRow,k)->new BigDecimal[]{detailRow.getBigDecimal(1),
+                            detailRow.getBigDecimal(2)},id):List.of();
+                BigDecimal detailRate=detail.isEmpty()?null:detail.get(0)[0];
+                BigDecimal detailAmount=detail.isEmpty()?null:detail.get(0)[1];
                 return new HistoricPayroll(id,rs.getString("employee_id"),
                     rs.getString("full_name"),rs.getString("employee_code"),
                     rs.getString("role_id"),rs.getString("period"),source,
                     rs.getInt("total_count"),rs.getBigDecimal("total_hours"),
                     rs.getBigDecimal("rate"),rs.getBigDecimal("amount"),
-                    rs.getString("status"),rs.getTimestamp("created_at").toInstant(),items);
+                    rs.getString("status"),rs.getTimestamp("created_at").toInstant(),items,
+                    detailRate,detailAmount);
             });
         return records;
     }

@@ -24,7 +24,19 @@ public final class PayrollContracts {
     public record HistoricPayroll(String id,String employeeId,String employeeName,String employeeCode,
                                   String roleId,String period,String source,int totalSessions,
                                   BigDecimal totalHours,BigDecimal rate,BigDecimal totalAmount,
-                                  String status,Instant calculatedAt,List<HistoricItem> items) {}
+                                  String status,Instant calculatedAt,List<HistoricItem> items,
+                                  BigDecimal detailRate,BigDecimal detailAmount) {
+        // Compatibility constructor used by earlier source/contract tests.
+        public HistoricPayroll(String id,String employeeId,String employeeName,
+                String employeeCode,String roleId,String period,String source,
+                int totalSessions,BigDecimal totalHours,BigDecimal rate,
+                BigDecimal totalAmount,String status,Instant calculatedAt,
+                List<HistoricItem> items) {
+            this(id,employeeId,employeeName,employeeCode,roleId,period,source,
+                totalSessions,totalHours,rate,totalAmount,status,calculatedAt,
+                items,null,null);
+        }
+    }
     public record PayrollRow(String id,String period,String employeeId,
                              String employeeName,String employeeCode,String roleId,
                              int totalSessions,BigDecimal totalHours,BigDecimal totalAmount,

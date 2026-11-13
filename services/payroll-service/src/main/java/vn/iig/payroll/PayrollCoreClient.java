@@ -53,6 +53,41 @@ public class PayrollCoreClient {
         }
     }
 
+    /**
+     * Employee-management permission checks remain live and role-scoped.
+     * The salary DATA is read solely from Payroll PostgreSQL; Core returns
+     * no salary rows or database snapshot through this endpoint.
+     */
+    public void requireEmployeeManagementAccess(String bearer,String employeeId) {
+        if(bearer==null || !bearer.startsWith("Bearer ") || bearer.length()<16)
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                "Valid employee management bearer token required");
+        if(employeeId==null || employeeId.isBlank())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Employee ID required");
+        try {
+            client.get().uri("/internal/payroll/employee-management-access/{id}",employeeId)
+                .header("Authorization",bearer)
+                .header("X-Internal-Key",internalKey)
+                .retrieve().toBodilessEntity();
+        } catch(HttpClientErrorException ex) {
+            if(ex.getStatusCode().value()==401)
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                    "Employee management session invalid");
+            if(ex.getStatusCode().value()==403)
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Outside employee management role scope");
+            if(ex.getStatusCode().value()==404)
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "Employee not found");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Employee management authorization unavailable",ex);
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Employee management authorization unavailable",ex);
+        }
+    }
+
     public List<Person> people() {
         try {
             Person[] rows=client.get().uri("/internal/payroll/people")

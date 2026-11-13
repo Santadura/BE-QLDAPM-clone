@@ -17,6 +17,13 @@ CREATE TABLE IF NOT EXISTS payroll_ledgers (
   calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(source,employee_id,period)
 );
+-- Preserve employee salary-detail fields during initial legacy import and
+-- catch-up on existing PostgreSQL volumes. No new reads from Core tables.
+ALTER TABLE payroll_ledgers
+  ADD COLUMN IF NOT EXISTS detail_rate NUMERIC(14,2);
+ALTER TABLE payroll_ledgers
+  ADD COLUMN IF NOT EXISTS detail_amount NUMERIC(16,2);
+
 CREATE INDEX IF NOT EXISTS idx_payroll_employee_period
   ON payroll_ledgers(employee_id,period);
 

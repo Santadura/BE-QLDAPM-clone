@@ -92,6 +92,17 @@ public class PayrollService {
             .toList();
     }
 
+    public List<Map<String,Object>> employeeSalaryHistory(String bearer,String employeeId) {
+        // Fail closed while the independent historical detail backfill is
+        // missing or Core's role/account authority is unavailable.
+        core.requireEmployeeManagementAccess(bearer,employeeId);
+        requireReady();
+        if(!ledger.salaryDetailsImported())
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Legacy salary-detail import is still incomplete");
+        return ledger.employeeSalaryHistory(employeeId);
+    }
+
     public PayrollDetail detail(String bearer,String employeeId,String period) {
         ym(period);
         Actor actor=core.actor(bearer);
@@ -136,13 +147,19 @@ public class PayrollService {
 
     @Scheduled(initialDelay=1000,fixedDelay=4000)
     public void bootstrap() {
-        if(ledger.imported()) return;
+        if(ledger.imported() && ledger.salaryDetailsImported()) return;
         try {
             var original=core.historical();
-            ledger.importHistorical(original);
-            log.info("Imported {} existing payroll records into exclusive Payroll database",original.size());
+            if(!ledger.imported()) {
+                ledger.importHistorical(original);
+                log.info("Imported {} existing payroll records into exclusive Payroll database",
+                    original.size());
+            } else {
+                ledger.backfillSalaryDetails(original);
+                log.info("Completed backward-compatible employee salary detail migration");
+            }
         } catch(Exception ex) {
-            log.warn("Payroll historical import pending: {}",ex.getMessage());
+            log.warn("Payroll historical/detail import pending: {}",ex.getMessage());
         }
     }
 }

@@ -34,6 +34,35 @@ public class PayrollRepository {
         return count!=null && count>0;
     }
 
+    public boolean salaryDetailsImported() {
+        Integer count=db.queryForObject(
+            "SELECT count(*) FROM payroll_meta WHERE key='legacy-salary-detail-import-complete'",
+            Integer.class);
+        return count!=null && count>0;
+    }
+
+    /**
+     * An already bootstrapped Payroll DB must import the two historical
+     * detail columns before serving the employee-management salary route.
+     * Never overwrite a later independently calculated ledger.
+     */
+    @Transactional
+    public void backfillSalaryDetails(List<HistoricPayroll> past) {
+        if(!imported() || salaryDetailsImported()) return;
+        for(HistoricPayroll old:past) {
+            if(old==null || !"EMPLOYEE".equals(old.source())) continue;
+            db.update("UPDATE payroll_ledgers SET detail_rate=?,detail_amount=? "+
+                    "WHERE id=? AND employee_id=? AND source='EMPLOYEE' "+
+                    "AND detail_rate IS NULL AND detail_amount IS NULL "+
+                    "AND status=?",
+                old.detailRate(),old.detailAmount(),old.id(),old.employeeId(),
+                old.status());
+        }
+        db.update("INSERT INTO payroll_meta(key,value) "+
+            "VALUES('legacy-salary-detail-import-complete','yes') "+
+            "ON CONFLICT(key) DO NOTHING");
+    }
+
     @Transactional
     public void importHistorical(List<HistoricPayroll> past) {
         if(imported()) return;
@@ -41,12 +70,14 @@ public class PayrollRepository {
             if(old==null || old.id()==null || old.employeeId()==null) continue;
             int added=db.update(
                 "INSERT INTO payroll_ledgers(id,employee_id,employee_name,employee_code,role_id," +
-                "period,source,total_sessions,total_hours,rate,total_amount,status,calculated_at) " +
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source,employee_id,period) DO NOTHING",
+                "period,source,total_sessions,total_hours,rate,total_amount,status,calculated_at," +
+                "detail_rate,detail_amount) " +
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source,employee_id,period) DO NOTHING",
                 old.id(),old.employeeId(),old.employeeName(),old.employeeCode(),
                 old.roleId(),old.period(),old.source(),old.totalSessions(),
                 zero(old.totalHours()),zero(old.rate()),zero(old.totalAmount()),
-                old.status(),Timestamp.from(old.calculatedAt()==null?Instant.now():old.calculatedAt()));
+                old.status(),Timestamp.from(old.calculatedAt()==null?Instant.now():old.calculatedAt()),
+                old.detailRate(),old.detailAmount());
             if(added==1 && old.items()!=null) {
                 for(HistoricItem item:old.items()) {
                     db.update("INSERT INTO payroll_items(id,payroll_id,schedule_id,work_date," +
@@ -58,6 +89,9 @@ public class PayrollRepository {
             }
         }
         db.update("INSERT INTO payroll_meta(key,value) VALUES('legacy-import-complete','yes') " +
+            "ON CONFLICT(key) DO NOTHING");
+        db.update("INSERT INTO payroll_meta(key,value) VALUES(" +
+            "'legacy-salary-detail-import-complete','yes') " +
             "ON CONFLICT(key) DO NOTHING");
     }
 
@@ -126,9 +160,11 @@ public class PayrollRepository {
             total.divide(totalHours,2,RoundingMode.HALF_UP);
         db.update("UPDATE payroll_ledgers SET employee_name=?,employee_code=?,role_id=?," +
             "total_sessions=?,total_hours=?,rate=?,total_amount=?,status='CALCULATED'," +
+            "detail_rate=CASE WHEN source='EMPLOYEE' THEN ? ELSE NULL END," +
+            "detail_amount=CASE WHEN source='EMPLOYEE' THEN ? ELSE NULL END," +
             "calculated_at=NOW() WHERE id=?",
             person.employeeName(),person.employeeCode(),person.role(),
-            items.size(),totalHours,rate,total,id);
+            items.size(),totalHours,rate,total,rate,total,id);
     }
 
     private PayrollRow map(java.sql.ResultSet rs) throws java.sql.SQLException {
@@ -149,6 +185,19 @@ public class PayrollRepository {
         return db.query(SELECT+" WHERE employee_id=? AND period=? ORDER BY source,id",
             (rs,i)->map(rs),employeeId,period);
     }
+    /**
+     * Read the independent Payroll ledger, preserving the old HR employee
+     * salary list JSON names. The caller's current employee-management ACL
+     * must be checked separately through the private Core authorization API.
+     */
+    public List<java.util.Map<String,Object>> employeeSalaryHistory(String employeeId) {
+        return db.queryForList("SELECT source,id,period,total_sessions AS units," +
+            "total_hours AS \"totalHours\",rate,total_amount AS amount,status," +
+            "detail_rate AS \"detailRate\",detail_amount AS \"detailAmount\" " +
+            "FROM payroll_ledgers WHERE employee_id=? ORDER BY period DESC,source,id",
+            employeeId);
+    }
+
     public record MonthCost(String period,BigDecimal salaryCost,long payrollRecords) {}
     public List<MonthCost> monthlyCosts(String from,String to) {
         return db.query("SELECT period,COALESCE(SUM(total_amount),0),COUNT(*) " +

@@ -107,6 +107,14 @@ spring:
           uri: ${PAYROLL_SERVICE_URI:http://localhost:8097}
           predicates:
             - Path=/api/payroll,/api/payroll/calculate,/api/payroll/*/*
+        # Employee salary history is read from independently owned Payroll
+        # ledgers; Core verifies the current HR-management scope, never
+        # supplies salary rows. The route intentionally precedes Core fallback.
+        - id: payroll-employee-salary-history
+          uri: ${PAYROLL_SERVICE_URI:http://localhost:8097}
+          predicates:
+            - Path=/api/employee-management/*/salaries
+            - Method=GET
         # Only certificate read/write API is migrated to HR at this stage.
         - id: hr-certificates
           uri: ${HR_SERVICE_URI:http://localhost:8096}
