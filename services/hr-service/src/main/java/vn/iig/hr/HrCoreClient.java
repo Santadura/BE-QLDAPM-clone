@@ -20,11 +20,14 @@ import vn.iig.hr.CertificateModels.CertificateData;
 public class HrCoreClient {
     private final RestClient client;
     private final String internalKey;
+    private final HrIdentityClient identity;
 
     public HrCoreClient(@Value("${iig.core.url}") String url,
-                        @Value("${iig.core.internal-key}") String key) {
+                        @Value("${iig.core.internal-key}") String key,
+                        HrIdentityClient identity) {
         if (key == null || key.isBlank()) throw new IllegalArgumentException("HR_INTERNAL_API_KEY required");
         internalKey=key;
+        this.identity=identity;
         SimpleClientHttpRequestFactory factory=new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2500);
         factory.setReadTimeout(5000);
@@ -95,33 +98,41 @@ public class HrCoreClient {
         }
     }
 
-    /** Delegates JWT, active status and current role checks to the Identity-backed core. */
+    /** Central live role check via private Identity service. */
+    public String currentRole(String bearer) {
+        return identity.currentRole(bearer);
+    }
+
+    /**
+     * An authenticated employee can only resolve their own current profile.
+     * Core still owns employee identity until the HR lifecycle cutover.
+     */
     @SuppressWarnings("unchecked")
-    public String currentRole(String bearerToken) {
-        if(bearerToken==null || !bearerToken.startsWith("Bearer ")) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Bearer token required");
-        }
+    public String currentEmployeeId(String bearer) {
+        if(bearer==null || !bearer.startsWith("Bearer ") || bearer.length()<16)
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                "Current profile bearer required");
         try {
-            Map<String,Object> snapshot=client.get().uri("/api/me")
-                .header("Authorization",bearerToken).retrieve().body(Map.class);
-            if(snapshot==null || !(snapshot.get("authorities") instanceof List<?> roles)) {
-                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Invalid session");
-            }
-            for(Object entry:roles) {
-                if(entry instanceof Map<?,?> authority
-                        && authority.get("authority") instanceof String value
-                        && value.startsWith("ROLE_")) {
-                    return value.substring(5);
-                }
-            }
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Missing staff role");
-        } catch (HttpClientErrorException ex) {
-            int code=ex.getStatusCode().value();
-            if(code==401) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"Invalid session");
-            if(code==403) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"No permission");
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Core identity unavailable");
-        } catch (RestClientException ex) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Core identity unavailable");
+            Map<String,Object> profile=client.get().uri("/api/profile")
+                .header("Authorization",bearer).retrieve().body(Map.class);
+            if(profile==null || !(profile.get("username") instanceof String username)
+                    || username.isBlank())
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                    "Current employee account not verified");
+            Object employee=profile.get("employeeId");
+            return employee instanceof String id && !id.isBlank()?id:null;
+        } catch(HttpClientErrorException ex) {
+            if(ex.getStatusCode().value()==401)
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                    "Current profile session invalid");
+            if(ex.getStatusCode().value()==403)
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Current profile forbidden");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Current employee source unavailable");
+        } catch(RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Current employee source unavailable");
         }
     }
 }
