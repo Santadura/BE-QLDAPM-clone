@@ -128,6 +128,13 @@ spring:
           predicates:
             - Path=/api/profile/certificates
             - Method=GET
+        # Salary rank definitions now read from HR's authoritative DB.
+        # Core retains only the currently assigned rank ID and reviewed date.
+        - id: hr-self-profile-salary
+          uri: ${HR_SERVICE_URI:http://localhost:8096}
+          predicates:
+            - Path=/api/profile/salary
+            - Method=GET
         # Only certificate read/write API is migrated to HR at this stage.
         - id: hr-certificates
           uri: ${HR_SERVICE_URI:http://localhost:8096}
