@@ -90,7 +90,9 @@ assert_orphan() {
     echo "Core handback succeeded without committed Academic command/outbox" >&2
     exit 1
   fi
-  grep -q 'Unreleased Academic candidate claim prevents Core handback' /tmp/iig-orphan-handback.log || {
+  # The same SQL exclusion fence now protects BOTH candidate and native claims.
+  # Accept only the original/new explicit refusal messages, never a generic SQL error.
+  grep -Eq 'Unreleased Academic candidate( or native command)? claim prevents Core handback' /tmp/iig-orphan-handback.log || {
     cat /tmp/iig-orphan-handback.log >&2
     exit 1
   }
