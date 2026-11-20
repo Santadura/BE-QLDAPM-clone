@@ -59,6 +59,8 @@ public class SecurityConfig {
                     .requestMatchers("/api/accounts/*/role").denyAll()
                     .requestMatchers("/api/accounts", "/api/accounts/**").hasAuthority("ROLE_ADMIN")
                     .requestMatchers("/api/statistics", "/api/statistics/**").hasAuthority("ROLE_ADMIN")
+                    .requestMatchers("/api/auth/me", "/api/auth/logout").authenticated()
+                    .requestMatchers("/api/**").hasAnyAuthority("ROLE_ADMIN", "ROLE_TC", "ROLE_CM", "ROLE_TEACHER", "ROLE_SALE", "ROLE_CS")
                     .anyRequest().authenticated()
             )
             .exceptionHandling(errors -> errors

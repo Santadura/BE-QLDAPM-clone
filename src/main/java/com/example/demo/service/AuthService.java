@@ -3,6 +3,10 @@ package com.example.demo.service;
 import com.example.demo.dto.AuthDtos.AuthResponse;
 import com.example.demo.dto.AuthDtos.LoginRequest;
 import com.example.demo.dto.AuthDtos.RegisterRequest;
+import com.example.demo.dto.AuthDtos.CurrentAccountResponse;
+import org.springframework.jdbc.core.JdbcTemplate;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import com.example.demo.entity.User;
 import com.example.demo.entity.AuditLog;
 import com.example.demo.repository.AuditLogRepository;
@@ -33,27 +37,45 @@ public class AuthService {
     private final AuthenticationManager authenticationManager;
     private final AuditLogRepository auditLogs;
     private final EntityManager entityManager;
+    private final JdbcTemplate jdbc;
 
+    @Transactional
     public AuthResponse register(RegisterRequest req) {
-        if (userRepository.existsByUsername(req.username())) {
-            throw new ApiException(HttpStatus.CONFLICT, "Username da ton tai");
+        // Dùng chung khóa với luồng tạo tài khoản nhân viên để tránh cấp trùng.
+        jdbc.queryForObject("SELECT 1 FROM pg_advisory_xact_lock(724190231)", Integer.class);
+        String username = req.username().trim().toLowerCase(Locale.ROOT);
+        String email = req.email().trim().toLowerCase(Locale.ROOT);
+        if (userRepository.existsByUsernameIgnoreCase(username) || userRepository.existsByEmailIgnoreCase(username)) {
+            throw new ApiException(HttpStatus.CONFLICT, "Tên đăng nhập đã được sử dụng.");
         }
-        if (userRepository.existsByEmail(req.email())) {
-            throw new ApiException(HttpStatus.CONFLICT, "Email da ton tai");
+        if (userRepository.existsByEmailIgnoreCase(email) || userRepository.existsByUsernameIgnoreCase(email)) {
+            throw new ApiException(HttpStatus.CONFLICT, "Email đã được sử dụng.");
+        }
+        if (req.password().getBytes(StandardCharsets.UTF_8).length > 72) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "Mật khẩu không được vượt quá 72 byte UTF-8.");
         }
 
         User user = User.builder()
-                .username(req.username())
-                .email(req.email())
+                .username(username)
+                .email(email)
                 .passwordHash(passwordEncoder.encode(req.password()))
                 .roleId("USER")
                 .status("ACTIVE")
                 .build();
 
-        userRepository.save(user);
+        userRepository.saveAndFlush(user);
 
         String token = jwtUtil.generateToken(user.getUsername(), user.getRoleId(), user.getPasswordHash());
         return new AuthResponse(token, user.getUsername(), user.getRoleId());
+    }
+
+    @Transactional(readOnly = true)
+    public CurrentAccountResponse currentAccount(Authentication actor) {
+        if (actor == null || !actor.isAuthenticated()) throw new ApiException(HttpStatus.UNAUTHORIZED, "Vui lòng đăng nhập.");
+        User user = userRepository.findByUsername(actor.getName())
+                .filter(item -> "ACTIVE".equals(item.getStatus()))
+                .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "Phiên đăng nhập không hợp lệ."));
+        return new CurrentAccountResponse(user.getUsername(), user.getEmail(), user.getRoleId(), user.getStatus());
     }
 
     @Transactional

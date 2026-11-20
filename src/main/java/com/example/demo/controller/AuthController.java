@@ -3,6 +3,7 @@ package com.example.demo.controller;
 import com.example.demo.dto.AuthDtos.AuthResponse;
 import com.example.demo.dto.AuthDtos.LoginRequest;
 import com.example.demo.dto.AuthDtos.RegisterRequest;
+import com.example.demo.dto.AuthDtos.CurrentAccountResponse;
 import com.example.demo.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,11 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+
+    @GetMapping("/me")
+    public CurrentAccountResponse me(Authentication actor) {
+        return authService.currentAccount(actor);
+    }
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest req) {
