@@ -29,6 +29,19 @@ public class User {
     private String passwordHash;
 
     @Builder.Default
+    @Column(name = "password_login_enabled", nullable = false)
+    private boolean passwordLoginEnabled = true;
+
+    @Column(name = "display_name", length = 100)
+    private String displayName;
+
+    @Column(length = 15)
+    private String phone;
+
+    @Column(name = "contact_email", length = 100)
+    private String contactEmail;
+
+    @Builder.Default
     @Column(name = "role_id", nullable = false, length = 50)
     private String roleId = "USER";
 

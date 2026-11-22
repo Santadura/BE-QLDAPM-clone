@@ -43,6 +43,13 @@ model User {
   username     String   @id @db.VarChar(50)
   email        String   @unique @db.VarChar(100)
   passwordHash String   @map("password_hash") @db.VarChar(255)
+  passwordLoginEnabled Boolean @default(true) @map("password_login_enabled")
+  displayName String? @map("display_name") @db.VarChar(100)
+  phone String? @db.VarChar(15)
+  contactEmail String? @map("contact_email") @db.VarChar(100)
+  student Student?
+  storeCartItems StoreCartItem[]
+  storeOrders StoreOrder[]
   roleId       String   @map("role_id") @db.VarChar(50)
   status       String   @default("ACTIVE") @db.VarChar(20)
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -51,8 +58,33 @@ model User {
   employee       Employee?
   createdClasses Class[]    @relation("ClassCreatedBy")
   auditLogs      AuditLog[]
+  socialIdentities SocialIdentity[]
+  socialLoginTickets SocialLoginTicket[]
 
   @@map("users")
+}
+
+model SocialIdentity {
+  provider String @db.VarChar(20)
+  subject String @db.VarChar(255)
+  username String @db.VarChar(50)
+  providerEmail String? @map("provider_email") @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user User @relation(fields: [username], references: [username], onDelete: Cascade)
+  @@id([provider, subject])
+  @@unique([username, provider])
+  @@map("social_identities")
+}
+
+model SocialLoginTicket {
+  codeHash String @id @map("code_hash") @db.VarChar(64)
+  username String @db.VarChar(50)
+  challenge String @db.VarChar(43)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+  user User @relation(fields: [username], references: [username], onDelete: Cascade)
+  @@index([expiresAt])
+  @@map("social_login_tickets")
 }
 
 model SalaryRank {
@@ -124,6 +156,18 @@ model Certificate {
 }
 
 model Course {
+  category String @default("Khác") @db.VarChar(40)
+  price Decimal? @db.Decimal(14,2)
+  imageUrl String @default("/images/learning.jpg") @map("image_url") @db.VarChar(500)
+  target String? @db.VarChar(150)
+  entryDescription String? @map("entry_description") @db.VarChar(255)
+  lessonCount Int @default(0) @map("lesson_count")
+  outcomes Json @default("[]")
+  syllabus Json @default("[]")
+  published Boolean @default(true)
+  featured Boolean @default(false)
+  storeCartItems StoreCartItem[]
+  storeOrderItems StoreOrderItem[]
   courseId    String   @id @default(cuid()) @map("course_id") @db.VarChar(50)
   name        String   @db.VarChar(150)
   description String?  @db.Text
@@ -140,6 +184,13 @@ model Course {
 }
 
 model Class {
+  storefrontOpen Boolean @default(false) @map("storefront_open")
+  capacity Int @default(30)
+  deliveryMode String @default("Tại trung tâm") @map("delivery_mode") @db.VarChar(30)
+  location String? @db.VarChar(255)
+  scheduleLabel String? @map("schedule_label") @db.VarChar(255)
+  storeCartItems StoreCartItem[]
+  storeOrderItems StoreOrderItem[]
   classId           String   @id @default(cuid()) @map("class_id") @db.VarChar(50)
   courseId          String   @map("course_id") @db.VarChar(50)
   classCode         String   @unique @map("class_code") @db.VarChar(30)
@@ -258,6 +309,8 @@ model StaffSchedule {
 }
 
 model Student {
+  username String? @unique @db.VarChar(50)
+  user User? @relation(fields:[username],references:[username],onDelete:Restrict)
   studentId   String   @id @default(cuid()) @map("student_id") @db.VarChar(50)
   studentCode String   @unique @map("student_code") @db.VarChar(30)
   fullName    String   @map("full_name") @db.VarChar(100)
@@ -553,4 +606,77 @@ model ClassSession {
   @@unique([classId, date, startTime, endTime])
   @@index([classId, date])
   @@map("class_sessions")
+}
+
+model StoreCartItem {
+ username String @db.VarChar(50)
+ courseId String @map("course_id") @db.VarChar(50)
+ classId String @map("class_id") @db.VarChar(50)
+ user User @relation(fields:[username],references:[username],onDelete:Cascade)
+ course Course @relation(fields:[courseId],references:[courseId],onDelete:Cascade)
+ class Class @relation(fields:[classId],references:[classId],onDelete:Cascade)
+ @@id([username,courseId])
+ @@map("storefront_cart_items")
+}
+model StoreOrder {
+ paymentStatus String @default("UNPAID") @map("payment_status") @db.VarChar(20)
+ paidAt DateTime? @map("paid_at") @db.Timestamptz(6)
+ fulfillmentError String? @map("fulfillment_error") @db.VarChar(500)
+ payments PaymentAttempt[]
+ orderId String @id @map("order_id") @db.VarChar(50)
+ username String @db.VarChar(50)
+ requestKey String @map("request_key") @db.VarChar(80)
+ requestHash String @map("request_hash") @db.VarChar(64)
+ status String @default("PENDING") @db.VarChar(20)
+ amount Decimal @db.Decimal(14,2)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+ user User @relation(fields:[username],references:[username],onDelete:Restrict)
+ items StoreOrderItem[]
+ @@unique([username,requestKey])
+ @@index([username,createdAt],map:"storefront_orders_user_date_idx")
+ @@map("storefront_orders")
+}
+model StoreOrderItem {
+ orderId String @map("order_id") @db.VarChar(50)
+ classId String @map("class_id") @db.VarChar(50)
+ courseId String @map("course_id") @db.VarChar(50)
+ courseTitle String @map("course_title") @db.VarChar(150)
+ classCode String @map("class_code") @db.VarChar(30)
+ amount Decimal @db.Decimal(14,2)
+ order StoreOrder @relation(fields:[orderId],references:[orderId],onDelete:Restrict)
+ class Class @relation(fields:[classId],references:[classId],onDelete:Restrict)
+ course Course @relation(fields:[courseId],references:[courseId],onDelete:Restrict)
+ @@id([orderId,classId])
+ @@index([classId],map:"storefront_order_items_class_idx")
+ @@map("storefront_order_items")
+}
+model StoreConsultation {
+ consultationId String @id @map("consultation_id") @db.VarChar(50)
+ fullName String? @map("full_name") @db.VarChar(100)
+ phone String? @db.VarChar(15)
+ email String? @db.VarChar(100)
+ category String? @db.VarChar(50)
+ message String? @db.Text
+ status String @default("NEW") @db.VarChar(20)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+ @@map("storefront_consultations")
+}
+
+model PaymentAttempt {
+ attemptId String @id @map("attempt_id") @db.VarChar(50)
+ orderId String @map("order_id") @db.VarChar(50)
+ provider String @db.VarChar(10)
+ amount Decimal @db.Decimal(14,2)
+ status String @db.VarChar(20)
+ payUrl String? @map("pay_url") @db.Text
+ qrData String? @map("qr_data") @db.Text
+ transactionId String? @map("transaction_id") @db.VarChar(100)
+ resultCode String? @map("result_code") @db.VarChar(30)
+ createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+ expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+ paidAt DateTime? @map("paid_at") @db.Timestamptz(6)
+ order StoreOrder @relation(fields:[orderId],references:[orderId],onDelete:Restrict)
+ // Active-order and provider-transaction unique indexes are partial SQL indexes.
+ @@index([orderId,createdAt],map:"payment_attempts_order_idx")
+ @@map("payment_attempts")
 }

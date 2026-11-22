@@ -75,7 +75,7 @@ public class AuthService {
         User user = userRepository.findByUsername(actor.getName())
                 .filter(item -> "ACTIVE".equals(item.getStatus()))
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "Phiên đăng nhập không hợp lệ."));
-        return new CurrentAccountResponse(user.getUsername(), user.getEmail(), user.getRoleId(), user.getStatus());
+        return new CurrentAccountResponse(user.getUsername(), user.getEmail(), user.getRoleId(), user.getStatus(), user.getDisplayName(), user.getPhone(), user.getContactEmail(), user.getCreatedAt());
     }
 
     @Transactional
@@ -85,6 +85,9 @@ public class AuthService {
         // Keep the credential checked during login stable until token issuance.
         // A concurrent password change must finish before or after this login.
         entityManager.refresh(user, LockModeType.PESSIMISTIC_READ);
+        if (!user.isPasswordLoginEnabled()) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "Tài khoản này sử dụng đăng nhập Google hoặc Facebook.");
+        }
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(req.username(), req.password())
         );

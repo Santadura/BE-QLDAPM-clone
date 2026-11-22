@@ -28,6 +28,7 @@ public class StudentManagementService {
     );
 
     private final StudentRepository studentRepository;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final CourseRepository courseRepository;
     private final StudentTargetRepository studentTargetRepository;
     private final ClassStudentRepository classStudentRepository;
@@ -226,6 +227,8 @@ public class StudentManagementService {
         student.setEmail(trimToNull(request.email()));
         student.setPhone(trimToNull(request.phone()));
         student.setLevel(trimToNull(request.level()));
+        jdbc.update("UPDATE users u SET display_name=?,contact_email=?,phone=? FROM students s WHERE s.student_id=? AND s.username=u.username",
+                student.getFullName(),student.getEmail(),student.getPhone(),studentId);
         studentRepository.save(student);
         replaceTargets(studentId, targets);
 

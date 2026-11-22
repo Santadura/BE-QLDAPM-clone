@@ -13,7 +13,7 @@ public class AuthDtos {
             @NotBlank @Size(min = 6, max = 72) String password
     ) {}
 
-    public record CurrentAccountResponse(String username, String email, String role, String status) {}
+    public record CurrentAccountResponse(String username, String email, String role, String status, String fullName, String phone, String contactEmail, java.time.Instant createdAt) {}
 
     public record LoginRequest(
             @NotBlank String username,

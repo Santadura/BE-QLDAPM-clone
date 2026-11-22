@@ -1,5 +1,5 @@
 {
-  "name": "iig-qlapm-database",
+  "name": "gk-academy-database",
   "private": true,
   "version": "1.0.0",
   "description": "Prisma tooling for the Spring Boot backend database schema, migrations and seed data.",
@@ -8,7 +8,8 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:seed:refresh-demo": "prisma db seed"
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",

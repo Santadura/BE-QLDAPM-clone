@@ -107,6 +107,29 @@ mvn spring-boot:run
 
 Spring Boot reads the root `.env` file.
 
+## Refresh realistic demo data
+
+The demo seed is safe to run against an existing development database:
+
+```bash
+npm install
+npm run prisma:generate
+npm run db:seed
+```
+
+The seed now removes only the legacy generated fixtures whose identifiers start
+with `auto-*`, then loads realistic `demo-*` fixtures. Records created manually
+through the application are not reset by this cleanup.
+
+The realistic fixture set includes additional teachers, CS and Sale staff,
+approved recurring availabilities, classes in several lifecycle states, planned
+class sessions, teacher/CS/Sale schedules, students with course targets, class
+memberships, assignments, exams and payroll examples.
+
+`docker compose up` still uses `scripts/seed-if-empty.js`, so an existing
+database is preserved on container restart. Run `npm run db:seed` explicitly
+when you intentionally want to refresh the demo fixtures.
+
 ## Supabase
 
 Fill the project-specific values in local `.env`:

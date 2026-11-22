@@ -1,0 +1,248 @@
+[
+  {
+    "id": "availability",
+    "title": "Đăng ký lịch rảnh",
+    "roles": [
+      "TEACHER",
+      "SALE",
+      "CS"
+    ],
+    "paths": {
+      "TEACHER": "/availability/register",
+      "SALE": "/availability/register",
+      "CS": "/availability/register"
+    },
+    "question": "Tôi đăng ký lịch rảnh như thế nào?",
+    "keywords": "availability dang ky lich ranh ca dinh ky tuan",
+    "content": "1. Mở Đăng ký lịch rảnh và chọn tuần cần đăng ký.\n2. Chọn thêm lịch rảnh, nhập ngày, giờ bắt đầu, giờ kết thúc và loại lịch theo tuần hoặc định kỳ. Giờ kết thúc phải sau giờ bắt đầu.\n3. Gửi đăng ký và theo dõi trạng thái xét duyệt. Tránh đăng ký khoảng thời gian trùng nhau.\n4. Lịch rảnh cần được TC hoặc CM xét duyệt theo nhóm nhân sự; lịch rảnh được duyệt chưa có nghĩa là đã được phân công."
+  },
+  {
+    "id": "teacher-assignment",
+    "title": "Phân công giáo viên",
+    "roles": [
+      "TC"
+    ],
+    "paths": {
+      "TC": "/assign-teacher"
+    },
+    "question": "Làm thế nào để phân công giáo viên cho lớp?",
+    "keywords": "phan cong giao vien lich day duyet ranh trung xung dot teacher",
+    "content": "1. Mở Lịch rảnh & Phân công, chọn thời gian và lớp cần phân công.\n2. Kiểm tra lớp đã có kế hoạch buổi học và ở trạng thái phù hợp để phân công.\n3. Xét duyệt lịch rảnh của giáo viên trước khi phân công.\n4. Chọn giáo viên có lịch rảnh đã được duyệt bao phủ buổi học, kiểm tra xung đột rồi lưu phân công. Lịch phải khớp buổi học đã lên kế hoạch.\n5. Nếu đã có điểm danh, không thể đổi giáo viên, lớp hoặc thời gian của phân công đó."
+  },
+  {
+    "id": "sale-assignment",
+    "title": "Phân công ca Sale",
+    "roles": [
+      "CM"
+    ],
+    "paths": {
+      "CM": "/assign-sale"
+    },
+    "question": "Làm thế nào để phân công ca làm cho Sale?",
+    "keywords": "phan cong sale ca lich lam duyet ranh trung",
+    "content": "1. Mở Lịch rảnh & Phân công Sale và chọn khoảng thời gian cần sắp xếp.\n2. Kiểm tra và xét duyệt lịch rảnh của nhân viên Sale.\n3. Chọn nhân viên và ca nằm trong lịch rảnh đã duyệt; kiểm tra xung đột.\n4. Lưu phân công, sau đó kiểm tra lại lịch. Đăng ký lịch rảnh không tự tạo ca làm."
+  },
+  {
+    "id": "cs-assignment",
+    "title": "Phân công CS hỗ trợ lớp",
+    "roles": [
+      "CM"
+    ],
+    "paths": {
+      "CM": "/assign-cs"
+    },
+    "question": "Tôi phân công CS hỗ trợ lớp như thế nào?",
+    "keywords": "phan cong cs ho tro lop ca lich lam ranh",
+    "content": "1. Mở Lịch rảnh & Phân công CS.\n2. Xét duyệt lịch rảnh của CS và chọn buổi học cần hỗ trợ trong kế hoạch lớp.\n3. Phân công CS có lịch rảnh phù hợp vào đúng lớp, ngày, giờ bắt đầu và kết thúc của buổi học; kiểm tra trùng lịch trước khi lưu.\n4. CS được phân công hỗ trợ đúng buổi mới có thể xác nhận điểm danh giáo viên của buổi đó sau giờ bắt đầu."
+  },
+  {
+    "id": "my-schedule",
+    "title": "Xem lịch được phân công",
+    "roles": [
+      "TEACHER",
+      "SALE",
+      "CS"
+    ],
+    "paths": {
+      "TEACHER": "/teaching-schedule",
+      "SALE": "/availability/mine",
+      "CS": "/my-shifts"
+    },
+    "question": "Tôi xem lịch được phân công ở đâu?",
+    "keywords": "lich day lam ca ngay mai hom nay tuan schedule",
+    "content": "1. Mở màn hình lịch cá nhân từ liên kết bên dưới.\n2. Chọn tuần cần xem và kiểm tra các buổi hoặc ca đã được phân công.\n3. Nếu đã đăng ký lịch rảnh nhưng chưa thấy lịch làm, kiểm tra trạng thái duyệt và liên hệ TC (giáo viên) hoặc CM (Sale/CS).\nTrợ lý chưa đọc lịch thực tế của bạn, vì vậy không thể xác nhận ngày nào bạn có ca hoặc buổi dạy."
+  },
+  {
+    "id": "attendance",
+    "title": "Điểm danh giáo viên theo buổi",
+    "roles": [
+      "CS"
+    ],
+    "paths": {
+      "CS": "/classes/update"
+    },
+    "question": "Tôi điểm danh giáo viên như thế nào?",
+    "keywords": "diem danh giao vien co mat vang muon attendance",
+    "content": "1. Mở Quản lý lớp học, chọn lớp được phép truy cập và mở tab Điểm danh GV.\n2. Chọn buổi học mà bạn được phân công hỗ trợ đúng lớp, ngày và khung giờ.\n3. Sau giờ bắt đầu buổi học, chọn Có mặt, Vắng mặt hoặc Đi muộn và lưu.\n4. Nếu không lưu được, kiểm tra phân công hỗ trợ, thời gian bắt đầu và trạng thái buổi học. Chưa ghi nhận không đồng nghĩa với vắng mặt.\nBạn không thể điểm danh thay cho buổi không thuộc phân công hỗ trợ của mình."
+  },
+  {
+    "id": "classes",
+    "title": "Quản lý lớp và kế hoạch buổi học",
+    "roles": [
+      "ADMIN",
+      "CS"
+    ],
+    "paths": {
+      "ADMIN": "/classes",
+      "CS": "/classes/update"
+    },
+    "question": "Tôi quản lý lớp và kế hoạch buổi học như thế nào?",
+    "keywords": "lop hoc ke hoach buoi tao ready draft running chuyen trang thai",
+    "content": "1. Mở Quản lý lớp học và chọn lớp trong phạm vi được cấp quyền.\n2. Khi tạo hoặc cập nhật lớp, nhập thông tin khóa học, thời gian và các trường bắt buộc. CS chỉ thao tác với lớp và hành động được cấp quyền.\n3. Lập kế hoạch buổi học trước khi chuyển lớp từ DRAFT sang READY.\n4. TC phân công giáo viên và CM phân công nhân sự hỗ trợ theo kế hoạch. Lớp cần đủ giáo viên cho các buổi theo quy tắc hệ thống trước khi chuyển sang RUNNING.\n5. Khi đổi lịch một buổi tương lai, cần kiểm tra lại phân công vì buổi thay thế cần được phân công lại."
+  },
+  {
+    "id": "teacher-classes",
+    "title": "Theo dõi lớp phụ trách và kết quả học viên",
+    "roles": [
+      "TEACHER"
+    ],
+    "paths": {
+      "TEACHER": "/my-classes"
+    },
+    "question": "Tôi xem lớp phụ trách và nhập kết quả học viên ở đâu?",
+    "keywords": "lop phu trach hoc vien ket qua diem bai tap kiem tra nhap",
+    "content": "1. Mở Lớp được phân công và chọn lớp bạn phụ trách.\n2. Xem danh sách học viên và phần hoạt động giảng dạy hoặc kết quả trong chi tiết lớp.\n3. Khi nhập kết quả bài tập hoặc bài kiểm tra, chọn đúng học viên và hoạt động, nhập điểm hợp lệ rồi lưu.\nBạn chỉ xem và thao tác trong phạm vi lớp được hệ thống cho phép. Trợ lý chưa đọc điểm hoặc danh sách học viên thực tế."
+  },
+  {
+    "id": "students",
+    "title": "Tra cứu và quản lý học viên",
+    "roles": [
+      "ADMIN",
+      "TEACHER"
+    ],
+    "paths": {
+      "ADMIN": "/students",
+      "TEACHER": "/students"
+    },
+    "question": "Tôi tìm danh sách học viên ở đâu?",
+    "keywords": "hoc vien danh sach tim kiem student",
+    "content": "1. Mở màn hình học viên.\n2. Dùng bộ tìm kiếm và bộ lọc để tìm học viên cần xem.\n3. Chọn học viên để xem thông tin trong phạm vi quyền của bạn. ADMIN quản lý dữ liệu; giáo viên chỉ truy cập phạm vi được cấp.\nTrợ lý không đọc hồ sơ cá nhân, điểm số hay số lượng học viên thực tế."
+  },
+  {
+    "id": "payroll",
+    "title": "Xem công và bảng lương",
+    "roles": [
+      "ADMIN",
+      "TC",
+      "CM",
+      "TEACHER",
+      "SALE",
+      "CS"
+    ],
+    "paths": {
+      "ADMIN": "/monitor/payroll",
+      "TC": "/payroll",
+      "CM": "/payroll/history",
+      "TEACHER": "/monitor/payroll",
+      "SALE": "/payroll/history",
+      "CS": "/payroll/history"
+    },
+    "question": "Tôi xem công và bảng lương ở đâu?",
+    "keywords": "cong luong bang luong tien salary payroll thang",
+    "content": "1. Mở màn hình công lương theo liên kết bên dưới và chọn tháng cần xem.\n2. Kiểm tra công, số buổi hoặc giờ làm và thông tin bảng lương hiển thị. Nhân viên xem dữ liệu cá nhân; quản lý xem nhóm được phân quyền.\n3. Nếu có chênh lệch, kiểm tra lịch phân công và dữ liệu điểm danh, rồi trao đổi với TC/CM hoặc ADMIN.\nTrợ lý chưa truy cập dữ liệu công lương thực tế, không thể trả lời mức lương, số công hoặc tính lương thay bạn."
+  },
+  {
+    "id": "salary-review",
+    "title": "Đề xuất xét duyệt bậc lương",
+    "roles": [
+      "TC",
+      "CM"
+    ],
+    "paths": {
+      "TC": "/payroll",
+      "CM": "/payroll/history"
+    },
+    "question": "Tôi gửi đề xuất xét duyệt bậc lương như thế nào?",
+    "keywords": "review xet duyet de xuat bac tang luong",
+    "content": "1. Mở quản lý công lương và chọn nhân viên thuộc nhóm bạn quản lý.\n2. Mở chức năng đề xuất review lương, chọn bậc đề xuất và nhập lý do.\n3. Kiểm tra nội dung rồi gửi yêu cầu cho ADMIN.\n4. Theo dõi trạng thái; nếu bị từ chối, điều chỉnh đề xuất trước khi gửi lại. Trợ lý chỉ hướng dẫn, không gửi yêu cầu thay bạn."
+  },
+  {
+    "id": "salary-approval",
+    "title": "Duyệt yêu cầu điều chỉnh bậc lương",
+    "roles": [
+      "ADMIN"
+    ],
+    "paths": {
+      "ADMIN": "/monitor/payroll"
+    },
+    "question": "Tôi duyệt yêu cầu điều chỉnh bậc lương ở đâu?",
+    "keywords": "duyet review bac luong phe duyet tu choi",
+    "content": "1. Mở Giám sát công nhân viên, tìm phần Yêu cầu review lương chờ duyệt.\n2. Xem nhân viên, bậc hiện tại, bậc đề xuất và lý do.\n3. Chọn duyệt hoặc từ chối và xác nhận theo giao diện.\n4. Kiểm tra trạng thái sau khi xử lý. Phê duyệt áp dụng bậc lương mới từ ngày duyệt theo quy tắc hiện tại. Trợ lý không phê duyệt hay sửa lương thay bạn."
+  },
+  {
+    "id": "accounts",
+    "title": "Quản lý tài khoản nhân viên",
+    "roles": [
+      "ADMIN"
+    ],
+    "paths": {
+      "ADMIN": "/accounts"
+    },
+    "question": "Tôi quản lý tài khoản nhân viên như thế nào?",
+    "keywords": "tai khoan tao khoa mo mat khau account",
+    "content": "1. Mở Tài khoản nhân viên.\n2. Tìm tài khoản theo bộ lọc hoặc tìm kiếm, rồi mở thông tin chi tiết.\n3. Sử dụng các thao tác thêm, cập nhật hoặc khóa/mở tài khoản mà giao diện cung cấp.\n4. Kiểm tra lại trạng thái sau khi lưu. Không gửi mật khẩu hoặc mã truy cập vào chat.\nThay đổi vai trò tài khoản qua API hiện bị chặn; trợ lý không hướng dẫn thực hiện chức năng này."
+  },
+  {
+    "id": "employees",
+    "title": "Quản lý hồ sơ nhân sự",
+    "roles": [
+      "ADMIN",
+      "TC",
+      "CM"
+    ],
+    "paths": {
+      "ADMIN": "/employees",
+      "TC": "/teachers",
+      "CM": "/staff"
+    },
+    "question": "Tôi tìm và cập nhật hồ sơ nhân sự ở đâu?",
+    "keywords": "nhan su nhan vien ho so giao vien chung chi employee",
+    "content": "1. Mở danh sách nhân sự theo liên kết bên dưới: ADMIN xem nhân sự; TC xem giáo viên; CM xem Sale/CS trong phạm vi quản lý.\n2. Tìm nhân viên, chọn xem chi tiết và kiểm tra hồ sơ hoặc chứng chỉ.\n3. Chỉ dùng các thao tác cập nhật mà hệ thống cấp cho vai trò hiện tại và kiểm tra kết quả sau khi lưu.\nTrợ lý chưa tra cứu hồ sơ nhân sự thực tế và không sửa dữ liệu thay bạn."
+  },
+  {
+    "id": "statistics",
+    "title": "Xem thống kê tổng quan",
+    "roles": [
+      "ADMIN"
+    ],
+    "paths": {
+      "ADMIN": "/statistics"
+    },
+    "question": "Tôi xem thống kê hệ thống như thế nào?",
+    "keywords": "thong ke bao cao doanh thu chi phi tong quan",
+    "content": "1. Mở Thống kê tổng quan.\n2. Chọn kỳ ngày, tháng hoặc năm để xem số liệu tương ứng.\n3. Kiểm tra ghi chú về dữ liệu không có sẵn. Hệ thống chưa có dữ liệu giao dịch/học phí nên không có doanh thu thực tế; không coi dữ liệu thiếu là doanh thu bằng 0.\nTrợ lý không truy vấn số liệu thống kê hiện tại."
+  },
+  {
+    "id": "profile",
+    "title": "Cập nhật hồ sơ và đổi mật khẩu",
+    "roles": [
+      "ADMIN",
+      "TC",
+      "CM",
+      "TEACHER",
+      "SALE",
+      "CS"
+    ],
+    "paths": {
+      "ADMIN": "/profile",
+      "TC": "/profile",
+      "CM": "/profile",
+      "TEACHER": "/profile",
+      "SALE": "/profile",
+      "CS": "/profile"
+    },
+    "question": "Tôi đổi mật khẩu hoặc cập nhật hồ sơ ở đâu?",
+    "keywords": "ho so ca nhan doi mat khau profile password",
+    "content": "1. Mở Thông tin cá nhân từ tài khoản hoặc liên kết bên dưới.\n2. Cập nhật các trường được phép chỉnh sửa rồi lưu.\n3. Để đổi mật khẩu, sử dụng chức năng đổi mật khẩu trong hồ sơ và nhập các thông tin được yêu cầu.\n4. Đăng nhập lại nếu phiên hết hiệu lực sau khi đổi mật khẩu. Không nhập mật khẩu vào chat."
+  }
+]

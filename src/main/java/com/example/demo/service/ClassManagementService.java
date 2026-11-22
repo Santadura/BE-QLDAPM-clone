@@ -466,6 +466,8 @@ public class ClassManagementService {
         requireManageAccess(classItem, actor);
         requireAssignableClass(classItem);
 
+        // Share the class lock with website checkout so capacity checks cannot race.
+        jdbc.queryForObject("SELECT class_id FROM classes WHERE class_id=? FOR UPDATE", String.class, classId);
         List<String> ids = request.studentIds().stream()
                 .filter(Objects::nonNull)
                 .map(String::trim)
@@ -495,6 +497,13 @@ public class ClassManagementService {
                 continue;
             }
 
+            int remaining = jdbc.queryForObject(
+                    "SELECT c.capacity - (SELECT count(*) FROM class_students cs WHERE cs.class_id=c.class_id AND cs.status='ACTIVE') " +
+                    "- (SELECT count(*) FROM storefront_order_items oi JOIN storefront_orders o ON o.order_id=oi.order_id " +
+                    "WHERE oi.class_id=c.class_id AND o.status='PENDING' AND o.username IS DISTINCT FROM " +
+                    "(SELECT username FROM students WHERE student_id=?)) FROM classes c WHERE c.class_id=?",
+                    Integer.class, studentId, classId);
+            if (remaining <= 0) throw new ApiException(HttpStatus.CONFLICT, "Class capacity is full, including pending website registrations");
             ClassStudent membership = existing.orElseGet(() -> ClassStudent.builder()
                     .classStudentId(newId("class-student"))
                     .classId(classId)
@@ -504,7 +513,7 @@ public class ClassManagementService {
             membership.setStatus("ACTIVE");
             membership.setInactiveReason(null);
             membership.setInactivatedAt(null);
-            classStudentRepository.save(membership);
+            classStudentRepository.saveAndFlush(membership);
             affected.add(studentId);
         }
 
@@ -516,6 +525,35 @@ public class ClassManagementService {
         audit(actor.username(), "ADD_STUDENTS_TO_CLASS", classId,
                 "Added students: " + String.join(", ", affected));
         return new RosterChangeResponse(affected.size(), affected);
+    }
+
+    /** Internal fulfillment: callers cannot supply a paid flag or an arbitrary student. */
+    @Transactional
+    public void enrollPaidOrder(String orderId) {
+        String username = jdbc.queryForObject("SELECT username FROM storefront_orders WHERE order_id=?", String.class, orderId);
+        jdbc.queryForObject("SELECT username FROM users WHERE username=? FOR UPDATE", String.class, username);
+        Map<String,Object> order = jdbc.queryForMap("SELECT status,payment_status FROM storefront_orders WHERE order_id=? FOR UPDATE", orderId);
+        if (!"PAID".equals(order.get("payment_status"))) throw new ApiException(HttpStatus.CONFLICT,"Payment is not verified");
+        if ("CONFIRMED".equals(order.get("status"))) return;
+        if (!"PENDING".equals(order.get("status"))) throw new ApiException(HttpStatus.CONFLICT,"Order is cancelled; manual resolution required");
+        if (jdbc.queryForObject("SELECT count(*) FROM users WHERE username=? AND role_id='USER' AND status='ACTIVE'",Integer.class,username)!=1) throw new ApiException(HttpStatus.CONFLICT,"Customer account is unavailable");
+        List<String> classIds = jdbc.queryForList("SELECT class_id FROM storefront_order_items WHERE order_id=? ORDER BY class_id",String.class,orderId);
+        for (String classId : classIds) jdbc.queryForObject("SELECT class_id FROM classes WHERE class_id=? FOR UPDATE",String.class,classId);
+        String studentId=jdbc.queryForObject("SELECT student_id FROM students WHERE username=? FOR UPDATE",String.class,username);
+        Student student=studentRepository.findById(studentId).orElseThrow();
+        for(String classId:classIds){
+            AcademicClass classItem=requireClass(classId);
+            var existing=classStudentRepository.findByClassIdAndStudentId(classId,studentId);
+            if(existing.isPresent()&&"ACTIVE".equals(existing.get().getStatus()))continue;
+            EligibilityResponse eligible=eligibility(student,classItem);
+            if(!eligible.eligible())throw new ApiException(HttpStatus.CONFLICT,String.join("; ",eligible.reasons()));
+            int remaining=jdbc.queryForObject("SELECT c.capacity-(SELECT count(*) FROM class_students cs WHERE cs.class_id=c.class_id AND cs.status='ACTIVE')-(SELECT count(*) FROM storefront_order_items oi JOIN storefront_orders o ON o.order_id=oi.order_id WHERE oi.class_id=c.class_id AND o.status='PENDING' AND o.username<>?) FROM classes c WHERE c.class_id=?",Integer.class,username,classId);
+            if(remaining<=0)throw new ApiException(HttpStatus.CONFLICT,"Class capacity is full");
+            ClassStudent member=existing.orElseGet(()->ClassStudent.builder().classStudentId(newId("class-student")).classId(classId).studentId(studentId).joinedAt(Instant.now()).build());
+            member.setStatus("ACTIVE");member.setInactiveReason(null);member.setInactivatedAt(null);classStudentRepository.saveAndFlush(member);
+        }
+        jdbc.update("UPDATE storefront_orders SET status='CONFIRMED' WHERE order_id=?",orderId);
+        audit(username,"PAYMENT_ENROLLMENT",orderId,"Automatically enrolled after verified gateway payment");
     }
 
     @Transactional

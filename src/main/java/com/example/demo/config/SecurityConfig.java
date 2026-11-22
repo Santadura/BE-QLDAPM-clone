@@ -48,6 +48,7 @@ public class SecurityConfig {
     }
 
     @Bean
+    @org.springframework.core.annotation.Order(2)
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
@@ -55,7 +56,14 @@ public class SecurityConfig {
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
+                    .requestMatchers("/api/auth/social/providers", "/api/auth/social/start", "/api/auth/social/exchange").permitAll()
+                    .requestMatchers("/api/auth/social/connections").hasAuthority("ROLE_USER")
                     .requestMatchers("/actuator/health").permitAll()
+                    .requestMatchers("/api/payments/providers", "/api/payments/vnpay/ipn", "/api/payments/vnpay/return", "/api/payments/momo/ipn", "/api/payments/momo/return").permitAll()
+                    .requestMatchers("/api/payments/orders/**").hasAuthority("ROLE_USER")
+                    .requestMatchers("/api/store/catalog", "/api/store/consultations").permitAll()
+                    .requestMatchers("/api/store/me/**").hasAuthority("ROLE_USER")
+                    .requestMatchers("/api/store/admin/**").hasAuthority("ROLE_ADMIN")
                     .requestMatchers("/api/accounts/*/role").denyAll()
                     .requestMatchers("/api/accounts", "/api/accounts/**").hasAuthority("ROLE_ADMIN")
                     .requestMatchers("/api/statistics", "/api/statistics/**").hasAuthority("ROLE_ADMIN")
@@ -76,7 +84,8 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
         // Doi lai domain FE that khi deploy, vi du "https://your-fe-domain.com"
-        config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:3000"));
+        config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174",
+                "http://127.0.0.1:5173", "http://127.0.0.1:5174", "http://localhost:3000"));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
