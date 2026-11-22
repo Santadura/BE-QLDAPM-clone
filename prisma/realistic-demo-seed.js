@@ -10,9 +10,11 @@ const date = (value) => new Date(`${value}T00:00:00Z`);
 async function cleanupLegacyAutoSeed(prisma) {
   console.log("Removing legacy auto-* demo rows...");
 
-  await prisma.teacherSessionAttendance.deleteMany({
-    where: { teachingScheduleId: { startsWith: "auto-ts-" } },
-  });
+  if (prisma.teacherSessionAttendance?.deleteMany) {
+    await prisma.teacherSessionAttendance.deleteMany({
+      where: { teachingScheduleId: { startsWith: "auto-ts-" } },
+    });
+  }
   await prisma.studentResult.deleteMany({
     where: { studentResultId: { startsWith: "auto-sr-" } },
   });
